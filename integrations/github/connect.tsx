@@ -5,10 +5,12 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import type { WorkspaceConnectorProps } from '../../editor/lib/connector.ts';
+import type { WorkspaceConnection, WorkspaceConnectorProps } from '../../editor/lib/connector.ts';
 import { errorMessage, isRecord } from '../../lib/json.ts';
 import { openWorkspace } from '../../lib/workspace.ts';
-import { isSnapshot, repositoryName } from './contract.ts';
+import { baseChanged, isSnapshot, repositoryName } from './contract.ts';
+
+const staleRevision = Symbol('stale revision');
 
 async function post(action: 'open' | 'propose', data: object): Promise<unknown> {
   const response = await fetch('/git/' + action, {
@@ -21,9 +23,30 @@ async function post(action: 'open' | 'propose', data: object): Promise<unknown> 
   if (!response.headers.get('Content-Type')?.includes('application/json')) throw new Error('The hosted Git service is unavailable or requires an invitation.');
   const payload: unknown = await response.json();
   if (!response.ok) {
+    if (action === 'propose' && response.status === 409 && isRecord(payload) && payload['code'] === baseChanged) return staleRevision;
     throw new Error(isRecord(payload) && typeof payload['message'] === 'string' ? payload['message'] : 'The Git request failed.');
   }
   return payload;
+}
+
+async function openConnection(repository: string): Promise<WorkspaceConnection> {
+  const response = await post('open', { repository });
+  if (!isSnapshot(response) || response.repository !== repository) throw new Error('The repository snapshot could not be read.');
+  return {
+    workspace: openWorkspace(repository, response.files),
+    refresh: () => openConnection(repository),
+    submit: async (changes) => {
+      const result = await post('propose', { repository, revision: response.revision, changes });
+      if (result === staleRevision) return { status: 'stale' };
+      if (!isRecord(result) || typeof result['url'] !== 'string') throw new Error('GitHub did not return a pull request.');
+      const url = new URL(result['url']);
+      const prefix = '/' + repository + '/pull/';
+      if (url.origin !== 'https://github.com' || !url.pathname.startsWith(prefix) || !/^\d+$/u.test(url.pathname.slice(prefix.length))) {
+        throw new Error('GitHub did not return a pull request.');
+      }
+      return { status: 'submitted', url: url.href };
+    },
+  };
 }
 
 export function OpenGitHub({ disabled, connect, canReplace }: WorkspaceConnectorProps) {
@@ -42,19 +65,7 @@ export function OpenGitHub({ disabled, connect, canReplace }: WorkspaceConnector
     }
     setBusy(true);
     try {
-      const response = await post('open', { repository: name });
-      if (!isSnapshot(response) || response.repository !== name) throw new Error('The repository snapshot could not be read.');
-      const workspace = openWorkspace(response.repository, response.files);
-      connect(workspace, async (changes) => {
-        const result = await post('propose', { repository: response.repository, revision: response.revision, changes });
-        if (!isRecord(result) || typeof result['url'] !== 'string') throw new Error('GitHub did not return a pull request.');
-        const url = new URL(result['url']);
-        const prefix = '/' + response.repository + '/pull/';
-        if (url.origin !== 'https://github.com' || !url.pathname.startsWith(prefix) || !/^\d+$/u.test(url.pathname.slice(prefix.length))) {
-          throw new Error('GitHub did not return a pull request.');
-        }
-        return url.href;
-      });
+      connect(await openConnection(name));
       setOpen(false);
     } catch (failure) {
       setError(errorMessage(failure));

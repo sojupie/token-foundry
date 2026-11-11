@@ -15,6 +15,7 @@ export interface PullRequestProposal {
 
 export const repositoryName = /^[a-z\d][a-z\d-]*\/(?!\.{1,2}$)[a-z\d_.-]+$/iu;
 export const commitOid = /^[a-f\d]{40}$/u;
+export const baseChanged = 'base_changed';
 
 function sourceFile(value: unknown): value is { path: string; text: string } {
   return isRecord(value) && typeof value['path'] === 'string' && typeof value['text'] === 'string';

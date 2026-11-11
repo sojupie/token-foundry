@@ -55,7 +55,7 @@ export function worker(transport: typeof fetch = fetch) {
         }
         return json({ message: 'Route not found.' }, 404);
       } catch (error) {
-        if (error instanceof HttpError) return json({ message: error.message }, error.status);
+        if (error instanceof HttpError) return json({ message: error.message, code: error.code }, error.status);
         return json({ message: 'Git could not complete the request. Try again.' }, 502);
       }
     },

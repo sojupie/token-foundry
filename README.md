@@ -86,6 +86,12 @@ configured folder. The Worker rechecks the default branch and original file
 contents and then opens a pull request. The limit is 24 files and 2 MiB per
 workspace, 512 KiB per file, and 16 changed files per proposal.
 
+If the base revision changes during review, choose **Review latest revision**.
+The editor retains changes to files that still match their original contents
+and recalculates the diff and resolved values against the latest snapshot.
+If the repository also changed one of those files, download the original patch
+to reconcile it. Opening a pull request requires confirming the refreshed review.
+
 `npm run build:worker` validates the Worker bundle locally. The tests exercise
 OAuth, authorization, repository reads and pull-request retries with mocked
 providers.

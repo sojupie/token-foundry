@@ -1,5 +1,5 @@
 import { base64url } from 'jose';
-import { commitOid, repositoryName } from '../integrations/github/contract.ts';
+import { baseChanged, commitOid, repositoryName } from '../integrations/github/contract.ts';
 import type { PullRequestProposal, RepositorySnapshot } from '../integrations/github/contract.ts';
 import { isRecord, isUnknownArray } from '../lib/json.ts';
 import { fail, limitedText } from './http.ts';
@@ -12,6 +12,10 @@ const apiOrigin = 'https://api.github.com';
 const pathSegment = /^[a-z\d_-][a-z\d_.-]*$/iu;
 const tokenFile = /(?:^|\/)(?:tokens\.json|[^/]+\.tokens(?:\.json)?)$/iu;
 const encoder = new TextEncoder();
+
+function staleBase(): never {
+  return fail(409, 'The default branch changed. Review the latest revision before opening a pull request.', baseChanged);
+}
 
 function safePath(path: string): boolean {
   return path.split('/').every((part) => pathSegment.test(part));
@@ -185,7 +189,7 @@ export class GitHub {
   async propose(root: string, { repository, revision, changes }: PullRequestProposal): Promise<string> {
     if (changes.length > maximumChanges) fail(422, 'Review at most ' + maximumChanges + ' changed files at once.');
     const project = await this.#project(root);
-    if (revision !== project.revision) fail(409, 'The default branch changed. Export the patch, then reopen and review against the new revision.');
+    if (revision !== project.revision) staleBase();
     const paths = new Set(project.files);
     let size = project.size;
     for (const { path, before, after } of changes) {
@@ -217,7 +221,7 @@ export class GitHub {
       const existing = await this.#findPull(repository, head, project.branch);
       if (existing) return existing;
     }
-    if (await this.#ref(project.branch) !== revision) fail(409, 'The default branch changed. Export the patch, then reopen and review against the new revision.');
+    if (await this.#ref(project.branch) !== revision) staleBase();
     const response = await this.#request(this.#prefix + '/pulls', {
       title: 'Update design tokens', head, base: project.branch, body: 'Proposed from Token Editor.',
     });

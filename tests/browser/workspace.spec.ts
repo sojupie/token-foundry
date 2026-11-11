@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
-import { isProposal } from '../../integrations/github/contract.ts';
+import { baseChanged, isProposal } from '../../integrations/github/contract.ts';
 import type { PullRequestProposal } from '../../integrations/github/contract.ts';
 
 const sources = await Promise.all(['reference.tokens.json', 'system.tokens.json'].map(async (path) => ({
@@ -21,20 +21,26 @@ async function openProposal(page: Page) {
   await page.getByRole('button', { name: 'Apply changes', exact: true }).click();
 }
 
-test('reviews a linked proposal and cross-file move before submitting the pinned GitHub diff', async ({ page }) => {
+test('reviews a linked proposal and cross-file move again if the pinned GitHub revision changes', async ({ page }) => {
   const revision = 'a'.repeat(40);
+  const latestRevision = 'b'.repeat(40);
   const repository = 'example/tokens';
   const url = 'https://github.com/' + repository + '/pull/7';
   const requests: string[] = [];
   let proposal: PullRequestProposal | undefined;
+  let snapshot = { repository, revision, files: sources };
   await page.route('**/git/*', async (route) => {
     const action = new URL(route.request().url()).pathname;
     requests.push(action);
     if (action === '/git/open') {
-      await route.fulfill({ json: { repository, revision, files: sources } });
+      await route.fulfill({ json: snapshot });
     } else if (action === '/git/propose') {
       const body: unknown = route.request().postDataJSON();
       if (!isProposal(body)) throw new Error('Malformed proposal.');
+      if (body.revision === revision) {
+        await route.fulfill({ status: 409, json: { code: baseChanged, message: 'Base branch changed.' } });
+        return;
+      }
       proposal = body;
       await route.fulfill({ json: { url } });
     } else throw new Error('Unexpected Git request: ' + action);
@@ -65,9 +71,34 @@ test('reviews a linked proposal and cross-file move before submitting the pinned
   await expect(diff).toContainText('{system.reference-space.small}');
   expect(requests).toEqual(['/git/open']);
   await page.getByRole('button', { name: 'Open pull request', exact: true }).click();
+  const refresh = page.getByRole('button', { name: 'Review latest revision', exact: true });
+  await expect(refresh).toBeVisible();
+  const changedFile = sources.find(({ path }) => path === 'reference.tokens.json');
+  if (!changedFile) throw new Error('Missing reference fixture.');
+  snapshot = { repository, revision: latestRevision, files: [
+    { path: changedFile.path, text: changedFile.text.replace('"value": 8', '"value": 10') },
+    ...sources.filter(({ path }) => path !== changedFile.path),
+  ] };
+  await refresh.click();
+  await expect(page.getByText(/reference\.tokens\.json changed in the repository/u)).toBeVisible();
+  await expect(diff).toContainText('{system.reference-space.small}');
+  expect(requests).toEqual(['/git/open', '/git/propose', '/git/open']);
+
+  snapshot = { repository, revision: 'c'.repeat(40), files: [
+    ...sources,
+    { path: 'consumer.tokens.json', text: '{"consumer":{"gap":{"$type":"dimension","$value":"{system.space.control-gap}"}}}' },
+  ] };
+  await refresh.click();
+  await expect(page.getByText('This diff and its resolved values use the latest revision.')).toBeVisible();
+  await expect(diff).toContainText('{system.reference-space.small}');
+  const impact = page.getByText(/resolved values changed/u);
+  await impact.click();
+  await expect(page.getByRole('dialog').getByText('consumer.gap', { exact: true })).toBeVisible();
+  expect(requests).toEqual(['/git/open', '/git/propose', '/git/open', '/git/open']);
+  await page.getByRole('button', { name: 'Open pull request', exact: true }).click();
   await expect(page.getByRole('link', { name: 'View pull request' })).toHaveAttribute('href', url);
-  expect(requests).toEqual(['/git/open', '/git/propose']);
-  expect(proposal).toMatchObject({ revision, repository, changes: sources.map(({ path, text }) => ({ path, before: text })) });
+  expect(requests).toEqual(['/git/open', '/git/propose', '/git/open', '/git/open', '/git/propose']);
+  expect(proposal).toMatchObject({ revision: snapshot.revision, repository, changes: sources.map(({ path, text }) => ({ path, before: text })) });
   expect(proposal?.changes.find(({ path }) => path === 'system.tokens.json')?.after).toContain('{system.reference-space.small}');
 });
 

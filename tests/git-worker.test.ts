@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { base64url, exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { isRecord } from '../lib/json.ts';
 import { worker } from '../worker/index.ts';
+import { baseChanged } from '../integrations/github/contract.ts';
 
 const origin = 'https://editor.example.test';
 const issuer = 'https://test-team.cloudflareaccess.com';
@@ -36,6 +37,7 @@ await test('the Worker gates access, opens pinned files and safely retries a rev
   let headOid = '';
   let pullCreated = false;
   let simulateFailure = true;
+  let advanceBaseOnCommit = true;
   let oauthExchanges = 0;
   let commits = 0;
   let pullRequests = 0;
@@ -89,6 +91,7 @@ await test('the Worker gates access, opens pinned files and safely retries a rev
         assert.equal(variables['input']['expectedHeadOid'], base);
         assert.deepEqual(variables['input']['fileChanges'], { additions: [{ path, contents: btoa(after) }] });
         headOid = headCommit;
+        if (advanceBaseOnCommit) latest = changedBase;
         return Response.json({ data: { createCommitOnBranch: { commit: { oid: headCommit } } } });
       }
       if (pathname === repo + '/pulls') {
@@ -149,11 +152,24 @@ await test('the Worker gates access, opens pinned files and safely retries a rev
 
   const proposal = { repository, revision: base, changes: [{ path, before, after }] };
   latest = changedBase;
-  assert.equal((await post('propose', proposal)).status, 409);
+  const stale = await post('propose', proposal);
+  assert.equal(stale.status, 409);
+  assert.deepEqual(await stale.json(), {
+    code: baseChanged, message: 'The default branch changed. Review the latest revision before opening a pull request.',
+  });
   latest = base;
   assert.equal((await post('propose', { ...proposal, changes: [{ path: '.github/workflows/deploy.yml', before, after }] })).status, 400);
   assert.equal((await post('propose', { ...proposal, changes: [{ path, before: '{}', after }] })).status, 409);
   assert.equal(commits, 0);
+  const duringCommit = await post('propose', proposal);
+  assert.equal(duringCommit.status, 409);
+  assert.deepEqual(await duringCommit.json(), {
+    code: baseChanged, message: 'The default branch changed. Review the latest revision before opening a pull request.',
+  });
+  assert.equal(commits, 1);
+  assert.equal(pullRequests, 0);
+  latest = base;
+  advanceBaseOnCommit = false;
   assert.equal((await post('propose', proposal)).status, 502);
   assert.equal(commits, 1);
   simulateFailure = false;

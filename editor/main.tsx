@@ -2,10 +2,10 @@ import { useEffect, useRef, useState } from 'react';
 import type { ComponentType } from 'react';
 import { errorMessage, requireValue } from '../lib/json.ts';
 import type { TokenNode } from '../lib/token-types.ts';
-import { reviewEdit, reviewMove, reviewProposal, reviewWorkspace, workspaceChanges } from '../lib/workspace.ts';
+import { reviewAgainstLatest, reviewEdit, reviewMove, reviewProposal, reviewWorkspace, workspaceChanges } from '../lib/workspace.ts';
 import type { Review, Workspace } from '../lib/workspace.ts';
 import type { Draft } from './lib/draft.ts';
-import type { SubmitWorkspace, WorkspaceConnectorProps } from './lib/connector.ts';
+import type { WorkspaceConnection, WorkspaceConnectorProps } from './lib/connector.ts';
 import { OpenGitHub } from '../integrations/github/connect.tsx';
 import { createRoot } from 'react-dom/client';
 import { AlertCircle, ArrowDownToLine, ChevronLeft, ChevronRight, FileUp, FolderOpen, FolderPlus, Link2, PanelLeft, Pencil, Plus, Search } from 'lucide-react';
@@ -25,7 +25,7 @@ import './shadcn.css';
 const pageSize = 100;
 
 type SaveTarget = { kind: 'folder'; save: (workspace: Workspace) => Promise<void> } |
-  { kind: 'pull-request'; submit: SubmitWorkspace };
+  { kind: 'pull-request'; connection: WorkspaceConnection };
 
 function Editor({ Connector, proposalLink }: { Connector: ComponentType<WorkspaceConnectorProps> | null; proposalLink: string }) {
   const [data, setData] = useState(openExample);
@@ -44,6 +44,7 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
   const [review, setReview] = useState<Review | null>(null);
   const [finalReview, setFinalReview] = useState<Review | null>(null);
   const [saveTarget, setSaveTarget] = useState<SaveTarget | null>(null);
+  const [revisionReview, setRevisionReview] = useState<'current' | 'stale' | 'refreshed'>('current');
   const [submittedUrl, setSubmittedUrl] = useState('');
   const [linkedProposal, setLinkedProposal] = useState(proposalLink);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -75,6 +76,7 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
     setReview(null);
     setFinalReview(null);
     setSaveTarget(target);
+    setRevisionReview('current');
     setSubmittedUrl('');
     clearSelection();
     setStatus('');
@@ -318,11 +320,28 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
         setData({ ...next, baseline: next.files });
         setStatus('Saved to folder.');
       } else {
-        setSubmittedUrl(await saveTarget.submit(workspaceChanges(next)));
+        if (revisionReview === 'stale') {
+          const connection = await saveTarget.connection.refresh();
+          const refreshed = reviewAgainstLatest(next, connection.workspace);
+          activate(refreshed?.next ?? connection.workspace, { kind: 'pull-request', connection });
+          if (refreshed) {
+            setDirty(true);
+            setFinalReview(refreshed);
+            setRevisionReview('refreshed');
+          } else setStatus('The latest revision already contains your changes.');
+          return;
+        }
+        const result = await saveTarget.connection.submit(workspaceChanges(next));
+        if (result.status === 'stale') {
+          setRevisionReview('stale');
+          return;
+        }
+        setSubmittedUrl(result.url);
         setStatus('Pull request opened.');
       }
       setFinalReview(null);
       setDirty(false);
+      setRevisionReview('current');
     } catch (failure) {
       setError(errorMessage(failure));
     } finally {
@@ -362,8 +381,8 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
       <Button type="button" size="sm" variant="ghost" disabled={busy || !!draft} onClick={() => proposalInput.current?.click()}>
         Open proposal
       </Button>
-      {Connector && <Connector disabled={busy || !!draft} canReplace={canReplace} connect={(workspace, submit) =>
-        activate(workspace, { kind: 'pull-request', submit })} />}
+      {Connector && <Connector disabled={busy || !!draft} canReplace={canReplace} connect={(connection) =>
+        activate(connection.workspace, { kind: 'pull-request', connection })} />}
       <div className="ms-auto flex flex-wrap gap-2">
         {data.files.length === 1 && <Button size="sm" variant="outline" disabled={busy || !!draft} onClick={() => {
           const file = requireValue(data.files[0], 'open file');
@@ -450,7 +469,10 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
         </main>
       </div>
     <ReviewChanges {...{ review, busy, error }} close={closeReview} save={saveReview} />
-    <ReviewChanges review={finalReview} busy={busy} error={error} confirm={saveTarget?.kind === 'folder' ? 'Save to folder' : 'Open pull request'}
+    <ReviewChanges review={finalReview} busy={busy} error={error}
+      notice={revisionReview === 'stale' ? 'The default branch changed. Review the latest revision before opening a pull request.' :
+        revisionReview === 'refreshed' ? 'This diff and its resolved values use the latest revision.' : ''}
+      confirm={revisionReview === 'stale' ? 'Review latest revision' : saveTarget?.kind === 'folder' ? 'Save to folder' : 'Open pull request'}
       close={() => { setFinalReview(null); setError(''); }} save={() => { void saveFinalReview(); }} />
   </div>;
 }

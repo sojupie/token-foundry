@@ -10,8 +10,8 @@ function diffClass(line: string) {
   return '';
 }
 
-export function ReviewChanges({ review, busy, error, close, save, confirm = 'Apply changes' }: {
-  review: Review | null; busy: boolean; error: string; close: () => void; save: () => void; confirm?: string;
+export function ReviewChanges({ review, busy, error, notice, close, save, confirm = 'Apply changes' }: {
+  review: Review | null; busy: boolean; error: string; notice?: string; close: () => void; save: () => void; confirm?: string;
 }) {
   return <Dialog open={Boolean(review)} onOpenChange={(open) => { if (!open && !busy) close(); }}>
     {review && <DialogContent showCloseButton={!busy} className="max-h-[calc(100dvh-2rem)] overflow-auto sm:max-w-3xl">
@@ -19,6 +19,7 @@ export function ReviewChanges({ review, busy, error, close, save, confirm = 'App
         <DialogTitle>Review changes</DialogTitle>
         <DialogDescription className="wrap-anywhere font-mono">{review.file}</DialogDescription>
       </DialogHeader>
+      {notice && <Alert><AlertDescription>{notice}</AlertDescription></Alert>}
       <section aria-label="Proposed file diff" className="max-h-[55dvh] min-w-0 overflow-auto rounded-md border bg-muted/30 py-2 text-xs leading-6">
         <pre>
         {Array.from(review.diff.split('\n').entries(), ([lineNumber, line]) =>

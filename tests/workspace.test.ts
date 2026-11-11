@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
-import { diffFile, openWorkspace, reviewEdit, reviewMove, reviewProposal, workspaceChanges } from '../lib/workspace.ts';
+import { diffFile, openWorkspace, reviewAgainstLatest, reviewEdit, reviewMove, reviewProposal, workspaceChanges } from '../lib/workspace.ts';
 
 await test('reviews an in-browser edit, preserves other files and exports a Git patch', async () => {
   const paths = ['reference.tokens.json', 'system.tokens.json'];
@@ -56,4 +56,23 @@ await test('moves a group across files and rebases inbound aliases and outbound 
   assert.match(moved.diff, /\.\.\/base\/reference\.tokens\.json#\/reference\/other\//u);
   assert.match(moved.diff, /"note": "\{reference\.space\.base\}"/u);
   assert.equal(workspaceChanges(moved.next).length, 2);
+});
+
+await test('refreshing a review preserves unchanged inputs and rejects edits to the same file', () => {
+  const path = 'reference.tokens.json';
+  const before = '{"reference":{"gap":{"$type":"number","$value":1}}}';
+  const original = openWorkspace('Fixture', [{ path, text: before }]);
+  const draft = reviewEdit(original, path, { path: 'reference.gap', create: false, node: { $value: 2 } }).next;
+  const consumer = { path: 'consumer.tokens.json', text: '{"consumer":{"gap":{"$type":"number","$value":"{reference.gap}"}}}' };
+  const latest = openWorkspace('Fixture', [{ path, text: before }, consumer]);
+  const updated = reviewAgainstLatest(draft, latest);
+  assert(updated);
+  assert.deepEqual(updated.impact.find((entry) => entry.path === 'consumer.gap'), { path: 'consumer.gap', before: 1, after: 2 });
+  assert.deepEqual(updated.next.baseline, latest.baseline);
+  assert.equal(reviewAgainstLatest(draft, openWorkspace('Fixture', updated.next.files)), null);
+
+  const conflicting = openWorkspace('Fixture', [{ path, text: before.replace(':1', ':3') }, consumer]);
+  assert.throws(() => reviewAgainstLatest(draft, conflicting), /reference\.tokens\.json changed in the repository/u);
+  assert.equal(draft.graph.resolved.get('reference.gap'), 2);
+  assert.equal(conflicting.graph.resolved.get('reference.gap'), 3);
 });

@@ -1,9 +1,13 @@
 import type { FileChange, Workspace } from '../../lib/workspace.ts';
 
-export type SubmitWorkspace = (changes: FileChange[]) => Promise<string>;
+export interface WorkspaceConnection {
+  workspace: Workspace;
+  submit: (changes: FileChange[]) => Promise<{ status: 'submitted'; url: string } | { status: 'stale' }>;
+  refresh: () => Promise<WorkspaceConnection>;
+}
 
 export interface WorkspaceConnectorProps {
   disabled: boolean;
   canReplace: () => boolean;
-  connect: (workspace: Workspace, submit: SubmitWorkspace) => void;
+  connect: (connection: WorkspaceConnection) => void;
 }

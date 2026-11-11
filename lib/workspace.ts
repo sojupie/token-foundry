@@ -102,6 +102,21 @@ export function reviewWorkspace(workspace: Workspace): Review {
   return reviewFiles(original, workspace.files, new Set(), '');
 }
 
+export function reviewAgainstLatest(workspace: Workspace, latest: Workspace): Review | null {
+  const files = new Map(latest.files.map((file) => [file.path, file]));
+  let remaining = false;
+  for (const { path, before, after } of workspaceChanges(workspace)) {
+    const file = files.get(path);
+    if (file?.text === after) continue;
+    if (file?.text !== before) {
+      throw new Error(path + ' changed in the repository. Go back to download your patch and reconcile the file.');
+    }
+    files.set(path, { path, text: after, tree: parseTokenFile(after, path) });
+    remaining = true;
+  }
+  return remaining ? reviewFiles(latest, [...files.values()], new Set(), '') : null;
+}
+
 export function reviewMove(workspace: Workspace, move: Move): Review {
   return reviewFiles(workspace, moveFiles(workspace, move), new Set(), move.to);
 }

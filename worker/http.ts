@@ -1,14 +1,16 @@
 export class HttpError extends Error {
   readonly status: number;
+  readonly code: string | undefined;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, code?: string) {
     super(message);
     this.status = status;
+    this.code = code;
   }
 }
 
-export function fail(status: number, message: string): never {
-  throw new HttpError(status, message);
+export function fail(status: number, message: string, code?: string): never {
+  throw new HttpError(status, message, code);
 }
 
 const privateHeaders = { 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer', 'X-Content-Type-Options': 'nosniff' };
