@@ -19,9 +19,13 @@ import { TokenGrid, types } from './token-grid';
 import { displayInput, readInput } from './lib/token-input';
 import { parentPath } from '../lib/document.ts';
 import { download, downloadPatch, openExample, openFiles } from './lib/sources.ts';
+import { openLocalFolder } from './lib/local-folder.ts';
 import './shadcn.css';
 
 const pageSize = 100;
+
+type SaveTarget = { kind: 'folder'; save: (workspace: Workspace) => Promise<void> } |
+  { kind: 'pull-request'; submit: SubmitWorkspace };
 
 function Editor({ Connector, proposalLink }: { Connector: ComponentType<WorkspaceConnectorProps> | null; proposalLink: string }) {
   const [data, setData] = useState(openExample);
@@ -37,8 +41,8 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
   const [busy, setBusy] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [review, setReview] = useState<Review | null>(null);
-  const [publishReview, setPublishReview] = useState<Review | null>(null);
-  const [submit, setSubmit] = useState<SubmitWorkspace | null>(null);
+  const [finalReview, setFinalReview] = useState<Review | null>(null);
+  const [saveTarget, setSaveTarget] = useState<SaveTarget | null>(null);
   const [submittedUrl, setSubmittedUrl] = useState('');
   const [linkedProposal, setLinkedProposal] = useState(proposalLink);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -58,18 +62,39 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
   const active = graph.tokens.get(selected);
   const movePath = active ? selected : group;
   const moveFile = active?.file ?? folder.files.keys().next().value ?? '';
+  const hasChanges = workspaceChanges(data).length > 0;
 
-  function activate(next: Workspace) {
+  function activate(next: Workspace, target: SaveTarget | null = null) {
     setData(next);
     setGroup('');
     setDirty(false);
     setReview(null);
-    setPublishReview(null);
-    setSubmit(null);
+    setFinalReview(null);
+    setSaveTarget(target);
     setSubmittedUrl('');
     clearSelection();
     setStatus('');
     setError('');
+  }
+
+  async function loadFolder() {
+    if (!window.showDirectoryPicker) {
+      folderInput.current?.setAttribute('webkitdirectory', '');
+      folderInput.current?.click();
+      return;
+    }
+    if (!canReplace()) return;
+    setBusy(true);
+    setError('');
+    try {
+      const directory = await window.showDirectoryPicker({ id: 'token-workspace', mode: 'read' });
+      const { workspace, save } = await openLocalFolder(directory);
+      activate(workspace, { kind: 'folder', save });
+    } catch (failure) {
+      if (!(failure instanceof DOMException && failure.name === 'AbortError')) setError(errorMessage(failure));
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function load(files: File[], isFolder: boolean) {
@@ -259,25 +284,31 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
     return !(dirty || draft) || window.confirm('Close this document and discard changes that have not been saved?');
   }
 
-  function reviewForPublish() {
+  function reviewForSave() {
     setError('');
     try {
-      setPublishReview(reviewWorkspace(data));
+      setFinalReview(reviewWorkspace(data));
     } catch (failure) {
       setError(errorMessage(failure));
     }
   }
 
-  async function publish() {
-    if (!submit || !publishReview || busy) return;
+  async function saveFinalReview() {
+    if (!saveTarget || !finalReview || busy) return;
     setBusy(true);
     setError('');
     try {
-      const url = await submit(workspaceChanges(publishReview.next));
-      setSubmittedUrl(url);
-      setPublishReview(null);
+      const { next } = finalReview;
+      if (saveTarget.kind === 'folder') {
+        await saveTarget.save(next);
+        setData({ ...next, baseline: next.files });
+        setStatus('Saved to folder.');
+      } else {
+        setSubmittedUrl(await saveTarget.submit(workspaceChanges(next)));
+        setStatus('Pull request opened.');
+      }
+      setFinalReview(null);
       setDirty(false);
-      setStatus('Pull request opened.');
     } catch (failure) {
       setError(errorMessage(failure));
     } finally {
@@ -308,10 +339,7 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
       <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => fileInput.current?.click()}>
         <FileUp aria-hidden="true" /> Open files
       </Button>
-      <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => {
-        folderInput.current?.setAttribute('webkitdirectory', '');
-        folderInput.current?.click();
-      }}>
+      <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => { void loadFolder(); }}>
         <FolderOpen aria-hidden="true" /> Open folder
       </Button>
       <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => {
@@ -320,22 +348,20 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
       <Button type="button" size="sm" variant="ghost" disabled={busy || !!draft} onClick={() => proposalInput.current?.click()}>
         Open proposal
       </Button>
-      {Connector && <Connector disabled={busy || !!draft} canReplace={canReplace} connect={(workspace, publishWorkspace) => {
-        activate(workspace);
-        setSubmit(() => publishWorkspace);
-      }} />}
+      {Connector && <Connector disabled={busy || !!draft} canReplace={canReplace} connect={(workspace, submit) =>
+        activate(workspace, { kind: 'pull-request', submit })} />}
       <div className="ms-auto flex flex-wrap gap-2">
         {data.files.length === 1 && <Button size="sm" variant="outline" disabled={busy || !!draft} onClick={() => {
           const file = requireValue(data.files[0], 'open file');
           download(file.path, file.text, 'application/json');
-          setDirty(false);
+          if (!saveTarget) setDirty(false);
         }}><ArrowDownToLine aria-hidden="true" /> Download JSON</Button>}
-        <Button size="sm" variant="outline" disabled={busy || !!draft || !workspaceChanges(data).length} onClick={() => {
+        <Button size="sm" variant="outline" disabled={busy || !!draft || !hasChanges} onClick={() => {
           downloadPatch(data);
           setStatus('Patch download requested.');
         }}><ArrowDownToLine aria-hidden="true" /> Download patch</Button>
-        {submit && <Button size="sm" disabled={busy || !!draft || !dirty || !workspaceChanges(data).length} onClick={reviewForPublish}>
-          Review for pull request
+        {saveTarget && <Button size="sm" disabled={busy || !!draft || !dirty || !hasChanges} onClick={reviewForSave}>
+          {saveTarget.kind === 'folder' ? 'Review and save' : 'Review for pull request'}
         </Button>}
         {submittedUrl && <Button size="sm" variant="link" asChild><a href={submittedUrl} target="_blank" rel="noreferrer">View pull request</a></Button>}
       </div>
@@ -345,7 +371,7 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
       <Button size="sm" variant="ghost" disabled={busy} onClick={() => setLinkedProposal('')}>Dismiss proposal</Button>
       <Button size="sm" disabled={busy || !!draft} onClick={reviewLinkedProposal}>Review linked proposal</Button>
     </div>}
-    {error && !review && !publishReview && <Alert variant="destructive" className="shrink-0 rounded-none border-x-0">
+    {error && !review && !finalReview && <Alert variant="destructive" className="shrink-0 rounded-none border-x-0">
       <AlertDescription className="max-h-32 overflow-auto whitespace-pre-wrap">{error}</AlertDescription>
     </Alert>}
     <div className="flex min-h-0 flex-1 flex-col md:flex-row">
@@ -401,8 +427,8 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
         </main>
       </div>
     <ReviewChanges {...{ review, busy, error }} close={closeReview} save={saveReview} />
-    <ReviewChanges review={publishReview} busy={busy} error={error} confirm="Open pull request"
-      close={() => { setPublishReview(null); setError(''); }} save={() => { void publish(); }} />
+    <ReviewChanges review={finalReview} busy={busy} error={error} confirm={saveTarget?.kind === 'folder' ? 'Save to folder' : 'Open pull request'}
+      close={() => { setFinalReview(null); setError(''); }} save={() => { void saveFinalReview(); }} />
   </div>;
 }
 

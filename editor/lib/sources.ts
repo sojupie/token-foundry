@@ -1,9 +1,8 @@
 import { diffFile, openWorkspace, workspaceChanges } from '../../lib/workspace.ts';
 import type { Workspace } from '../../lib/workspace.ts';
+import { emptyFolder, ignoredDirectories, isTokenFile } from './local-folder.ts';
 import reference from '../../examples/reference.tokens.json?raw';
 import system from '../../examples/system.tokens.json?raw';
-
-const ignoredDirectories = new Set(['.git', 'node_modules', 'dist']);
 
 export function openExample(): Workspace {
   return openWorkspace('Example', [
@@ -16,13 +15,13 @@ export async function openFiles(files: readonly File[], folder: boolean): Promis
   const first = files[0];
   if (!first) throw new Error('Choose at least one token file.');
   const name = folder ? first.webkitRelativePath.split('/')[0] : first.name;
-  const selected = folder ? files.filter((file) => /\.tokens(?:\.json)?$/iu.test(file.name) &&
+  const selected = folder ? files.filter((file) => isTokenFile(file.name) &&
     !file.webkitRelativePath.split('/').slice(1, -1).some((part) => ignoredDirectories.has(part))) : files;
   const sources = await Promise.all(selected.map(async (file) => ({
     path: folder ? file.webkitRelativePath.split('/').slice(1).join('/') : file.name,
     text: await file.text(),
   })));
-  if (!sources.length) throw new Error('The folder has no .tokens.json or .tokens files.');
+  if (!sources.length) throw new Error(emptyFolder);
   return openWorkspace(name ?? 'Token files', sources);
 }
 

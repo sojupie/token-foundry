@@ -1,10 +1,10 @@
 # Token Editor
 
 Open design token files or a folder, browse references across files, edit a token,
-and review the file diff. Download a JSON copy for a single file or a Git patch
-for the workspace. Folder selection imports files ending in `.tokens.json` or
-`.tokens`, preserving their relative paths and skipping `.git`, `node_modules`,
-and `dist` within the selected folder. The built-in example uses two files.
+and review the file diff. Folder selection imports `tokens.json` and files
+ending in `.tokens.json` or `.tokens`. It preserves their relative paths
+and skips `.git`, `node_modules`, and `dist` within the selected folder.
+The built-in example uses two files.
 
 ```sh
 npm ci
@@ -16,6 +16,15 @@ Use Node.js 24. `npm run build` produces a static site under `dist/`.
 The editor parses files in the browser. The workspace model accepts paths and
 file text and produces reviewed changes. The React UI handles file selection and
 downloads.
+
+Choose **Open folder**, make and apply edits in the editor, then choose
+**Review and save** to see the combined diff. On browsers with native
+directory access, **Save to folder** asks for write access and saves the
+reviewed changes to the existing files. The save checks for external edits
+across the workspace, including files used by references. If writing stops
+partway through, you can retry the same review to finish the remaining files.
+Browsers with the standard folder picker can open the same files and
+**Download patch**. **Download JSON** exports a copy of a single open file.
 
 ## Value proposals
 
