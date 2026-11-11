@@ -8,7 +8,7 @@ import type { Draft } from './lib/draft.ts';
 import type { SubmitWorkspace, WorkspaceConnectorProps } from './lib/connector.ts';
 import { OpenGitHub } from '../integrations/github/connect.tsx';
 import { createRoot } from 'react-dom/client';
-import { ArrowDownToLine, ChevronLeft, ChevronRight, FileUp, FolderOpen, FolderPlus, Link2, PanelLeft, Pencil, Plus, Search } from 'lucide-react';
+import { AlertCircle, ArrowDownToLine, ChevronLeft, ChevronRight, FileUp, FolderOpen, FolderPlus, Link2, PanelLeft, Pencil, Plus, Search } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -31,6 +31,7 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
   const [data, setData] = useState(openExample);
   const [group, setGroup] = useState('');
   const [query, setQuery] = useState('');
+  const [onlyUnresolved, setOnlyUnresolved] = useState(false);
   const [selected, setSelected] = useState('');
   const [page, setPage] = useState(0);
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -55,8 +56,11 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
   const typeOptions = folder.type ? ['', ...types] : types;
   const search = query.trim().toLowerCase();
   const groupRows = graph.rows.slice(folder.start, folder.end);
-  const filtered = search ? groupRows.filter(([path, { type, node }]) =>
-    [path, type, node.$description].some((value) => typeof value === 'string' && value.toLowerCase().includes(search))) : groupRows;
+  const unresolvedCount = groupRows.reduce((count, [path]) => count + Number(graph.issues.has(path)), 0);
+  const showOnlyUnresolved = onlyUnresolved && unresolvedCount > 0;
+  const filtered = groupRows.filter(([path, { type, node }]) =>
+    (!showOnlyUnresolved || graph.issues.has(path)) &&
+    (!search || [path, type, node.$description].some((value) => typeof value === 'string' && value.toLowerCase().includes(search))));
   const pages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const rows = filtered.slice(page * pageSize, (page + 1) * pageSize);
   const active = graph.tokens.get(selected);
@@ -158,6 +162,7 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
     setRelated(false);
     setPage(0);
     setQuery('');
+    setOnlyUnresolved(false);
   }
 
   function resetScroll() {
@@ -183,6 +188,7 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
     const start = requireValue(graph.groups.get(parent), 'parent group').start;
     setGroup(parent);
     setQuery('');
+    setOnlyUnresolved(false);
     setPage(Math.floor((graph.rows.findIndex(([id]) => id === path) - start) / pageSize));
     focusRow.current = true;
     select(path);
@@ -200,6 +206,10 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
   function create(groupOnly: boolean) {
     setError('');
     setRelated(false);
+    if (showOnlyUnresolved) {
+      setOnlyUnresolved(false);
+      setPage(0);
+    }
     const destinations = [...folder.files.keys()];
     setDraft({ create: true, groupOnly, path: group, name: '', type: typeOptions[0], value: '', description: '',
       file: destinations.length === 1 ? destinations[0] ?? '' : '' });
@@ -223,7 +233,11 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
       setPage(Math.floor((index - requireValue(next.graph.groups.get(group), 'current group').start) / pageSize));
       setSelected(path);
     }
-    focusRow.current = !applied.groupOnly;
+    if (showOnlyUnresolved && !next.graph.issues.has(path)) {
+      setPage(0);
+      select('');
+      resetScroll();
+    } else focusRow.current = !applied.groupOnly;
     setDraft(null);
   }
 
@@ -389,6 +403,15 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
               <Input type="search" className="h-8 ps-8" aria-label="Search tokens in group" placeholder="Search tokens" value={query}
                 disabled={!!draft || busy} onChange={(event) => { setQuery(event.target.value); setPage(0); select(''); resetScroll(); }} />
             </div>
+            {unresolvedCount > 0 && <Button type="button" size="sm" variant={showOnlyUnresolved ? 'secondary' : 'outline'}
+              aria-pressed={showOnlyUnresolved} disabled={!!draft || busy} onClick={() => {
+                setOnlyUnresolved(!showOnlyUnresolved);
+                setPage(0);
+                select('');
+                resetScroll();
+              }}>
+              <AlertCircle aria-hidden="true" /> Unresolved ({unresolvedCount})
+            </Button>}
             {draft ? <>
               <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={cancel}>Cancel</Button>
               <Button type="button" size="sm" disabled={busy} onClick={commit}>Review changes</Button>

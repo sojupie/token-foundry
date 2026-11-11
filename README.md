@@ -26,6 +26,14 @@ partway through, you can retry the same review to finish the remaining files.
 Browsers with the standard folder picker can open the same files and
 **Download patch**. **Download JSON** exports a copy of a single open file.
 
+**Unresolved** filters the current group to tokens whose references could not
+be resolved. Select a row and open **References** to see the diagnostic.
+
+Run the browser integration tests with `npx playwright install chromium firefox`
+and `npm run test:browser`. Set `MD3_TOKEN_BENCHMARK` to the path of the
+6,818-token Material 3 export to exercise the same unresolved-reference flow
+at that size.
+
 ## Value proposals
 
 Open the source token files, then choose **Open proposal** to review a JSON

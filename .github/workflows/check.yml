@@ -22,3 +22,5 @@ jobs:
       - run: npm run build:worker
         env:
           CLOUDFLARE_SEND_METRICS: 'false'
+      - run: npx playwright install --with-deps chromium firefox
+      - run: npm run test:browser
