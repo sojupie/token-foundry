@@ -1,0 +1,15 @@
+{
+  "system": {
+    "color": {
+      "$type": "color",
+      "text": { "$value": "{reference.color.ink}" },
+      "canvas": { "$value": "{reference.color.paper}" },
+      "accent": { "$value": "{reference.color.ocean}" }
+    },
+    "space": {
+      "$type": "dimension",
+      "control-gap": { "$value": "{reference.space.small}" },
+      "panel-padding": { "$value": "{reference.space.medium}" }
+    }
+  }
+}
