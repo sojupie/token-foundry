@@ -1,5 +1,5 @@
 import type { ReactNode, Ref } from 'react';
-import { Menubar } from 'radix-ui';
+import { Button, Menu as AriaMenu, MenuItem, MenuSection, MenuTrigger, Popover, Separator } from 'react-aria-components';
 
 interface Command {
   label: string;
@@ -7,6 +7,7 @@ interface Command {
   icon: ReactNode;
   disabled?: boolean;
   title?: string | undefined;
+  destructive?: boolean;
 }
 
 export interface Menu {
@@ -14,35 +15,37 @@ export interface Menu {
   sections: readonly (readonly Command[])[];
 }
 
-const itemStyle = 'flex cursor-default items-center gap-2 rounded-sm px-2 py-1.5 outline-none data-disabled:opacity-50 data-highlighted:bg-accent [&>svg]:size-4';
-
-export function CommandMenu({ label, sections, status, triggerRef, onCloseAutoFocus }: Menu & {
-  status?: string; triggerRef?: Ref<HTMLButtonElement>; onCloseAutoFocus?: (event: Event) => void;
+export function CommandMenu({ label, sections, status, triggerRef, icon, disabled }: Menu & {
+  status?: string;
+  triggerRef?: Ref<HTMLButtonElement>;
+  icon?: ReactNode;
+  disabled?: boolean;
 }) {
-  return <Menubar.Menu>
-    <Menubar.Trigger ref={triggerRef} title={status || undefined}
-      className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-sm px-2 text-sm outline-none hover:bg-accent focus:bg-accent data-[state=open]:bg-accent max-sm:text-xs">
-      {label}
-      {status !== undefined && <span aria-hidden="true" className={'size-1.5 rounded-full bg-emerald-600 ' + (status ? '' : 'invisible')} />}
-    </Menubar.Trigger>
-    <Menubar.Portal>
-      <Menubar.Content align="start" sideOffset={4} collisionPadding={8} onCloseAutoFocus={onCloseAutoFocus}
-        className="z-40 min-w-48 rounded-md border bg-popover p-1 text-popover-foreground shadow-md">
-        {sections.filter((section) => section.length > 0).map((section, index) => <Menubar.Group key={section[0]?.label}>
-          {index > 0 && <Menubar.Separator className="my-1 h-px bg-border" />}
-          {section.map((command) => <Menubar.Item key={command.label} disabled={command.disabled ?? false}
-            title={command.title} aria-description={command.title} onSelect={command.run} className={itemStyle}>
+  return <MenuTrigger>
+    <Button ref={triggerRef} aria-label={label} aria-description={status || undefined} isDisabled={disabled ?? false}
+      className={icon ? 'md-icon-button md-standard-icon-button' : 'command-trigger inline-flex shrink-0 items-center gap-1.5'}
+      data-size={icon ? 'xsmall' : undefined} data-shape={icon ? 'round' : undefined} data-width={icon ? 'default' : undefined}>
+      {icon ?? label}
+      {status && <span aria-hidden="true" className="size-1.5 rounded-full bg-emerald-600" />}
+    </Button>
+    <Popover className="command-menu" placement={icon ? 'bottom end' : 'bottom start'} offset={4} containerPadding={8}>
+      <AriaMenu aria-label={label}>
+        {sections.filter(section => section.length > 0).map((section, index) => <MenuSection key={section[0]?.label}>
+          {index > 0 && <Separator className="my-1 h-px bg-border" />}
+          {section.map(command => <MenuItem key={command.label} isDisabled={command.disabled ?? false}
+            textValue={command.label} aria-description={command.title} onAction={command.run}
+            className={'command-menu-item' + (command.destructive ? ' text-destructive' : '')}>
             {command.icon}{command.label}
-          </Menubar.Item>)}
-        </Menubar.Group>)}
-      </Menubar.Content>
-    </Menubar.Portal>
-  </Menubar.Menu>;
+          </MenuItem>)}
+        </MenuSection>)}
+      </AriaMenu>
+    </Popover>
+  </MenuTrigger>;
 }
 
 export function CommandBar({ menus, children }: { menus: readonly Menu[]; children?: ReactNode }) {
-  return <Menubar.Root aria-label="Workspace commands" className="flex shrink-0 items-center gap-1">
-    {menus.map((menu) => <CommandMenu key={menu.label} {...menu} />)}
+  return <fieldset aria-label="Workspace commands" className="flex shrink-0 items-center gap-1">
+    {menus.map(menu => <CommandMenu key={menu.label} {...menu} />)}
     {children}
-  </Menubar.Root>;
+  </fieldset>;
 }

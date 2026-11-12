@@ -1,8 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import { ChevronRight, Search } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { Button, TextField } from '@token-catalog/forge-react';
 import { leafName, parentPath } from '../lib/document.ts';
 import type { DocumentGraph } from '../lib/document.ts';
 import { FolderTree } from './folder-tree.tsx';
@@ -69,10 +68,8 @@ export function ReferencePicker({ graph, source, type, target, seed, flexible, c
   }
 
   return <section aria-label="Link a reference" className="grid min-w-0 gap-2">
-    <div className="relative">
-      <Search className="pointer-events-none absolute start-2.5 top-2.5 size-4 text-muted-foreground" aria-hidden="true" />
-      <Input ref={focusSearch} type="search" aria-label="Search references" placeholder="Search by token or group name"
-        className="ps-8" data-reference-search value={query} onChange={(event) => setQuery(event.target.value)}
+    <TextField ref={focusSearch} type="search" label="Search references" leading={<Search aria-hidden="true" />}
+        placeholder="Search by token or group name" data-reference-search value={query} onChange={(event) => setQuery(event.target.value)}
         onKeyDown={(event) => {
           if (event.key === 'ArrowDown') {
             event.preventDefault();
@@ -84,7 +81,6 @@ export function ReferencePicker({ graph, source, type, target, seed, flexible, c
             else if (terms.length && visible[0]) choose(visible[0]);
           }
         }} />
-    </div>
     <div className="grid min-h-0 grid-cols-[minmax(7rem,41%)_minmax(0,1fr)] overflow-hidden rounded-md border">
       <div className="max-h-64 overflow-auto border-e bg-muted/30">
         <FolderTree graph={graph} current={current} select={browse} allowed={allowed} label="Reference groups" />
@@ -94,13 +90,13 @@ export function ReferencePicker({ graph, source, type, target, seed, flexible, c
           {terms.length ? 'Search results' : current || 'All tokens'}
         </p>
         <div ref={results} aria-label="Reference results" className="min-h-20 max-h-56 overflow-auto p-1">
-          {!terms.length && children.map((path) => <Button key={path} type="button" variant="ghost" size="sm"
-            className="flex w-full justify-between font-normal" onClick={() => browse(path)} onKeyDown={navigateResults}>
+          {!terms.length && children.map((path) => <Button key={path} type="button" variant="text" size="xsmall"
+            className="reference-choice w-full" onClick={() => browse(path)} onKeyDown={navigateResults}>
             <span className="truncate">{leafName(path)}</span><ChevronRight aria-hidden="true" />
           </Button>)}
-          {visible.map((path) => <Button key={path} type="button" variant={target === path ? 'secondary' : 'ghost'}
-            size="sm" title={path} aria-label={path} aria-pressed={target === path}
-            className="flex h-auto min-h-8 w-full items-start justify-between px-2 py-1 text-start font-normal"
+          {visible.map((path) => <Button key={path} type="button" variant={target === path ? 'tonal' : 'text'}
+            size="xsmall" title={path} aria-label={path} aria-pressed={target === path}
+            className="reference-choice w-full"
             onClick={() => choose(path)} onKeyDown={navigateResults}>
             <span className="min-w-0 font-mono text-xs whitespace-normal wrap-anywhere">{terms.length ? path : leafName(path)}</span>
             <span className="max-w-[45%] shrink-0 text-muted-foreground"><TokenValue value={graph.resolved.get(path)} swatch={type === 'color'} /></span>
@@ -112,7 +108,7 @@ export function ReferencePicker({ graph, source, type, target, seed, flexible, c
     </div>
     <div className="flex items-center justify-between gap-2">
       <p className="text-xs text-muted-foreground" aria-live="polite">{summary}</p>
-      {flexible && type && <Button type="button" variant={showAllTypes ? 'secondary' : 'ghost'} size="xs"
+      {flexible && type && <Button type="button" variant={showAllTypes ? 'tonal' : 'text'} size="xsmall"
         aria-pressed={showAllTypes} onClick={() => setShowAllTypes(!showAllTypes)}>All types</Button>}
     </div>
   </section>;

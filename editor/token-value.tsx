@@ -20,8 +20,8 @@ export function TokenValue({ value, swatch = false, authored = false, containsRe
   const text = reference ?? describeTokenValue(value);
   const alpha = isColor(value) ? value.alpha ?? 1 : 1;
   return <span className={'flex min-w-0 items-center gap-1.5 font-mono text-xs ' +
-    (reference ? 'font-medium text-blue-700 dark:text-blue-300' : '')} title={containsReferences && !reference ? 'Contains references · ' + text : text}>
-    {(reference || containsReferences) && <Link2 size={13} className="shrink-0 text-blue-700 dark:text-blue-300" aria-hidden="true" />}
+    (reference ? 'font-medium text-primary' : '')} title={containsReferences && !reference ? 'Contains references · ' + text : text}>
+    {(reference || containsReferences) && <Link2 size={13} className="shrink-0 text-primary" aria-hidden="true" />}
     {swatch && /^#[0-9A-F]{6}$/iu.test(text) && <span aria-hidden="true" className="size-3.5 shrink-0 rounded-sm border"
       style={{ backgroundColor: text, opacity: alpha }} />}
     <span className={wrap ? 'wrap-anywhere whitespace-pre-wrap' : 'truncate'}>{text}{swatch && alpha < 1 ? ' · ' + Math.round(alpha * 100) + '%' : ''}</span>

@@ -1,9 +1,7 @@
 import { useState } from 'react';
 import { Link2 } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
+import { Button, TextField } from '@token-catalog/forge-react';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 import { Textarea } from '@/components/ui/textarea';
 import { colorHex } from '../lib/color.ts';
@@ -44,14 +42,14 @@ function ValueField({ draft, graph, setDraft, busy, type, commit }: Pick<Props, 
   const target = alias ?? pointerTarget;
   const flexible = draft.create || draft.column === 'type' ? !draft.type : !graph.tokens.get(draft.path)?.node.$type;
   const input = {
-    'aria-label': 'Token value', 'data-primary-editor': '', spellCheck: false, disabled: busy,
+    'data-primary-editor': '', spellCheck: false, disabled: busy,
     value: draft.value,
   };
 
   return <div className="grid min-w-0 gap-2">
     <div className="flex flex-wrap items-center justify-between gap-1">
       <span className="text-xs font-medium">{linking ? 'Reference' : 'Value'}</span>
-      <Button type="button" size="xs" variant="ghost" disabled={busy} aria-pressed={linking}
+      <Button type="button" size="xsmall" variant="text" disabled={busy} aria-pressed={linking}
         onClick={() => setReferenceSeed(linking ? null : '')}>
         <Link2 aria-hidden="true" /> {linking ? 'Edit raw value' : 'Link token'}
       </Button>
@@ -59,15 +57,15 @@ function ValueField({ draft, graph, setDraft, busy, type, commit }: Pick<Props, 
     {linking ? <>
       <ReferencePicker graph={graph} source={draft.create ? '' : draft.path} type={type} seed={referenceSeed} target={target} flexible={flexible} apply={commit}
         choose={(path) => setDraft({ ...draft, value: '{' + path + '}' })} />
-      <p className="min-w-0 wrap-anywhere font-mono text-xs text-blue-700 dark:text-blue-300" aria-live="polite">
+      <p className="min-w-0 wrap-anywhere font-mono text-xs text-primary" aria-live="polite">
         {alias || (originalReference && target ? originalReference : 'Choose a token to link')}
       </p>
     </> : <div className="flex min-w-0 gap-2">
-      {format === 'hex' && <Input type="color" aria-label="Pick color" value={color} disabled={busy}
-        className="w-9 shrink-0 p-0.5" onChange={(event) => setDraft({ ...draft, value: event.target.value })} />}
-      {format === 'json' ? <Textarea {...input} rows={3} className="min-w-0 resize-y font-mono text-xs"
+      {format === 'hex' && <input type="color" aria-label="Pick color" value={color} disabled={busy}
+        className="workspace-color-picker" onChange={(event) => setDraft({ ...draft, value: event.target.value })} />}
+      {format === 'json' ? <Textarea {...input} aria-label="Token value" rows={3} className="min-w-0 resize-y font-mono text-xs"
         onChange={(event) => setDraft({ ...draft, value: event.target.value })} /> :
-        <Input {...input} className="min-w-0 font-mono text-xs" onChange={(event) => {
+        <TextField {...input} label="Token value" containerClassName="min-w-0 flex-1" onChange={(event) => {
           const value = event.target.value;
           setDraft({ ...draft, value });
           if (value.startsWith('{')) setReferenceSeed(value.slice(1).replace(/\}$/u, ''));
@@ -93,13 +91,11 @@ export function TokenEditForm({ draft, graph, setDraft, commit, cancel, error, b
   const typeOptions = [...new Set([...dtcgTypes, ...(authored ? [authored] : [])])];
 
   return <form className="grid min-w-0 gap-3" onSubmit={(event) => { event.preventDefault(); commit(); }}>
-    {showName && <div className="grid gap-1.5">
-      <Label htmlFor="token-edit-name">{draft.groupOnly ? 'Group name' : 'Token name'}</Label>
-      <Input id="token-edit-name" data-primary-editor disabled={busy} value={draft.name}
-        onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
-    </div>}
+    {showName && <TextField label={draft.groupOnly ? 'Group name' : 'Token name'}
+      data-initial-focus data-primary-editor disabled={busy} value={draft.name}
+      onChange={(event) => setDraft({ ...draft, name: event.target.value })} />}
     {draft.create && files.length > 1 && <div className="grid gap-1.5">
-      <Label htmlFor="token-edit-file">Source file</Label>
+      <label className="text-sm font-medium" htmlFor="token-edit-file">Source file</label>
       <NativeSelect id="token-edit-file" className="w-full" value={draft.file} disabled={busy}
         onChange={(event) => setDraft({ ...draft, file: event.target.value })}>
         <NativeSelectOption value="">Select source file</NativeSelectOption>
@@ -107,7 +103,7 @@ export function TokenEditForm({ draft, graph, setDraft, commit, cancel, error, b
       </NativeSelect>
     </div>}
     {showType && <div className="grid gap-1.5">
-      <Label htmlFor="token-edit-type">Token type</Label>
+      <label className="text-sm font-medium" htmlFor="token-edit-type">Token type</label>
       <NativeSelect id="token-edit-type" data-primary-editor className="w-full" disabled={busy} value={draft.type ?? ''}
         onChange={(event) => setDraft({ ...draft, type: event.target.value })}>
         <NativeSelectOption value="">{automatic ? 'Automatic (' + automatic + ')' : 'Automatic'}</NativeSelectOption>
@@ -118,15 +114,12 @@ export function TokenEditForm({ draft, graph, setDraft, commit, cancel, error, b
       <p className="text-xs text-muted-foreground">Automatic uses the linked token’s type or the closest group type.</p>
     </div>}
     {showValue && <ValueField {...{ draft, graph, setDraft, busy, type, commit }} />}
-    {showDescription && <div className="grid gap-1.5">
-      <Label htmlFor="token-edit-description">Description</Label>
-      <Input id="token-edit-description" data-primary-editor disabled={busy} value={draft.description}
-        onChange={(event) => setDraft({ ...draft, description: event.target.value })} />
-    </div>}
+    {showDescription && <TextField label="Description" data-primary-editor disabled={busy} value={draft.description}
+      onChange={(event) => setDraft({ ...draft, description: event.target.value })} />}
     {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
     <div className="flex justify-end gap-2">
-      <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={cancel}>Cancel</Button>
-      <Button type="submit" size="sm" disabled={busy}>{draft.create ? 'Review changes' : 'Apply'}</Button>
+      <Button type="button" variant="text" disabled={busy} onClick={cancel}>Cancel</Button>
+      <Button type="submit" disabled={busy}>{draft.create ? 'Review changes' : 'Apply'}</Button>
     </div>
   </form>;
 }

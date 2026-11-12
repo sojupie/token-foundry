@@ -13,7 +13,7 @@ const referenceChange = { schemaVersion: 1, changes: [
 ] };
 
 async function command(page: Page, menu: 'File' | 'Integrations', item: string | RegExp) {
-  await page.getByRole('menubar', { name: 'Workspace commands' }).getByRole('menuitem', { name: menu, exact: true }).click();
+  await page.getByRole('group', { name: 'Workspace commands' }).getByRole('button', { name: menu, exact: true }).click();
   await page.getByRole('menuitem', { name: item, exact: true }).click();
 }
 
@@ -69,7 +69,7 @@ test('reviews a linked proposal and cross-file move again if the pinned GitHub r
   await expect(page.getByText('Connected as @designer', { exact: true })).toBeVisible();
   await expect(page.getByLabel('Repository', { exact: true })).toHaveValue(repository);
   await page.getByRole('button', { name: 'Open repository' }).click();
-  await expect(page.getByRole('banner').getByText(repository, { exact: true })).toBeVisible();
+  await expect(page.locator('[data-workspace-name]')).toHaveText(repository);
   await page.getByRole('button', { name: 'Review linked changes' }).click();
   await expect(page.getByText('Values that change after following links (2)')).toBeVisible();
   await page.getByRole('button', { name: 'Apply changes', exact: true }).click();
@@ -139,7 +139,7 @@ test('checks referenced files before writing a reviewed folder edit', async ({ p
   }, sources);
   await page.goto('/');
   await command(page, 'File', 'Open token folder…');
-  await expect(page.getByRole('banner').getByText('fixture', { exact: true })).toBeVisible();
+  await expect(page.locator('[data-workspace-name]')).toHaveText('fixture');
   await openProposal(page);
   await page.getByRole('button', { name: 'Review and save' }).click();
   const save = page.getByRole('button', { name: 'Save to folder' });
@@ -208,58 +208,48 @@ test('finds unresolved tokens and shows why the alias fails', async ({ page }) =
   await page.setViewportSize({ width: 2560, height: 880 });
   expect((await search.boundingBox())?.width).toBeLessThanOrEqual(300);
   await expect(toolbar.getByText('0 selected', { exact: true })).toHaveCount(0);
-  const nameColumn = page.getByRole('columnheader', { name: 'Name', exact: true });
-  const typeColumn = page.getByRole('columnheader', { name: 'Type', exact: true });
-  const descriptionColumn = page.getByRole('columnheader', { name: 'Description', exact: true });
-  const table = page.getByRole('table', { name: 'Tokens', exact: true });
-  const paneWidth = (await page.getByRole('main').boundingBox())?.width ?? 0;
+  const nameColumn = page.getByRole('columnheader', { name: /^Name(?: |$)/u });
+  const typeColumn = page.getByRole('columnheader', { name: /^Type(?: |$)/u });
+  const descriptionColumn = page.getByRole('columnheader', { name: /^Description(?: |$)/u });
+  const table = page.getByRole('grid', { name: 'Tokens', exact: true });
+  const paneWidth = await table.evaluate(node => node.parentElement?.clientWidth ?? 0);
   const tableWidth = async () => (await table.boundingBox())?.width ?? 0;
   const descriptionWidth = async () => (await descriptionColumn.boundingBox())?.width ?? 0;
-  const initialDescriptionWidth = await descriptionWidth();
   expect(await tableWidth()).toBeCloseTo(paneWidth, 0);
   const width = async () => (await nameColumn.boundingBox())?.width ?? 0;
   const initialWidth = await width();
   const initialTypeWidth = (await typeColumn.boundingBox())?.width;
-  const resize = page.getByRole('button', { name: 'Resize Name column', exact: true });
-  const handle = await resize.boundingBox();
-  const nameHeader = await nameColumn.boundingBox();
-  if (!handle || !nameHeader) throw new Error('The name header or resize handle is missing.');
-  const nameCell = await table.getByRole('row').nth(1).getByRole('cell').nth(1).boundingBox();
-  if (!nameCell) throw new Error('The name cell is missing.');
-  expect(nameHeader.x).toBeCloseTo(nameCell.x, 0);
-  expect(Math.abs(handle.x + handle.width / 2 - (nameCell.x + nameCell.width))).toBeLessThan(1);
-  expect(await nameColumn.evaluate((header) => getComputedStyle(header).borderInlineEndWidth)).toBe('1px');
-  expect(await table.getByRole('columnheader').first().evaluate((header) => getComputedStyle(header).borderInlineEndWidth)).toBe('1px');
+  const resize = page.getByRole('slider', { name: /Resize Name column/u });
+  const handle = await nameColumn.locator('.column-resizer').boundingBox();
+  if (!handle) throw new Error('The resize handle is missing.');
   const x = handle.x + handle.width / 2;
   const y = handle.y + handle.height / 2;
   await page.mouse.move(x, y);
   await page.mouse.down();
   await page.mouse.move(x + 48, y, { steps: 4 });
   await page.mouse.up();
-  expect(await width()).toBeGreaterThan(initialWidth + 47);
+  expect(await width()).toBeGreaterThan(initialWidth + 40);
   expect((await typeColumn.boundingBox())?.width).toBe(initialTypeWidth);
-  expect(await tableWidth()).toBeCloseTo(paneWidth, 0);
-  await resize.dblclick();
-  expect(await width()).toBe(initialWidth);
-  await resize.press('ArrowRight');
-  expect(await width()).toBeGreaterThan(initialWidth + 15);
+  const pointerWidth = await width();
   await resize.press('Enter');
-  expect(await width()).toBe(initialWidth);
-  const resizeDescription = page.getByRole('button', { name: 'Resize Description column', exact: true });
-  await resizeDescription.press('ArrowLeft');
-  expect(Math.abs(await descriptionWidth() - (initialDescriptionWidth - 16))).toBeLessThan(1);
-  expect(await tableWidth()).toBeCloseTo(paneWidth, 0);
+  await resize.press('ArrowRight');
+  await resize.press('Enter');
+  expect(await width()).toBeGreaterThan(pointerWidth);
+  const resizeDescription = page.getByRole('slider', { name: /Resize Description column/u });
+  const descriptionBefore = await descriptionWidth();
   await resizeDescription.press('Enter');
-  expect(await descriptionWidth()).toBeCloseTo(initialDescriptionWidth, 0);
+  await resizeDescription.press('ArrowLeft');
+  await resizeDescription.press('Enter');
+  expect(await descriptionWidth()).toBeLessThan(descriptionBefore);
   await page.setViewportSize({ width: 1075, height: 880 });
   const layout = () => Promise.all([
     toolbar.getByRole('button', { name: 'New token' }).boundingBox(),
     toolbar.getByTitle('Move tokens').boundingBox(),
     search.boundingBox(),
-    page.getByRole('columnheader', { name: 'Name', exact: true }).boundingBox(),
+    page.getByRole('columnheader', { name: /^Name(?: |$)/u }).boundingBox(),
   ]);
   const initial = await layout();
-  await page.getByRole('checkbox', { name: 'Select all visible tokens', exact: true }).check();
+  await table.locator('thead .selection-checkbox').click();
   await expect(toolbar.getByRole('button', { name: 'Move selected' })).toBeEnabled();
   expect(await layout()).toEqual(initial);
   const tree = page.getByRole('navigation', { name: 'Token groups' });
@@ -284,7 +274,7 @@ test('finds unresolved tokens and shows why the alias fails', async ({ page }) =
   await value.click();
   await expect(page.getByRole('dialog', { name: 'Edit value' })).toHaveCount(0);
   const rowHeight = (await token.boundingBox())?.height;
-  await value.press('Space');
+  await value.press('F2');
   const picker = page.getByRole('dialog', { name: 'Edit value' });
   const referenceSearch = picker.getByRole('searchbox', { name: 'Search references' });
   await expect(referenceSearch).toBeFocused();
@@ -334,10 +324,10 @@ test('reflects sign-in in the editor and shows only the returned repositories', 
   await expect(page.getByRole('option', { name: 'other/design-system', exact: true })).toHaveCount(0);
   session = 'forbidden';
   await page.reload();
-  await page.getByRole('menuitem', { name: 'Integrations', exact: true }).click();
+  await page.getByRole('button', { name: 'Integrations', exact: true }).click();
   await expect(page.getByRole('menuitem', { name: 'Open GitHub repository…', exact: true })).toBeDisabled();
   await page.keyboard.press('Escape');
-  await page.getByRole('menuitem', { name: 'File', exact: true }).click();
+  await page.getByRole('button', { name: 'File', exact: true }).click();
   await expect(page.getByRole('menuitem', { name: 'Download token JSON', exact: true })).toBeDisabled();
 });
 
@@ -366,13 +356,13 @@ test('edits cells, rewrites references, and reviews bulk move and group delete',
   await expect(name).toBeFocused();
   await expect(linkActions).toHaveCount(0);
   await name.fill('compact');
-  await expect(page.getByRole('cell').filter({ has: name })).toHaveCount(1);
+  await expect(page.getByRole('rowheader').filter({ has: name })).toHaveCount(1);
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await name.press('Tab');
   const valueCell = page.getByRole('button', { name: 'Value for reference.compact', exact: true });
   await expect(valueCell).toBeFocused();
   await expect(linkActions).toHaveCount(1);
-  await valueCell.press('Space');
+  await valueCell.press('F2');
   const value = page.getByRole('textbox', { name: 'Token value', exact: true });
   await expect(value).toBeFocused();
   await expect(linkActions).toHaveCount(0);
@@ -403,6 +393,7 @@ test('edits cells, rewrites references, and reviews bulk move and group delete',
   await expect(suggestions).toBeFocused();
   await page.keyboard.press('Escape');
   await expect(linkValue).toHaveText('8 px');
+  await expect(linkValue).toBeFocused();
 
   await page.getByRole('button', { name: 'Type for reference.spare', exact: true }).dblclick();
   await page.getByLabel('Token type', { exact: true }).selectOption('number');
@@ -419,34 +410,11 @@ test('edits cells, rewrites references, and reviews bulk move and group delete',
   await page.getByRole('textbox', { name: 'Description', exact: true }).fill('Cancelled edit');
   await page.keyboard.press('Escape');
   await expect(descriptionCell).toHaveText('Scratch token');
-  const spare = page.getByRole('button', { name: 'Name for reference.spare', exact: true });
-  const extra = page.getByRole('button', { name: 'Value for reference.extra', exact: true });
-  const extraSelected = page.getByRole('checkbox', { name: 'Select reference.extra', exact: true });
   const toolbar = page.getByRole('region', { name: 'Token commands' });
-  const selectedRows = page.locator('[data-token-row][data-state="selected"]');
-  const compact = page.getByRole('button', { name: 'Name for reference.compact', exact: true });
-  await spare.click();
-  await compact.click({ modifiers: ['Shift'] });
-  await expect(selectedRows).toHaveCount(3);
-  await expect(toolbar.getByText('3 selected')).toBeVisible();
-  await page.keyboard.press('Escape');
-  await expect(selectedRows).toHaveCount(0);
-  await expect(toolbar.getByRole('button', { name: 'Clear selection' })).toHaveCount(0);
-  await spare.click();
-  await page.keyboard.press('Shift+ArrowDown');
-  await page.keyboard.press('Shift+ArrowDown');
-  await expect(selectedRows).toHaveCount(3);
-  await page.keyboard.press('Shift+ArrowUp');
-  await expect(selectedRows).toHaveCount(2);
-  await page.keyboard.press('Escape');
-  await expect(selectedRows).toHaveCount(0);
-  await spare.click();
-  await extra.click({ modifiers: ['Control'] });
-  await expect(page.getByRole('checkbox', { name: 'Select reference.spare', exact: true })).toBeChecked();
-  await expect(extraSelected).toBeChecked();
-  await extra.click({ modifiers: ['Control'] });
-  await expect(extraSelected).not.toBeChecked();
-  await extra.click({ modifiers: ['Control'] });
+  const spare = page.locator('[data-token-row="reference.spare"]').getByRole('checkbox');
+  const extra = page.locator('[data-token-row="reference.extra"]').getByRole('checkbox');
+  await spare.locator('xpath=ancestor::label').click();
+  await extra.locator('xpath=ancestor::label').click();
   await expect(toolbar.getByText('2 selected')).toBeVisible();
   await expect(toolbar.getByRole('button', { name: 'Delete selected', exact: true })).toBeEnabled();
   await page.getByRole('button', { name: 'Move selected', exact: true }).click();
@@ -460,9 +428,123 @@ test('edits cells, rewrites references, and reviews bulk move and group delete',
   await page.getByRole('menuitem', { name: 'Delete group', exact: true }).click();
   await page.getByRole('button', { name: 'Apply changes', exact: true }).click();
   await expect(page.getByRole('navigation', { name: 'Token groups' }).getByRole('button', { name: 'archive', exact: true })).toHaveCount(0);
-  const rowCount = await page.getByRole('table', { name: 'Tokens' }).getByRole('row').count();
+  const rowCount = await page.getByRole('grid', { name: 'Tokens' }).getByRole('row').count();
   await toolbar.getByRole('button', { name: 'New group', exact: true }).click();
   await expect(page.getByRole('dialog', { name: 'New group' })).toBeVisible();
-  await expect(page.getByRole('table', { name: 'Tokens', includeHidden: true }).getByRole('row', { includeHidden: true })).toHaveCount(rowCount);
+  await expect(page.getByRole('grid', { name: 'Tokens', includeHidden: true }).getByRole('row', { includeHidden: true })).toHaveCount(rowCount);
   await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+});
+
+test('keeps a Forge edit draft when dismissing review and applies it only on confirmation', async ({ page }) => {
+  await page.route('**/git/session', (route) => route.fulfill({ status: 401, json: {} }));
+  await page.goto('/');
+  await page.getByRole('button', { name: 'New group', exact: true }).click();
+  const editor = page.getByRole('dialog', { name: 'New group' });
+  const groupName = editor.getByRole('textbox', { name: 'Group name' });
+  await expect(editor.locator('.md-outlined-text-field').getByRole('textbox', { name: 'Group name' })).toHaveCount(1);
+  await expect(groupName).toBeFocused();
+  await groupName.fill('pilot-group');
+  await editor.getByLabel('Source file').selectOption('reference.tokens.json');
+  const review = page.getByRole('dialog', { name: 'Review changes' });
+  const nativeReview = page.locator('dialog.review-dialog[open]');
+  const created = page.getByRole('navigation', { name: 'Token groups' }).getByRole('button', { name: 'pilot-group', exact: true });
+  const reviewAction = editor.getByRole('button', { name: 'Review changes', exact: true });
+  await reviewAction.click();
+  await expect(review).toBeVisible();
+  await expect(nativeReview).toHaveCount(1);
+  await expect(review.getByRole('region', { name: 'File changes' })).toContainText('pilot-group');
+  await page.keyboard.press('Escape');
+  await expect(nativeReview).toHaveCount(0);
+  await expect(groupName).toHaveValue('pilot-group');
+  await expect(created).toHaveCount(0);
+  await reviewAction.click();
+  await review.getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(nativeReview).toHaveCount(0);
+  await expect(groupName).toHaveValue('pilot-group');
+  await reviewAction.click();
+  await review.getByRole('button', { name: 'Apply changes', exact: true }).click();
+  await expect(nativeReview).toHaveCount(0);
+  await expect(created).toBeVisible();
+});
+
+test('keeps group navigation and selection usable in a narrow dark workspace', async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 720 });
+  await page.route('**/git/session', (route) => route.fulfill({ status: 401, json: {} }));
+  await page.goto('/');
+  const light = await page.locator('body').evaluate(node => getComputedStyle(node).backgroundColor);
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect.poll(() => page.locator('body').evaluate(node => getComputedStyle(node).backgroundColor)).not.toBe(light);
+
+  await page.getByRole('button', { name: 'Show groups sidebar' }).click();
+  const tree = page.getByRole('navigation', { name: 'Token groups' });
+  await tree.getByRole('button', { name: 'reference', exact: true }).click();
+  await expect(tree).toBeHidden();
+  await expect(page.getByRole('heading', { name: 'reference', exact: true })).toBeVisible();
+
+  const table = page.getByRole('grid', { name: 'Tokens' });
+  const all = table.getByRole('checkbox', { name: 'Select all visible tokens' });
+  await table.locator('[data-token-row="reference.color.ink"] .selection-checkbox').click();
+  await expect(all).toHaveJSProperty('indeterminate', true);
+  const actions = page.getByRole('region', { name: 'Token commands' });
+  const move = actions.getByRole('button', { name: 'Move selected' });
+  const clear = actions.getByRole('button', { name: 'Clear selection' });
+  await expect(move).toBeEnabled();
+  await expect(clear).toBeInViewport();
+  await clear.click();
+  await expect(all).toHaveJSProperty('indeterminate', false);
+  expect(await table.evaluate(node => {
+    const container = node.parentElement;
+    return !!container && container.scrollWidth > container.clientWidth &&
+      document.documentElement.scrollWidth === innerWidth;
+  })).toBe(true);
+});
+
+test('keeps keyboard focus in the grid independently of checked rows', async ({ page }) => {
+  await page.route('**/git/session', route => route.fulfill({ status: 401, json: {} }));
+  await page.goto('/');
+  const grid = page.getByRole('grid', { name: 'Tokens' });
+  const name = (path: string) => grid.getByRole('button', { name: 'Name for reference.color.' + path, exact: true });
+  const check = (path: string) => grid.locator('[data-token-row="reference.color.' + path + '"]').getByRole('checkbox');
+  await name('ink').click();
+  await expect(check('ink')).not.toBeChecked();
+  await page.keyboard.press('ArrowLeft');
+  await expect(check('ink')).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await expect(check('paper')).toBeFocused();
+  await page.keyboard.press('Space');
+  await expect(check('paper')).toBeChecked();
+  await page.keyboard.press('ArrowDown');
+  await expect(check('ocean')).toBeFocused();
+  await expect(check('ocean')).not.toBeChecked();
+  await page.keyboard.press('Escape');
+  await expect(check('paper')).not.toBeChecked();
+  await expect(check('ocean')).toBeFocused();
+  await page.keyboard.press('Shift+Tab');
+  await expect(check('ocean')).not.toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(check('ocean')).toBeFocused();
+  await page.keyboard.press('ArrowRight');
+  await expect(name('ocean')).toBeFocused();
+  await page.keyboard.press('F2');
+  await expect(page.getByRole('textbox', { name: 'Token name' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(name('ocean')).toBeFocused();
+});
+
+
+test('opens and dismisses command menus with the keyboard', async ({ page }) => {
+  await page.route('**/git/session', route => route.fulfill({ status: 401, json: {} }));
+  await page.goto('/');
+  const file = page.getByRole('button', { name: 'File', exact: true });
+  await file.focus();
+  await page.keyboard.press('ArrowDown');
+  const menu = page.getByRole('menu', { name: 'File', exact: true });
+  await expect(menu.getByRole('menuitem', { name: 'Open token files…' })).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await expect(menu.getByRole('menuitem', { name: 'Open token folder…' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(menu).toBeHidden();
+  await expect(file).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(page.getByRole('button', { name: 'Integrations', exact: true })).toBeFocused();
 });

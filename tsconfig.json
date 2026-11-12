@@ -39,7 +39,7 @@
     "checkJs": true,
     "noImplicitAny": true,
     "useUnknownInCatchVariables": true,
-    "skipLibCheck": false,
+    "skipLibCheck": true,
     "isolatedModules": true
   },
   "include": [

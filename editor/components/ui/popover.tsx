@@ -1,14 +1,15 @@
-import type { ComponentProps } from 'react';
-import { Popover as Primitive } from 'radix-ui';
-import { cn } from '@/lib/utils';
+import { Dialog, Popover } from 'react-aria-components';
+import type { ReactNode, RefObject } from 'react';
 
-export const Popover = Primitive.Root;
-export const PopoverAnchor = Primitive.Anchor;
-
-export function PopoverContent({ className, sideOffset = 6, ...props }: ComponentProps<typeof Primitive.Content>) {
-  return <Primitive.Portal>
-    <Primitive.Content align="start" sideOffset={sideOffset} collisionPadding={12}
-      className={cn('z-40 max-h-[var(--radix-popover-content-available-height)] max-w-[calc(100vw-1.5rem)] overflow-auto rounded-lg border bg-popover p-3 text-popover-foreground shadow-lg outline-none', className)}
-      {...props} />
-  </Primitive.Portal>;
+export function EditorPopover({ anchor, label, onDismiss, children }: {
+  anchor: RefObject<HTMLElement | null>;
+  label: string;
+  onDismiss: () => void;
+  children: ReactNode;
+}) {
+  return <Popover triggerRef={anchor} isOpen onOpenChange={open => { if (!open) onDismiss(); }}
+    placement="bottom start" offset={6} containerPadding={12}
+    className="editor-popover w-[38rem]" data-component-assets>
+    <Dialog aria-label={label} className="outline-none">{children}</Dialog>
+  </Popover>;
 }

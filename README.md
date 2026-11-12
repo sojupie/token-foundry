@@ -1,4 +1,4 @@
-# Token Editor
+# Token Foundry
 
 Open design token files or a folder, edit tokens in the table, and review the file diff. Folder selection imports `tokens.json` and files
 ending in `.tokens.json` or `.tokens`. It preserves their relative paths
@@ -26,15 +26,17 @@ Browsers with the standard folder picker can open the same files and
 **Download patch**. Run `git apply token-changes.patch` in your checkout.
 **Download token JSON** exports a copy of a single open file.
 
-Click a cell to select it. Use the arrow keys to navigate, and double-click,
-press Space, or press F2 to edit. Names, descriptions, and simple values
-edit directly in the cell. Enter or Tab applies the edit and moves to the
-next row or cell. Escape cancels. A reference opens the group tree and live
-search. Structured values open a larger editor.
+Use the arrow keys to move between rows, checkboxes, and cells. Press Space
+to check a row. Press Escape to clear selection while keeping your place.
+Double-click a cell or press Enter or F2 to edit. Names, descriptions, and
+simple values edit in the cell. In that editor, Enter applies the edit and
+moves down. Tab applies it and moves to the next editable cell. Escape cancels
+and returns focus to the cell. References and structured values open an
+anchored editor.
 
-Drag the right edge of a column heading to resize it. Double-click that edge
-to reset the width. You can also focus the resize handle and use the arrow
-keys to resize or Enter to reset.
+Drag the right edge of a column heading to resize it. With the keyboard, focus
+the resize handle, press Enter, adjust the width with the arrow keys, then
+press Enter to finish.
 
 The grid toolbar creates tokens and groups, searches the current group,
 and filters unresolved tokens. Selecting tokens enables Move and Delete there. The group menu handles moves and deletes for the current
@@ -52,6 +54,44 @@ Run the browser integration tests with `npx playwright install chromium firefox`
 and `npm run test:browser`. Set `MD3_TOKEN_BENCHMARK` to the path of the
 6,818-token Material 3 export to exercise the same unresolved-reference flow
 at that size.
+
+## Work on the UI
+
+Foundry is a React and Vite app for editing DTCG token files. Start in
+[`editor/main.tsx`](editor/main.tsx) for the workspace and
+[`editor/token-grid.tsx`](editor/token-grid.tsx) for cell editing.
+The `lib/` directory owns token parsing, references, and reviewed file
+changes. The UI owns focus, drafts, and review state.
+
+Use `@token-catalog/forge-react` for buttons, icon buttons, text fields,
+links styled as buttons, and native dialogs. Import the package stylesheet
+once. Place `data-component-assets` on the workspace root and on any portal
+surface that renders Forge controls outside it. Set both `data-theme` and
+`data-contrast` on the document element to select a Forge theme.
+The file open in the editor supplies token data for the table. The Forge
+package supplies the theme of the editor itself.
+
+React Aria owns grid navigation, row selection, resizing, command menus, and
+the anchored cell editor. Keep the grid's focused cell independent of the
+checked rows. Use Forge color roles for styles in
+[`editor/components/ui/primitives.css`](editor/components/ui/primitives.css).
+Keep Foundry-specific layout in [`editor/workspace.css`](editor/workspace.css).
+
+If a change only affects this workspace or token editing, make it here.
+For a shared primitive or a Forge style or behavior change, edit the source in
+the [Forge React package](https://github.com/sojupie/tokens/tree/main/forge/react)
+and follow its build guide. Then copy the new versioned tarball into
+`vendor/` and install it from the Foundry root. Replace `VERSION` with the tarball version.
+
+```sh
+npm install "./vendor/token-catalog-forge-react-VERSION.tgz"
+```
+
+Remove the superseded tarball and commit the new tarball, `package.json`, and
+`package-lock.json` together. Foundry builds from that pinned package, so it
+can build on its own. Run `npm run check`, `npm run build`,
+`npm run build:hosted`, and `npm run test:browser`. For changes to the grid
+or a popup, test keyboard navigation, selection, Escape, and focus return.
 
 ## Import value changes
 
@@ -75,6 +115,12 @@ A producer can also open the editor with the same JSON encoded as
 `#proposal=<percent-encoded JSON>` (up to 8,000 encoded characters). The editor
 removes the fragment from the address bar and keeps the proposal in memory for
 review. Opening this URL leaves the workspace and Git untouched.
+
+## Public build
+
+Run `npm run build` for the public editor. The existing public Worker uses
+`wrangler.public.jsonc` to serve those static files. Deploy it with
+`npx wrangler deploy --config wrangler.public.jsonc`.
 
 ## Hosted Git
 

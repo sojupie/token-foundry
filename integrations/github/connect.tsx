@@ -3,8 +3,8 @@ import { useEffect, useRef, useState } from 'react';
 import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { GitPullRequest } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Button, ButtonLink } from '@token-catalog/forge-react';
+import { ActionDialog } from '@/components/ui/dialog';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 import type { WorkspaceConnection, WorkspaceConnectorProps } from '../../editor/lib/connector.ts';
 import { errorMessage, isRecord, isUnknownArray } from '../../lib/json.ts';
@@ -81,7 +81,7 @@ function GitHubConnector({ disabled, connect, canReplace }: WorkspaceConnectorPr
   const [preferredRepository, setPreferredRepository] = useState('');
   const [checkingSignIn, setCheckingSignIn] = useState(false);
   const signIn = useRef<Window | null>(null);
-  const menu = useRef<HTMLButtonElement>(null);
+  const [opener, setOpener] = useState<HTMLButtonElement | null>(null);
   const { data: session, isPending, error: sessionError } = useQuery({
     queryKey: sessionKey,
     queryFn: ({ signal }) => getSession(signal),
@@ -124,25 +124,16 @@ function GitHubConnector({ disabled, connect, canReplace }: WorkspaceConnectorPr
   const unavailable = session?.state === 'forbidden' ? 'Your account does not have access to GitHub integration.' :
     connected && !repositories.length ? 'Your account has no repositories available in Token Foundry.' : undefined;
   return <>
-    <CommandMenu label="Integrations" triggerRef={menu} status={connected ? 'GitHub connected as @' + connected.login : ''}
-      onCloseAutoFocus={(event) => { if (open) event.preventDefault(); }}
+    <CommandMenu label="Integrations" triggerRef={setOpener} status={connected ? 'GitHub connected as @' + connected.login : ''}
       sections={[[{ label: 'Open GitHub repository…', icon: <GitPullRequest aria-hidden="true" />, title: unavailable,
         disabled: disabled || Boolean(unavailable), run: () => { resetConnection(); setOpen(true); } }]]} />
-    <Dialog open={open} onOpenChange={(next) => { if (!busy) setOpen(next); }}>
-    <DialogContent showCloseButton={!busy} onCloseAutoFocus={(event) => {
-      event.preventDefault();
-      menu.current?.focus();
-    }}>
-      <DialogHeader>
-        <DialogTitle>Open GitHub repository</DialogTitle>
-        <DialogDescription>{connected ? 'Connected as @' + connected.login :
-          'Sign in to see the repositories available to you.'}</DialogDescription>
-      </DialogHeader>
+    <ActionDialog open={open} busy={busy} opener={opener} onOpenChange={(next) => { if (!busy) setOpen(next); }}
+      title="Open GitHub repository" description={connected ? 'Connected as @' + connected.login :
+        'Sign in to see the repositories available to you.'}>
       <form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); openRepository(); }}>
         {isPending && <output className="text-sm text-muted-foreground">Checking GitHub session…</output>}
         {sessionError && <Alert variant="destructive"><AlertDescription>{errorMessage(sessionError)}</AlertDescription></Alert>}
-        {!sessionError && session?.state === 'signed-out' && <Button asChild variant="outline" className="justify-self-start">
-          <a href="/git/sign-in" target="_blank" rel="noreferrer" onClick={(event) => {
+        {!sessionError && session?.state === 'signed-out' && <ButtonLink variant="outlined" className="justify-self-start" href="/git/sign-in" target="_blank" rel="noreferrer" onClick={(event) => {
             const popup = window.open('/git/sign-in', 'token-foundry-sign-in', 'popup,width=620,height=720');
             if (popup) {
               event.preventDefault();
@@ -150,8 +141,7 @@ function GitHubConnector({ disabled, connect, canReplace }: WorkspaceConnectorPr
               signIn.current = popup;
               setCheckingSignIn(true);
             }
-          }}>{checkingSignIn ? 'Continue in GitHub' : 'Sign in to GitHub'}</a>
-        </Button>}
+          }}>{checkingSignIn ? 'Continue in GitHub' : 'Sign in to GitHub'}</ButtonLink>}
         {connected && (repositories.length ? <div className="grid gap-2">
           <label htmlFor="git-repository" className="text-sm font-medium">Repository</label>
           <NativeSelect id="git-repository" value={repository} onChange={(event) => setPreferredRepository(event.target.value)} disabled={busy}>
@@ -159,11 +149,10 @@ function GitHubConnector({ disabled, connect, canReplace }: WorkspaceConnectorPr
           </NativeSelect>
         </div> : <p className="text-sm text-muted-foreground">No configured repositories are available to this GitHub account.</p>)}
         {error && <Alert variant="destructive"><AlertDescription>{errorMessage(error)}</AlertDescription></Alert>}
-        {connected && repositories.length > 0 && <DialogFooter>
+        {connected && repositories.length > 0 && <div className="flex justify-end">
           <Button type="submit" disabled={busy || !repository}>{busy ? 'Opening…' : 'Open repository'}</Button>
-        </DialogFooter>}
+        </div>}
       </form>
-    </DialogContent>
-    </Dialog>
+    </ActionDialog>
   </>;
 }

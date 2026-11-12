@@ -1,0 +1,125 @@
+.action-dialog > .md-basic-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.action-dialog > .md-basic-header h2 { overflow-wrap: anywhere; }
+.action-dialog .md-dialog-content { scrollbar-width: thin; }
+.action-dialog .md-dialog-content :focus-visible { outline-offset: 0; }
+
+.command-trigger {
+  min-height: 36px;
+  padding: 0 12px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.command-trigger:hover, .command-trigger[data-pressed] { background: var(--md-sys-color-surface-container-high); }
+.command-menu {
+  z-index: 40;
+  min-width: 12rem;
+  max-width: calc(100dvw - 16px);
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: 16px;
+  background: var(--md-sys-color-surface-container);
+  color: var(--md-sys-color-on-surface);
+  padding: 4px;
+  box-shadow: 0 3px 10px color-mix(in srgb, var(--md-sys-color-shadow) 18%, transparent);
+}
+.command-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 6px 12px;
+  border-radius: 12px;
+  cursor: default;
+  outline: none;
+}
+.command-menu-item:is([data-hovered], [data-focused]) { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
+.command-menu-item[data-disabled] { opacity: .38; }
+.command-menu-item svg { width: 18px; height: 18px; flex: none; }
+@media (max-width: 480px) {
+  .command-trigger { padding-inline: 7px; font-size: 12px; }
+}
+
+.surface-message {
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+}
+.surface-message[data-tone="destructive"] {
+  background: var(--md-sys-color-error-container);
+  color: var(--md-sys-color-on-error-container);
+}
+.editor-popover {
+  z-index: 40;
+  max-inline-size: calc(100dvw - 24px);
+  overflow: auto;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: 20px;
+  background: var(--md-sys-color-surface-container);
+  color: var(--md-sys-color-on-surface);
+  padding: 16px;
+  box-shadow: 0 5px 18px color-mix(in srgb, var(--md-sys-color-shadow) 22%, transparent);
+  outline: none;
+}
+.native-field {
+  min-inline-size: 0;
+  min-block-size: 40px;
+  padding: 8px 12px;
+  border: 1px solid var(--md-sys-color-outline);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--md-sys-color-on-surface);
+}
+.native-field:disabled { opacity: .48; }
+.native-select { position: relative; width: fit-content; max-width: 100%; }
+.native-select select { appearance: none; max-width: 100%; padding-inline-end: 36px; }
+.native-select svg {
+  position: absolute;
+  inset-inline-end: 12px;
+  top: 50%;
+  translate: 0 -50%;
+  width: 16px;
+  height: 16px;
+  color: var(--md-sys-color-on-surface-variant);
+  pointer-events: none;
+}
+
+
+.selection-checkbox {
+  display: inline-grid;
+  place-items: center;
+  inline-size: 40px;
+  block-size: 40px;
+  vertical-align: middle;
+  color: var(--md-sys-color-on-primary);
+  cursor: pointer;
+}
+.selection-checkbox > span[aria-hidden] {
+  inline-size: 18px;
+  block-size: 18px;
+  border: 2px solid var(--md-sys-color-on-surface-variant);
+  border-radius: 2px;
+}
+.selection-checkbox:is([data-selected], [data-indeterminate]) > span[aria-hidden] {
+  border-color: var(--md-sys-color-primary);
+  background: var(--md-sys-color-primary);
+}
+.selection-checkbox[data-focus-visible] {
+  outline: 2px solid var(--md-sys-color-primary);
+  outline-offset: -2px;
+  border-radius: 50%;
+}
+.selection-checkbox[data-disabled] { opacity: .38; cursor: default; }
+@media (forced-colors: active) {
+  .selection-checkbox:is([data-selected], [data-indeterminate]) > span[aria-hidden] {
+    forced-color-adjust: none;
+    background: Highlight;
+    border-color: Highlight;
+    color: HighlightText;
+  }
+  .selection-checkbox[data-focus-visible] { outline-color: Highlight; }
+}

@@ -1,7 +1,8 @@
 import type { Review } from '../lib/workspace.ts';
-import { Button } from '@/components/ui/button';
+import { useState } from 'react';
+import { Button } from '@token-catalog/forge-react';
+import { ActionDialog } from '@/components/ui/dialog';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { describeTokenValue, TokenValue } from './token-value.tsx';
 
@@ -15,21 +16,29 @@ function diffClass(line: string) {
 export function ReviewChanges({ review, busy, error, notice, close, save, confirm = 'Apply changes' }: {
   review: Review | null; busy: boolean; error: string; notice?: string; close: () => void; save: () => void; confirm?: string;
 }) {
-  const importedValues = review?.importedValues;
-  const fileChanges = review && <section aria-label="File changes" className="max-h-[55dvh] min-w-0 overflow-auto rounded-md border bg-muted/30 py-2 text-xs leading-6">
+  // Keep the reviewed diff visible while the native dialog fades out.
+  const [exitingReview, setExitingReview] = useState<Review | null>(null);
+  if (review && review !== exitingReview) setExitingReview(review);
+  const visibleReview = review ?? exitingReview;
+  const importedValues = visibleReview?.importedValues;
+  const fileChanges = visibleReview && <section aria-label="File changes" className="max-h-[55dvh] min-w-0 overflow-auto rounded-md border bg-muted/30 py-2 text-xs leading-6">
     <pre>
-      {Array.from(review.diff.split('\n').entries(), ([lineNumber, line]) =>
+      {Array.from(visibleReview.diff.split('\n').entries(), ([lineNumber, line]) =>
         <span className={'block w-max min-w-full px-3 ' + diffClass(line)} key={lineNumber}>{line || ' '}</span>)}
     </pre>
   </section>;
-  return <Dialog open={Boolean(review)} onOpenChange={(open) => { if (!open && !busy) close(); }}>
-    {review && <DialogContent showCloseButton={!busy} className="max-h-[calc(100dvh-2rem)] overflow-auto sm:max-w-3xl">
-      <DialogHeader>
-        <DialogTitle>{importedValues ? 'Review value changes' : 'Review changes'}</DialogTitle>
-        <DialogDescription className="wrap-anywhere">{importedValues
-          ? 'Applying these values keeps your other edits. To save or download, use Review changes.'
-          : review.file}</DialogDescription>
-      </DialogHeader>
+  return <ActionDialog busy={busy} className="review-dialog" open={Boolean(review)} onOpenChange={(open) => { if (!open && !busy) close(); }}
+    onAfterClose={() => { if (!review) setExitingReview(null); }}
+    style={{ inlineSize: '48rem' }}
+    title={importedValues ? 'Review value changes' : 'Review changes'}
+    description={importedValues
+      ? 'Applying these values keeps your other edits. To save or download, use Review changes.'
+      : visibleReview?.file}
+    actions={visibleReview && <>
+      <Button variant="text" disabled={busy} data-dialog-close="">{importedValues ? 'Cancel' : 'Back to edit'}</Button>
+      <Button disabled={busy} onClick={save}>{busy ? 'Working…' : confirm}</Button>
+    </>}>
+    {visibleReview && <div className="grid min-w-0 gap-2">
       {notice && <Alert><AlertDescription>{notice}</AlertDescription></Alert>}
       {importedValues ? <>
         <div className="max-h-[40dvh] overflow-auto rounded-md border">
@@ -62,9 +71,9 @@ export function ReviewChanges({ review, busy, error, notice, close, save, confir
         </details>
       </> : fileChanges}
       <details className="rounded-md border p-3 text-xs">
-        <summary className="cursor-pointer">Values that change after following links ({review.impact.length})</summary>
-        {review.impact.length > 0 && <ul className="mt-2 max-h-40 space-y-2 overflow-auto">
-          {review.impact.map(({ path, before, after }) => <li className="wrap-anywhere font-mono" key={path}>
+        <summary className="cursor-pointer">Values that change after following links ({visibleReview.impact.length})</summary>
+        {visibleReview.impact.length > 0 && <ul className="mt-2 max-h-40 space-y-2 overflow-auto">
+          {visibleReview.impact.map(({ path, before, after }) => <li className="wrap-anywhere font-mono" key={path}>
             <div className="font-medium">{path}</div>
             <div className="flex gap-2"><span className="text-muted-foreground">Before</span><TokenValue value={before} swatch wrap /></div>
             <div className="flex gap-2"><span className="text-muted-foreground">After</span><TokenValue value={after} swatch wrap /></div>
@@ -72,10 +81,6 @@ export function ReviewChanges({ review, busy, error, notice, close, save, confir
         </ul>}
       </details>
       {error && <Alert variant="destructive"><AlertDescription className="whitespace-pre-wrap">{error}</AlertDescription></Alert>}
-      <DialogFooter>
-        <Button type="button" variant="outline" disabled={busy} onClick={close}>{importedValues ? 'Cancel' : 'Back to edit'}</Button>
-        <Button type="button" disabled={busy} onClick={save}>{busy ? 'Working…' : confirm}</Button>
-      </DialogFooter>
-    </DialogContent>}
-  </Dialog>;
+    </div>}
+  </ActionDialog>;
 }
