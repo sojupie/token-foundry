@@ -100,15 +100,16 @@ providers.
 
 Run `npm run build:hosted -- --outDir .wrangler/staging-assets` and deploy with
 `npx wrangler deploy --config wrangler.staging.jsonc` to a Cloudflare account
-with Zero Trust enabled. This configuration serves the editor and Git API from
-one Worker and starts with its public routes disabled. In Cloudflare Access,
-protect this Worker for **All traffic** with an allow policy for the pilot
-users. Then enable its `workers.dev` URL and leave preview URLs off. Keep
-`workers_dev` enabled in the staging configuration used for later deployments.
+with Zero Trust enabled. The staging configuration serves the editor and Git
+API from one Worker with the `workers.dev` route and preview URLs enabled.
+When bootstrapping a new Worker, set `workers_dev` and `preview_urls` to
+`false` for its first upload. In Cloudflare Access, protect this Worker for
+**All traffic** with an allow policy for the pilot users before enabling the
+URLs. The staging configuration preserves variables set in Cloudflare.
 
 Set the Worker variables and secrets listed above for this staging deployment.
-Use the staging URL for `EDITOR_ORIGIN` and its `/git/callback` path for the
-GitHub App callback. Install the app on the pilot repository and list that
-repository in `GIT_PROJECTS`. Verify that a signed-out visitor is stopped at
-Access and that an invited user can open the repository and submit a reviewed
-pull request.
+Use the main staging URL for `EDITOR_ORIGIN` and its `/git/callback` path for
+the GitHub App callback. Use that URL for Git operations. Install the app on
+the pilot repository and list it in `GIT_PROJECTS`. Verify that Access stops a
+signed-out visitor and that an invited user can open the repository and submit
+a reviewed pull request.
