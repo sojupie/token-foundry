@@ -1,7 +1,6 @@
 # Token Editor
 
-Open design token files or a folder, browse references across files, edit a token,
-and review the file diff. Folder selection imports `tokens.json` and files
+Open design token files or a folder, edit tokens in the table, and review the file diff. Folder selection imports `tokens.json` and files
 ending in `.tokens.json` or `.tokens`. It preserves their relative paths
 and skips `.git`, `node_modules`, and `dist` within the selected folder.
 The built-in example uses two files.
@@ -17,29 +16,51 @@ The editor parses files in the browser. The workspace model accepts paths and
 file text and produces reviewed changes. The React UI handles file selection and
 downloads.
 
-Choose **Open folder**, make and apply edits in the editor, then choose
+Choose **Open token folder…**, make and apply edits in the editor, then choose
 **Review and save** to see the combined diff. On browsers with native
 directory access, **Save to folder** asks for write access and saves the
 reviewed changes to the existing files. The save checks for external edits
 across the workspace, including files used by references. If writing stops
 partway through, you can retry the same review to finish the remaining files.
 Browsers with the standard folder picker can open the same files and
-**Download patch**. **Download JSON** exports a copy of a single open file.
+**Download patch**. Run `git apply token-changes.patch` in your checkout.
+**Download token JSON** exports a copy of a single open file.
+
+Click a cell to select it. Use the arrow keys to navigate, and double-click,
+press Space, or press F2 to edit. Names, descriptions, and simple values
+edit directly in the cell. Enter or Tab applies the edit and moves to the
+next row or cell. Escape cancels. A reference opens the group tree and live
+search. Structured values open a larger editor.
+
+Drag the right edge of a column heading to resize it. Double-click that edge
+to reset the width. You can also focus the resize handle and use the arrow
+keys to resize or Enter to reset.
+
+The grid toolbar creates tokens and groups, searches the current group,
+and filters unresolved tokens. Selecting tokens enables Move and Delete there. The group menu handles moves and deletes for the current
+group. The final review shows the affected files.
+
+Open and export commands live under **File**. Use the sidebar icon to show or hide groups. The hosted editor
+connects to GitHub under **Integrations**. To load the full MD3 benchmark in
+the dev editor, set `MD3_TOKEN_BENCHMARK` to its local file path before
+starting Vite and choose **File → Open Material 3 sample**.
 
 **Unresolved** filters the current group to tokens whose references could not
-be resolved. Select a row and open **References** to see the diagnostic.
+be resolved. Select a cell and choose **References** to see the diagnostic.
 
 Run the browser integration tests with `npx playwright install chromium firefox`
 and `npm run test:browser`. Set `MD3_TOKEN_BENCHMARK` to the path of the
 6,818-token Material 3 export to exercise the same unresolved-reference flow
 at that size.
 
-## Value proposals
+## Import value changes
 
-Open the source token files, then choose **Open proposal** to review a JSON
-batch from another tool. Version 1 accepts changes to existing token values.
-The editor compares each `before` value to the open workspace and shows the
-file diffs before applying the batch.
+Foundry matches changes by token path in the current workspace. Open the files
+that contain those tokens together. Choose **File → Import value changes…** and select
+`token-proposal.json` from your Figma token plugin or a JSON file in the format
+below. Review the old and new values, then apply the changes.
+Your other edits stay in place. If an old value differs from the open value,
+the import stops and names the token. Apply downloaded `.patch` files with Git.
 
 ```json
 {
@@ -79,6 +100,9 @@ needed for the proposed action.
 | `GITHUB_CLIENT_ID` | GitHub App client ID |
 | `GITHUB_CLIENT_SECRET` | GitHub App client secret, set as a Worker secret |
 | `GIT_SESSION_KEY` | A random 32-byte key encoded as unpadded base64url, set as a Worker secret |
+
+After signing in, the editor shows your GitHub account and the configured
+repositories available through the GitHub App. Choose a repository to open it.
 
 Connected workspaces read the default branch at a pinned commit. Proposals can
 modify existing `*.tokens.json`, `*.tokens`, and `tokens.json` files inside the

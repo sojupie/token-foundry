@@ -21,14 +21,24 @@ function safePath(path: string): boolean {
   return path.split('/').every((part) => pathSegment.test(part));
 }
 
-export function selectedRoot(raw: string, repository: string): string {
-  if (!repositoryName.test(repository)) fail(400, 'Enter a GitHub repository as owner/name.');
+function configuredProjects(raw: string): Map<string, string> {
   let projects: unknown;
   try { projects = JSON.parse(raw); } catch { fail(503, 'Git repositories have not been configured.'); }
   if (!isRecord(projects)) fail(503, 'Git repositories have not been configured.');
-  const root = Object.hasOwn(projects, repository) ? projects[repository] : undefined;
-  if (typeof root !== 'string' || !safePath(root) || root.split('/').length > 5) fail(404, 'This repository is not available.');
-  return root;
+  return new Map(Object.entries(projects).flatMap(([repository, root]) =>
+    repositoryName.test(repository) && typeof root === 'string' && safePath(root) && root.split('/').length <= 5 ?
+      [[repository, root] as const] : []));
+}
+
+export function selectedRoot(raw: string, repository: string): string {
+  if (!repositoryName.test(repository)) fail(400, 'Enter a GitHub repository as owner/name.');
+  return configuredProjects(raw).get(repository) ?? fail(404, 'This repository is not available.');
+}
+
+export async function githubSession(raw: string, token: string, transport: typeof fetch) {
+  const projects = configuredProjects(raw);
+  const client = new GitHub('', token, transport);
+  return { login: await client.login(), repositories: await client.availableRepositories(projects.keys()) };
 }
 
 function oid(value: unknown): string {
@@ -85,6 +95,33 @@ export class GitHub {
     if (!response.ok) apiError(response);
     const value: unknown = JSON.parse(await limitedText(response, maximumWorkspaceBytes, 502));
     return value;
+  }
+
+  async login(): Promise<string> {
+    const profile = object(await this.#json('/user'));
+    if (typeof profile['login'] !== 'string' || !profile['login']) fail(502, 'GitHub did not return an account name.');
+    return profile['login'];
+  }
+
+  async #list(path: string, key: string, page = 1): Promise<Record<string, unknown>[]> {
+    const payload = object(await this.#json(path + '?per_page=100&page=' + page));
+    const entries = payload[key];
+    if (!isUnknownArray(entries)) fail(502, 'GitHub did not return a repository list.');
+    const batch = entries.map(object);
+    return entries.length === 100 ? batch.concat(await this.#list(path, key, page + 1)) : batch;
+  }
+
+  async availableRepositories(names: Iterable<string>): Promise<string[]> {
+    const projects = [...names];
+    if (!projects.length) return [];
+    const owners = new Set(projects.map((name) => name.split('/')[0]?.toLowerCase()));
+    const installations = await this.#list('/user/installations', 'installations');
+    const eligible = installations.flatMap(({ account, id }) =>
+      typeof id === 'number' && Number.isSafeInteger(id) && id > 0 &&
+      isRecord(account) && typeof account['login'] === 'string' && owners.has(account['login'].toLowerCase()) ? [id] : []);
+    const repositories = await Promise.all(eligible.map((id) => this.#list('/user/installations/' + id + '/repositories', 'repositories')));
+    const available = new Set(repositories.flat().flatMap(({ full_name: name }) => typeof name === 'string' ? [name.toLowerCase()] : []));
+    return projects.filter((name) => available.has(name.toLowerCase())).toSorted();
   }
 
   async #tree(tree: string, recursive = false) {

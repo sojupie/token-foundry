@@ -1,61 +1,65 @@
 import { useState } from 'react';
-import { ArrowRightLeft } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
-import { errorMessage } from '../lib/json.ts';
+import { leafName, parentPath } from '../lib/document.ts';
+import type { DocumentGraph } from '../lib/document.ts';
+import { errorMessage, requireValue } from '../lib/json.ts';
 import type { Move } from '../lib/structure.ts';
+import { FolderTree } from './folder-tree.tsx';
 
-export function MoveDialog({ path, originalFile, files, disabled, review }: {
-  path: string; originalFile: string; files: readonly string[]; disabled: boolean; review: (move: Move) => void;
+export function MoveDialog({ paths, rename, graph, close, review }: {
+  paths: readonly string[]; rename: boolean; graph: DocumentGraph; close: () => void; review: (moves: Move[]) => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const [file, setFile] = useState(originalFile);
-  const [to, setTo] = useState(path);
+  const single = paths.length === 1 ? paths[0] : undefined;
+  const [destination, setDestination] = useState(single ? parentPath(single) : '');
+  const [name, setName] = useState(single ? leafName(single) : '');
   const [error, setError] = useState('');
+  const allowed = new Set([...graph.groups.keys()].filter((group) =>
+    !paths.some((path) => group === path || group.startsWith(path + '.'))));
+  const title = rename ? 'Rename group' : single ? 'Move ' + (graph.groups.has(single) ? 'group' : 'token') : 'Move selected tokens';
 
-  return <Dialog open={open} onOpenChange={(next) => {
-    if (next) {
-      setFile(originalFile);
-      setTo(path);
-      setError('');
-    }
-    setOpen(next);
-  }}>
-    <DialogTrigger asChild>
-      <Button type="button" size="sm" variant="ghost" disabled={disabled}><ArrowRightLeft aria-hidden="true" /> Move or rename</Button>
-    </DialogTrigger>
+  return <Dialog open onOpenChange={(open) => { if (!open) close(); }}>
     <DialogContent>
       <DialogHeader>
-        <DialogTitle>Move or rename</DialogTitle>
-        <DialogDescription className="wrap-anywhere font-mono">{path}</DialogDescription>
+        <DialogTitle>{title}</DialogTitle>
+        <DialogDescription className="wrap-anywhere">{single ?? paths.length + ' tokens selected'}</DialogDescription>
       </DialogHeader>
       <form className="grid gap-4" onSubmit={(event) => {
         event.preventDefault();
         try {
-          review({ path, to: to.trim(), file });
-          setOpen(false);
-        } catch (failure) {
-          setError(errorMessage(failure));
-        }
+          if (rename && (!name.trim() || /[.{}]/u.test(name))) throw new Error('Enter a name without periods or braces.');
+          const group = requireValue(graph.groups.get(destination), 'destination group');
+          const moves = paths.flatMap((path) => {
+            const leaf = rename ? name.trim() : leafName(path);
+            const to = destination ? destination + '.' + leaf : leaf;
+            if (to === path) return [];
+            const source = graph.tokens.get(path)?.file ?? graph.groups.get(path)?.files.keys().next().value;
+            const file = source && group.files.has(source) ? source : group.files.size === 1 ? group.files.keys().next().value : undefined;
+            if (!file) throw new Error('Choose a more specific destination group.');
+            return [{ path, to, file }];
+          });
+          review(moves);
+          close();
+        } catch (failure) { setError(errorMessage(failure)); }
       }}>
-        <div className="grid gap-2">
-          <Label htmlFor="move-file">Destination file</Label>
-          <NativeSelect id="move-file" value={file} onChange={(event) => setFile(event.target.value)}>
-            {files.map((entry) => <NativeSelectOption key={entry} value={entry}>{entry}</NativeSelectOption>)}
-          </NativeSelect>
-        </div>
-        <div className="grid gap-2">
-          <Label htmlFor="move-path">New path</Label>
-          <Input id="move-path" value={to} onChange={(event) => setTo(event.target.value)} required />
-        </div>
+        {rename ? <div className="grid gap-2">
+          <Label htmlFor="group-name">Group name</Label>
+          <Input id="group-name" value={name} onChange={(event) => setName(event.target.value)} required />
+        </div> : <div className="grid gap-2">
+          <p className="text-sm font-medium">Destination group</p>
+          <div className="max-h-[45vh] overflow-auto rounded-md border">
+            <FolderTree {...{ graph, allowed }} current={destination} select={setDestination} label="Destination group" rootLabel="Top level" />
+          </div>
+          <p className="wrap-anywhere text-xs text-muted-foreground">{destination || 'Top level'}</p>
+        </div>}
         {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
         <DialogFooter>
-          <Button type="button" variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-          <Button type="submit" disabled={!to.trim() || (to.trim() === path && file === originalFile)}>Review move</Button>
+          <Button type="button" variant="outline" onClick={close}>Cancel</Button>
+          <Button type="submit" disabled={rename ? !name.trim() || name.trim() === leafName(single ?? '') :
+            paths.every((path) => destination === parentPath(path))}>{rename ? 'Review rename' : 'Review move'}</Button>
         </DialogFooter>
       </form>
     </DialogContent>

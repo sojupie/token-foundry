@@ -1,16 +1,18 @@
-import { useState } from 'react';
+import { CommandMenu } from '../../editor/command-bar.tsx';
+import { useEffect, useRef, useState } from 'react';
+import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { GitPullRequest } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 import type { WorkspaceConnection, WorkspaceConnectorProps } from '../../editor/lib/connector.ts';
-import { errorMessage, isRecord } from '../../lib/json.ts';
+import { errorMessage, isRecord, isUnknownArray } from '../../lib/json.ts';
 import { openWorkspace } from '../../lib/workspace.ts';
 import { baseChanged, isSnapshot, repositoryName } from './contract.ts';
 
 const staleRevision = Symbol('stale revision');
+const sessionKey = ['github', 'session'] as const;
 
 async function post(action: 'open' | 'propose', data: object): Promise<unknown> {
   const response = await fetch('/git/' + action, {
@@ -19,7 +21,7 @@ async function post(action: 'open' | 'propose', data: object): Promise<unknown> 
     body: JSON.stringify(data),
     redirect: 'manual',
   });
-  if (response.type === 'opaqueredirect' || response.status === 401) throw new Error('Sign in to GitHub in the new tab, then try again.');
+  if (response.type === 'opaqueredirect' || response.status === 401) throw new Error('Your GitHub session needs to be renewed.');
   if (!response.headers.get('Content-Type')?.includes('application/json')) throw new Error('The hosted Git service is unavailable or requires an invitation.');
   const payload: unknown = await response.json();
   if (!response.ok) {
@@ -49,56 +51,119 @@ async function openConnection(repository: string): Promise<WorkspaceConnection> 
   };
 }
 
-export function OpenGitHub({ disabled, connect, canReplace }: WorkspaceConnectorProps) {
-  const [open, setOpen] = useState(false);
-  const [repository, setRepository] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
+type Session = { state: 'signed-out' } |
+  { state: 'connected'; login: string; repositories: string[] } |
+  { state: 'forbidden' };
 
-  async function openRepository() {
-    if (busy || !canReplace()) return;
-    setError('');
-    const name = repository.trim();
-    if (!repositoryName.test(name)) {
-      setError('Enter the repository as owner/name.');
-      return;
+async function getSession(signal: AbortSignal): Promise<Session> {
+  const response = await fetch('/git/session', { redirect: 'manual', signal });
+  if (response.type === 'opaqueredirect' || response.status === 401) return { state: 'signed-out' };
+  if (response.status === 403) return { state: 'forbidden' };
+  if (!response.ok || !response.headers.get('Content-Type')?.includes('application/json')) {
+    throw new Error('The hosted Git service is unavailable or requires an invitation.');
+  }
+  const data: unknown = await response.json();
+  if (!isRecord(data) || typeof data['login'] !== 'string' || !isUnknownArray(data['repositories'])) {
+    throw new Error('The GitHub session could not be read.');
+  }
+  const repositories = data['repositories'].filter((name): name is string => typeof name === 'string' && repositoryName.test(name));
+  return { state: 'connected', login: data['login'], repositories };
+}
+
+export function OpenGitHub(props: WorkspaceConnectorProps) {
+  const [queryClient] = useState(() => new QueryClient());
+  return <QueryClientProvider client={queryClient}><GitHubConnector {...props} /></QueryClientProvider>;
+}
+
+function GitHubConnector({ disabled, connect, canReplace }: WorkspaceConnectorProps) {
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [preferredRepository, setPreferredRepository] = useState('');
+  const [checkingSignIn, setCheckingSignIn] = useState(false);
+  const signIn = useRef<Window | null>(null);
+  const menu = useRef<HTMLButtonElement>(null);
+  const { data: session, isPending, error: sessionError } = useQuery({
+    queryKey: sessionKey,
+    queryFn: ({ signal }) => getSession(signal),
+    refetchOnWindowFocus: false,
+    retry: false,
+  });
+  const { mutate: connectRepository, reset: resetConnection, isPending: busy, error } = useMutation({
+    mutationFn: openConnection,
+    networkMode: 'always',
+  });
+
+  useEffect(() => {
+    function refresh(event: Event) {
+      if (event.type === 'message' || signIn.current?.closed) {
+        signIn.current = null;
+        setCheckingSignIn(false);
+      }
+      void queryClient.cancelQueries({ queryKey: sessionKey }).then(() => queryClient.invalidateQueries({ queryKey: sessionKey }));
     }
-    setBusy(true);
-    try {
-      connect(await openConnection(name));
+    const channel = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel('token-foundry-github');
+    channel?.addEventListener('message', refresh);
+    window.addEventListener('focus', refresh);
+    return () => {
+      channel?.close();
+      window.removeEventListener('focus', refresh);
+    };
+  }, [queryClient]);
+
+  const connected = !sessionError && session?.state === 'connected' ? session : undefined;
+  const repositories = connected?.repositories ?? [];
+  const repository = repositories.includes(preferredRepository) ? preferredRepository : repositories[0] ?? '';
+  function openRepository() {
+    if (busy || !repository || !canReplace()) return;
+    connectRepository(repository, { onSuccess: (connection) => {
+      connect(connection);
       setOpen(false);
-    } catch (failure) {
-      setError(errorMessage(failure));
-    } finally {
-      setBusy(false);
-    }
+    } });
   }
 
-  return <Dialog open={open} onOpenChange={(next) => {
-    if (!busy) {
-      setError('');
-      setOpen(next);
-    }
-  }}>
-    <DialogTrigger asChild>
-      <Button type="button" size="sm" variant="ghost" disabled={disabled}><GitPullRequest aria-hidden="true" /> GitHub</Button>
-    </DialogTrigger>
-    <DialogContent showCloseButton={!busy}>
+  const unavailable = session?.state === 'forbidden' ? 'Your account does not have access to GitHub integration.' :
+    connected && !repositories.length ? 'Your account has no repositories available in Token Foundry.' : undefined;
+  return <>
+    <CommandMenu label="Integrations" triggerRef={menu} status={connected ? 'GitHub connected as @' + connected.login : ''}
+      onCloseAutoFocus={(event) => { if (open) event.preventDefault(); }}
+      sections={[[{ label: 'Open GitHub repository…', icon: <GitPullRequest aria-hidden="true" />, title: unavailable,
+        disabled: disabled || Boolean(unavailable), run: () => { resetConnection(); setOpen(true); } }]]} />
+    <Dialog open={open} onOpenChange={(next) => { if (!busy) setOpen(next); }}>
+    <DialogContent showCloseButton={!busy} onCloseAutoFocus={(event) => {
+      event.preventDefault();
+      menu.current?.focus();
+    }}>
       <DialogHeader>
         <DialogTitle>Open GitHub repository</DialogTitle>
-        <DialogDescription>Hosted Git is available by invitation. Sign in before opening a connected repository.</DialogDescription>
+        <DialogDescription>{connected ? 'Connected as @' + connected.login :
+          'Sign in to see the repositories available to you.'}</DialogDescription>
       </DialogHeader>
-      <form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); void openRepository(); }}>
-        <Button asChild variant="outline" className="justify-self-start">
-          <a href="/git/sign-in" target="_blank" rel="noreferrer">Sign in to GitHub (new tab)</a>
-        </Button>
-        <div className="grid gap-2">
-          <Label htmlFor="git-repository">Repository</Label>
-          <Input id="git-repository" value={repository} onChange={(event) => setRepository(event.target.value)} placeholder="owner/name" disabled={busy} required />
-        </div>
-        {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
-        <DialogFooter><Button type="submit" disabled={busy}>{busy ? 'Opening…' : 'Open repository'}</Button></DialogFooter>
+      <form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); openRepository(); }}>
+        {isPending && <output className="text-sm text-muted-foreground">Checking GitHub session…</output>}
+        {sessionError && <Alert variant="destructive"><AlertDescription>{errorMessage(sessionError)}</AlertDescription></Alert>}
+        {!sessionError && session?.state === 'signed-out' && <Button asChild variant="outline" className="justify-self-start">
+          <a href="/git/sign-in" target="_blank" rel="noreferrer" onClick={(event) => {
+            const popup = window.open('/git/sign-in', 'token-foundry-sign-in', 'popup,width=620,height=720');
+            if (popup) {
+              event.preventDefault();
+              popup.opener = null;
+              signIn.current = popup;
+              setCheckingSignIn(true);
+            }
+          }}>{checkingSignIn ? 'Continue in GitHub' : 'Sign in to GitHub'}</a>
+        </Button>}
+        {connected && (repositories.length ? <div className="grid gap-2">
+          <label htmlFor="git-repository" className="text-sm font-medium">Repository</label>
+          <NativeSelect id="git-repository" value={repository} onChange={(event) => setPreferredRepository(event.target.value)} disabled={busy}>
+            {repositories.map((name) => <NativeSelectOption key={name} value={name}>{name}</NativeSelectOption>)}
+          </NativeSelect>
+        </div> : <p className="text-sm text-muted-foreground">No configured repositories are available to this GitHub account.</p>)}
+        {error && <Alert variant="destructive"><AlertDescription>{errorMessage(error)}</AlertDescription></Alert>}
+        {connected && repositories.length > 0 && <DialogFooter>
+          <Button type="submit" disabled={busy || !repository}>{busy ? 'Opening…' : 'Open repository'}</Button>
+        </DialogFooter>}
       </form>
     </DialogContent>
-  </Dialog>;
+    </Dialog>
+  </>;
 }

@@ -3,7 +3,13 @@ import type { JsonObject, JsonValue } from './json.ts';
 import { isTokenNode } from './token-types.ts';
 import type { TokenChange, TokenFile, TokenNode } from './token-types.ts';
 
-export interface TokenEntry { type: string | undefined; node: TokenNode; file: string; value: JsonValue }
+export interface TokenEntry {
+  type: string | undefined;
+  referenceType?: string;
+  node: TokenNode;
+  file: string;
+  value: JsonValue;
+}
 interface Group {
   files: Map<string, string | undefined>;
   members: Set<string>;
@@ -14,6 +20,11 @@ interface Group {
 }
 
 const isReference = (value: JsonValue): value is string => typeof value === 'string' && /^\{[^{}]+\}$/u.test(value);
+export function referenceLabel(value: JsonValue | undefined): string | undefined {
+  if (value !== undefined && isReference(value)) return value;
+  if (isObject(value) && typeof value['$ref'] === 'string') return value['$ref'];
+  return undefined;
+}
 export const parentPath = (path: string) => path.split('.').slice(0, -1).join('.');
 export const leafName = (path: string) => path.slice(path.lastIndexOf('.') + 1);
 
@@ -87,7 +98,7 @@ export function inspectDocuments(files: readonly TokenFile[]) {
     return resolve(path);
   }
 
-  function pointer(ref: JsonValue | undefined, owner: string): JsonValue {
+  function pointer(ref: JsonValue | undefined, owner: string): { value: JsonValue; target: string | undefined } {
     if (typeof ref !== 'string' || !ref.includes('#/')) throw new Error('Expected a JSON Pointer to a token value.');
     const separator = ref.indexOf('#/');
     const referenceFile = ref.slice(0, separator);
@@ -98,13 +109,14 @@ export function inspectDocuments(files: readonly TokenFile[]) {
     const path = parts.slice(0, valueIndex < 0 ? parts.length : valueIndex).join('.');
     if (tokens.get(path)?.file === file) {
       let result = reference(owner, path);
-      for (const key of parts.slice(valueIndex < 0 ? parts.length : valueIndex + 1)) {
+      const properties = parts.slice(valueIndex < 0 ? parts.length : valueIndex + 1);
+      for (const key of properties) {
         const next = Array.isArray(result) && /^(0|[1-9][0-9]*)$/u.test(key) ? result[Number(key)] :
           isObject(result) && Object.hasOwn(result, key) ? result[key] : undefined;
         if (next === undefined) throw new Error('Pointer target is missing: ' + ref);
         result = next;
       }
-      return result;
+      return { value: result, target: properties.length ? undefined : path };
     }
     throw new Error('Pointer target is missing: ' + ref);
   }
@@ -119,11 +131,16 @@ export function inspectDocuments(files: readonly TokenFile[]) {
     active.add(path);
     try {
       const token = requireValue(tokens.get(path), 'token ' + path);
-      if (token.type && isReference(token.value)) {
-        const target = tokens.get(token.value.slice(1, -1));
-        if (target?.type && token.type !== target.type) throw new Error('Expected a ' + token.type + ' reference, found ' + target.type + '.');
+      const link = isReference(token.value) ? token.value.slice(1, -1) : undefined;
+      const pointed = isObject(token.value) && Object.hasOwn(token.value, '$ref') ? pointer(token.value['$ref'], path) : undefined;
+      const result = pointed ? pointed.value : resolveValue(token.value, path);
+      const target = link ?? pointed?.target;
+      const targetType = target ? tokens.get(target)?.type : undefined;
+      if (targetType) token.referenceType = targetType;
+      if (token.node.$type && targetType && token.node.$type !== targetType) {
+        throw new Error('Expected a ' + token.node.$type + ' reference, found ' + targetType + '.');
       }
-      const result = resolveValue(token.value, path);
+      if (!token.node.$type && targetType) token.type = targetType;
       resolved.set(path, result);
       return result;
     } catch (error) {
@@ -138,7 +155,7 @@ export function inspectDocuments(files: readonly TokenFile[]) {
     if (isReference(value)) return reference(owner, value.slice(1, -1));
     if (Array.isArray(value)) return value.map((item) => resolveValue(item, owner));
     if (isObject(value)) {
-      if (Object.hasOwn(value, '$ref')) return pointer(value['$ref'], owner);
+      if (Object.hasOwn(value, '$ref')) return pointer(value['$ref'], owner).value;
       return Object.fromEntries(Object.entries(value).map(([key, part]) => [key, resolveValue(requireValue(part, 'JSON property ' + key), owner)]));
     }
     return value;
@@ -168,7 +185,7 @@ export function resolveFile(owner: string, target: string) {
   return parts.join('/');
 }
 
-export function changeDocument(tree: JsonObject, { path, node, create }: TokenChange) {
+export function changeDocument(tree: JsonObject, { path, node, create, inheritType }: TokenChange) {
   const parent = nodeAt(tree, parentPath(path));
   const key = leafName(path);
   if (!isObject(parent) || '$value' in parent || '$ref' in parent) throw new Error('The parent group is missing.');
@@ -181,6 +198,7 @@ export function changeDocument(tree: JsonObject, { path, node, create }: TokenCh
   const current = nextParent[key];
   const token: TokenNode = { ...(isObject(current) ? current : {}), ...node };
   if ('$value' in node) delete token.$ref;
+  if (inheritType) delete token.$type;
   Object.defineProperty(nextParent, key, { value: token, enumerable: true, configurable: true, writable: true });
   return next;
 }

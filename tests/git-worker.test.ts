@@ -20,7 +20,7 @@ const rootTree = '4'.repeat(40);
 const tokenTree = '5'.repeat(40);
 const config = {
   EDITOR_ORIGIN: origin, ACCESS_ISSUER: issuer, ACCESS_AUDIENCE: audience,
-  GIT_PROJECTS: JSON.stringify({ [repository]: 'tokens' }),
+  GIT_PROJECTS: JSON.stringify({ [repository]: 'tokens', 'org/unavailable': 'tokens' }),
   GITHUB_CLIENT_ID: 'test-client', GITHUB_CLIENT_SECRET: 'test-secret',
   GIT_SESSION_KEY: base64url.encode(crypto.getRandomValues(new Uint8Array(32))),
 };
@@ -55,6 +55,13 @@ await test('the Worker gates access, opens pinned files and safely retries a rev
     assert.equal(new Headers(init?.headers).get('Authorization'), 'Bearer ghu_mock');
     const pathname = decodeURIComponent(url.pathname);
     const method = init?.method;
+    if (method === 'GET' && pathname === '/user') return Response.json({ login: 'designer' });
+    if (method === 'GET' && pathname === '/user/installations') return Response.json({
+      installations: [{ id: 4, account: { login: 'Org' } }, { id: 5, account: { login: 'Elsewhere' } }],
+    });
+    if (method === 'GET' && pathname === '/user/installations/4/repositories') return Response.json({
+      repositories: [{ full_name: repository }, { full_name: 'org/not-configured' }],
+    });
     if (method === 'GET' && pathname === repo) return Response.json({ default_branch: 'main' });
     if (method === 'GET' && pathname === repo + '/git/ref/heads/main') return Response.json({ object: { sha: latest } });
     if (method === 'GET' && pathname === repo + '/git/commits/' + latest) return Response.json({ tree: { sha: rootTree } });
@@ -137,6 +144,15 @@ await test('the Worker gates access, opens pinned files and safely retries a rev
   assert.equal(oauthExchanges, 1);
   const sessionCookie = session.headers.getSetCookie().find((value) => value.startsWith('__Secure-token-git-session='));
   assert(sessionCookie?.includes('HttpOnly') && sessionCookie.includes('Secure') && !sessionCookie.includes('ghu_mock'));
+
+  const sessionHeaders = { 'Cf-Access-Jwt-Assertion': access, Cookie: sessionCookie?.split(';')[0] ?? '' };
+  assert.equal((await request('/git/session', { headers: { 'Cf-Access-Jwt-Assertion': access } })).status, 401);
+  assert.equal((await request('/git/session', { headers: { ...sessionHeaders, 'Cf-Access-Jwt-Assertion': other } })).status, 401);
+  const status = await request('/git/session', { headers: sessionHeaders });
+  assert.equal(status.status, 200);
+  assert.deepEqual(await status.json(), { login: 'designer', repositories: [repository] });
+  const ready = await request('/git/ready', { headers: sessionHeaders });
+  assert.match(await ready.text(), /src="\/git\/ready.js"/u);
 
   const post = (route: 'open' | 'propose', data: object, assertion = access, from = origin) => request('/git/' + route, {
     method: 'POST', headers: {

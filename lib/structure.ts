@@ -20,6 +20,7 @@ interface Location {
 interface Relocation {
   from: Location;
   to: Location;
+  node: JsonObject;
 }
 
 type WorkspaceFile = Workspace['files'][number];
@@ -40,34 +41,33 @@ function relativeFile(from: string, to: string): string {
   return [...source.slice(shared).map(() => '..'), ...target.slice(shared).map((part) => encodeURIComponent(part))].join('/');
 }
 
-function rewritePointer(value: string, ownerBefore: string, ownerAfter: string, { from, to }: Relocation): string {
+function rewritePointer(value: string, ownerBefore: string, ownerAfter: string, moves: readonly Relocation[]): string {
   const separator = value.indexOf('#/');
   if (separator < 0) return value;
   try {
     const resource = value.slice(0, separator);
     const file = resource ? resolveFile(ownerBefore, decodeURIComponent(resource)) : ownerBefore;
     const parts = decodeURIComponent(value.slice(separator + 2)).split('/').map((part) => part.replaceAll('~1', '/').replaceAll('~0', '~'));
-    const prefix = from.path.split('.');
-    const moved = file === from.file && prefix.every((part, index) => part === parts[index]);
+    const moved = moves.find(({ from }) => from.file === file && from.path.split('.').every((part, index) => part === parts[index]));
     if (!moved && ownerBefore === ownerAfter) return value;
-    const target = moved ? [...to.path.split('.'), ...parts.slice(prefix.length)] : parts;
+    const target = moved ? [...moved.to.path.split('.'), ...parts.slice(moved.from.path.split('.').length)] : parts;
     const pointer = target.map((part) => encodeURIComponent(part.replaceAll('~', '~0').replaceAll('/', '~1'))).join('/');
-    return relativeFile(ownerAfter, moved ? to.file : file) + '#/' + pointer;
+    return relativeFile(ownerAfter, moved?.to.file ?? file) + '#/' + pointer;
   } catch {
     return value;
   }
 }
 
-function rewriteReferences(file: string, text: string, relocation: Relocation): string {
+function rewriteReferences(file: string, text: string, moves: readonly Relocation[]): string {
   const tree = parseTokenFile(text, file);
   const ast = requireValue(parseTree(text), 'token document');
   const edits: Edit[] = [];
-  const { from, to } = relocation;
   function rewrite(value: JsonValue, location: JSONPath, ownerBefore: string, pointer = false) {
     if (typeof value === 'string') {
       const target = alias.exec(value)?.[1];
-      const replaced = target && contains(from.path, target) ? '{' + to.path + target.slice(from.path.length) + '}' :
-        pointer ? rewritePointer(value, ownerBefore, file, relocation) : value;
+      const moved = target && moves.find(({ from }) => contains(from.path, target));
+      const replaced = moved ? '{' + moved.to.path + (target || '').slice(moved.from.path.length) + '}' :
+        pointer ? rewritePointer(value, ownerBefore, file, moves) : value;
       if (replaced !== value) {
         const node = requireValue(findNodeAtLocation(ast, location), 'reference in ' + file);
         edits.push({ offset: node.offset, length: node.length, content: JSON.stringify(replaced) });
@@ -81,7 +81,8 @@ function rewriteReferences(file: string, text: string, relocation: Relocation): 
     }
   }
   function walk(node: JsonObject, location: string[]) {
-    const ownerBefore = file === to.file && contains(to.path, location.join('.')) ? from.file : file;
+    const path = location.join('.');
+    const ownerBefore = moves.find(({ to }) => file === to.file && contains(to.path, path))?.from.file ?? file;
     for (const [key, value] of Object.entries(node)) {
       if (value === undefined) continue;
       const next = [...location, key];
@@ -94,7 +95,7 @@ function rewriteReferences(file: string, text: string, relocation: Relocation): 
   return applyEdits(text, edits);
 }
 
-export function moveFiles(workspace: Workspace, { path, to, file }: Move): WorkspaceFile[] {
+function planMove(workspace: Workspace, { path, to, file }: Move): Relocation[] {
   const { tokens, groups } = workspace.graph;
   const token = tokens.get(path);
   const group = groups.get(path);
@@ -104,25 +105,47 @@ export function moveFiles(workspace: Workspace, { path, to, file }: Move): Works
     (name.startsWith('$') && !(token && name === '$root' && index === names.length - 1)))) {
     throw new Error('Enter a valid destination path.');
   }
-  if (group && group.files.size !== 1) throw new Error('This group spans multiple files. Move its child groups or tokens individually.');
-  const sourceFile = requireValue(token?.file ?? group?.files.keys().next().value, 'source file');
-  if (path === to && sourceFile === file) throw new Error('Choose another path or file.');
-  if (path !== to && (tokens.has(to) || groups.has(to) || contains(path, to))) throw new Error('The destination already exists or lies inside the moved group.');
+  if (path !== to && (tokens.has(to) || groups.has(to) || contains(path, to))) {
+    throw new Error('The destination already exists or lies inside the moved group.');
+  }
   const parent = groups.get(parentPath(to));
   if (!parent?.files.has(file)) throw new Error('The destination file must contain the destination group.');
+  const sources = token ? [token.file] : [...requireValue(group, 'source group').files.keys()];
+  if (sources.length > 1 && !sources.every((source) => parent.files.has(source))) {
+    throw new Error('This group spans multiple files. Choose a destination shared by those files, or move its children.');
+  }
+  return sources.map((sourceFile) => {
+    const destination = sources.length > 1 ? sourceFile : file;
+    if (path === to && sourceFile === destination) throw new Error('Choose another path or file.');
+    const source = requireValue(workspace.files.find((entry) => entry.path === sourceFile), 'source file');
+    const node = requireObject(nodeAt(source.tree, path), path);
+    const type = token?.type ?? group?.files.get(sourceFile);
+    const inherited = parent.files.get(destination);
+    if (!type && inherited && node['$type'] === undefined) throw new Error('This move would change the inherited token type.');
+    const moved = type && type !== inherited && node['$type'] === undefined && !token?.referenceType ? { ...node, $type: type } : node;
+    return { from: { file: sourceFile, path }, to: { file: destination, path: to }, node: moved };
+  });
+}
 
-  const source = requireValue(workspace.files.find((entry) => entry.path === sourceFile), 'source file');
-  const node = requireObject(nodeAt(source.tree, path), path);
-  const type = token?.type ?? group?.type;
-  if (!type && parent.files.get(file) && node['$type'] === undefined) throw new Error('This move would change the inherited token type.');
-  const moved = type && type !== parent.files.get(file) && node['$type'] === undefined ? { ...node, $type: type } : node;
-  const relocation = { from: { file: sourceFile, path }, to: { file, path: to } };
+export function moveFiles(workspace: Workspace, moves: readonly Move[]): WorkspaceFile[] {
+  if (!moves.length) throw new Error('Choose a different destination.');
+  for (const [index, move] of moves.entries()) {
+    if (moves.slice(0, index).some((other) =>
+      contains(other.path, move.path) || contains(move.path, other.path) || contains(other.to, move.to) || contains(move.to, other.to))) {
+      throw new Error('Selected tokens have overlapping sources or destinations.');
+    }
+  }
+  const relocations = moves.flatMap((move) => planMove(workspace, move));
   return workspace.files.map((entry) => {
     const options = { formattingOptions: formatOptions(entry.text) };
     let text = entry.text;
-    if (entry.path === sourceFile) text = applyEdits(text, modify(text, path.split('.'), undefined, options));
-    if (entry.path === file) text = applyEdits(text, modify(text, names, moved, options));
-    text = rewriteReferences(entry.path, text, relocation);
+    for (const { from } of relocations) {
+      if (entry.path === from.file) text = applyEdits(text, modify(text, from.path.split('.'), undefined, options));
+    }
+    for (const { to, node } of relocations) {
+      if (entry.path === to.file) text = applyEdits(text, modify(text, to.path.split('.'), node, options));
+    }
+    text = rewriteReferences(entry.path, text, relocations);
     return text === entry.text ? entry : { path: entry.path, text, tree: parseTokenFile(text, entry.path) };
   });
 }

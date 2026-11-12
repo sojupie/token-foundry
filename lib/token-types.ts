@@ -1,6 +1,10 @@
 import { isJsonObject } from './json.ts';
 import type { JsonObject, JsonValue } from './json.ts';
 
+// Design Tokens Format Module 2025.10, sections 8 and 9.
+export const dtcgTypes = ['color', 'dimension', 'fontFamily', 'fontWeight', 'duration', 'cubicBezier', 'number',
+  'strokeStyle', 'border', 'transition', 'shadow', 'gradient', 'typography'] as const;
+
 export interface TokenNode extends JsonObject {
   $type?: string;
   $value?: JsonValue;
@@ -11,6 +15,7 @@ export interface TokenChange {
   path: string;
   node: TokenNode;
   create: boolean;
+  inheritType?: boolean;
 }
 export interface TokenFile extends JsonObject { path: string; tree: JsonObject }
 export interface Diagnostic { path: string; message: string }

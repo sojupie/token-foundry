@@ -30,18 +30,27 @@ export interface Review {
   next: Workspace;
   path: string;
   impact: { path: string; before: JsonValue | undefined; after: JsonValue | undefined }[];
+  importedValues?: readonly ValueChange[];
 }
 
 interface ValueChange { path: string; before: JsonValue; after: JsonValue }
 
 function parseProposal(text: string): ValueChange[] {
-  const { schemaVersion, changes } = requireObject(parseJson(text), 'token proposal');
-  if (schemaVersion !== 1 || !Array.isArray(changes) || !changes.length) throw new Error('Expected a version 1 token proposal with at least one change.');
+  let document: JsonValue;
+  try {
+    document = parseJson(text);
+  } catch (failure) {
+    throw new Error('Invalid JSON. Choose a .json file with token value changes.', { cause: failure });
+  }
+  if (!isJsonObject(document) || document['schemaVersion'] !== 1 ||
+    !Array.isArray(document['changes']) || !document['changes'].length) {
+    throw new Error('No token value changes found. Choose a .json file with old and new values. To open token files, use File → Open token files.');
+  }
   const paths = new Set<string>();
-  return changes.map((change: JsonValue) => {
-    const { path, before, after } = requireObject(change, 'proposed value change');
+  return document['changes'].map((change: JsonValue, index: number) => {
+    const { path, before, after } = isJsonObject(change) ? change : {};
     if (typeof path !== 'string' || !path || paths.has(path) || before === undefined || after === undefined) {
-      throw new Error('Every proposed change needs a unique token path and its before and after values.');
+      throw new Error('Invalid change at entry ' + (index + 1) + '. List each token once with its old and new values.');
     }
     paths.add(path);
     return { path, before, after };
@@ -80,21 +89,28 @@ export function reviewEdit(workspace: Workspace, file: string, change: TokenChan
 
   const candidate = editFile(source, change);
   const files = workspace.files.map((entry) => entry === source ? candidate : entry);
-  return reviewFiles(workspace, files, new Set('$value' in node ? [path] : []), path);
+  return reviewFiles(workspace, files, new Set('$value' in node || '$type' in node || change.inheritType ? [path] : []), path);
 }
 
 export function reviewProposal(workspace: Workspace, text: string): Review {
-  const changes = parseProposal(text);
+  const changes = parseProposal(text).filter(({ before, after }) => valueKey(before) !== valueKey(after));
+  if (!changes.length) throw new Error('The file lists the same values before and after.');
+  const missing = changes.filter(({ path }) => !workspace.graph.tokens.has(path));
+  if (missing.length) {
+    throw new Error('Tokens missing. Open the files that contain them together, then import again.\n' +
+      missing.map(({ path }) => path).join('\n'));
+  }
   const sources = new Map(workspace.files.map((file) => [file.path, file]));
   for (const { path, before, after } of changes) {
     const token = requireValue(workspace.graph.tokens.get(path), 'token ' + path);
     if (valueKey(token.value) !== valueKey(before)) {
-      throw new Error(path + ' changed since the proposal was created. Review against a fresh revision.');
+      throw new Error('Value mismatch for ' + path + '. Check the open token file and the old value in the import.');
     }
     const source = requireValue(sources.get(token.file), 'token file ' + token.file);
     sources.set(token.file, editFile(source, { path, create: false, node: { $value: after } }));
   }
-  return reviewFiles(workspace, [...sources.values()], new Set(changes.map(({ path }) => path)), '');
+  const review = reviewFiles(workspace, [...sources.values()], new Set(changes.map(({ path }) => path)), '');
+  return { ...review, importedValues: changes };
 }
 
 export function reviewWorkspace(workspace: Workspace): Review {
@@ -109,7 +125,7 @@ export function reviewAgainstLatest(workspace: Workspace, latest: Workspace): Re
     const file = files.get(path);
     if (file?.text === after) continue;
     if (file?.text !== before) {
-      throw new Error(path + ' changed in the repository. Go back to download your patch and reconcile the file.');
+      throw new Error(path + ' changed in the repository. Download the patch to merge your edits locally.');
     }
     files.set(path, { path, text: after, tree: parseTokenFile(after, path) });
     remaining = true;
@@ -118,7 +134,36 @@ export function reviewAgainstLatest(workspace: Workspace, latest: Workspace): Re
 }
 
 export function reviewMove(workspace: Workspace, move: Move): Review {
-  return reviewFiles(workspace, moveFiles(workspace, move), new Set(), move.to);
+  return reviewMoves(workspace, [move]);
+}
+
+export function reviewMoves(workspace: Workspace, moves: readonly Move[]): Review {
+  return reviewFiles(workspace, moveFiles(workspace, moves), new Set(), moves.length === 1 ? moves[0]?.to ?? '' : '');
+}
+
+export function reviewDelete(workspace: Workspace, paths: readonly string[]): Review {
+  const { graph } = workspace;
+  const unique = [...new Set(paths)].toSorted();
+  const roots = unique.filter((path) => !unique.some((other) => other !== path && path.startsWith(other + '.')));
+  const deletions = new Map<string, string[]>();
+  for (const path of roots) {
+    const token = graph.tokens.get(path);
+    const files = token ? [token.file] : graph.groups.get(path)?.files.keys();
+    if (!path || !files) throw new Error('Choose an existing token or group to delete.');
+    for (const file of files) {
+      const removed = deletions.get(file);
+      if (removed) removed.push(path);
+      else deletions.set(file, [path]);
+    }
+  }
+  return reviewFiles(workspace, workspace.files.map((file) => {
+    const removed = deletions.get(file.path);
+    if (!removed) return file;
+    const formattingOptions = formatOptions(file.text);
+    const text = removed.reduce((source, path) =>
+      applyEdits(source, modify(source, path.split('.'), undefined, { formattingOptions })), file.text);
+    return { ...file, text, tree: parseTokenFile(text, file.path) };
+  }), new Set(), '');
 }
 
 function editFile(source: WorkspaceFile, change: TokenChange): WorkspaceFile {

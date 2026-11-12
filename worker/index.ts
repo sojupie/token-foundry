@@ -2,7 +2,7 @@ import { isProposal, repositoryName } from '../integrations/github/contract.ts';
 import { isRecord } from '../lib/json.ts';
 import { accessVerifier, finishSignIn, gitToken, signIn } from './auth.ts';
 import type { AuthConfig } from './auth.ts';
-import { GitHub, maximumWorkspaceBytes, selectedRoot } from './github.ts';
+import { GitHub, githubSession, maximumWorkspaceBytes, selectedRoot } from './github.ts';
 import { fail, HttpError, json, limitedText } from './http.ts';
 
 interface Config extends AuthConfig {
@@ -33,10 +33,24 @@ export function worker(transport: typeof fetch = (input, init) => fetch(input, i
         if (request.method === 'GET') {
           if (url.pathname === '/git/sign-in') return await signIn(subject, config);
           if (url.pathname === '/git/callback') return await finishSignIn(request, subject, config, transport);
+          if (url.pathname === '/git/session') {
+            const token = await gitToken(request, subject, config);
+            return json(await githubSession(config.GIT_PROJECTS, token, transport));
+          }
           if (url.pathname === '/git/ready') {
             await gitToken(request, subject, config);
-            return new Response('GitHub connected. Return to the editor and choose Open repository.', {
-              headers: { 'Cache-Control': 'no-store', 'Content-Type': 'text/plain; charset=utf-8', 'X-Content-Type-Options': 'nosniff' },
+            return new Response('<!doctype html><html lang="en"><meta charset="utf-8"><title>GitHub connected</title>' +
+              '<p>GitHub connected. <a href="/">Return to the editor</a>.</p>' +
+              '<script src="/git/ready.js"></script></html>', {
+              headers: {
+                'Cache-Control': 'no-store', 'Content-Type': 'text/html; charset=utf-8', 'X-Content-Type-Options': 'nosniff',
+                'Content-Security-Policy': "default-src 'none'; script-src 'self'; base-uri 'none'; frame-ancestors 'none'",
+              },
+            });
+          }
+          if (url.pathname === '/git/ready.js') {
+            return new Response("if ('BroadcastChannel' in window) { const channel = new BroadcastChannel('token-foundry-github'); channel.postMessage('ready'); channel.close(); } window.close();", {
+              headers: { 'Cache-Control': 'no-store', 'Content-Type': 'text/javascript; charset=utf-8', 'X-Content-Type-Options': 'nosniff' },
             });
           }
         }

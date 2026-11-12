@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
-import { diffFile, openWorkspace, reviewAgainstLatest, reviewEdit, reviewMove, reviewProposal, workspaceChanges } from '../lib/workspace.ts';
+import { diffFile, openWorkspace, reviewAgainstLatest, reviewDelete, reviewEdit, reviewMove, reviewMoves, reviewProposal, workspaceChanges } from '../lib/workspace.ts';
 
 await test('reviews an in-browser edit, preserves other files and exports a Git patch', async () => {
   const paths = ['reference.tokens.json', 'system.tokens.json'];
@@ -29,7 +29,15 @@ await test('reviews an in-browser edit, preserves other files and exports a Git 
   assert.equal(workspaceChanges(proposed.next).length, 2);
   assert.deepEqual(proposed.next.graph.resolved.get('system.space.control-gap'), { value: 12, unit: 'px' });
   assert(proposed.impact.some(({ path }) => path === 'system.space.control-gap'));
-  assert.throws(() => reviewProposal(edit.next, proposal), /changed since the proposal was created/u);
+  assert.throws(() => reviewProposal(edit.next, proposal), /Value mismatch for system\.color\.accent/u);
+  const imported = reviewProposal(edit.next, JSON.stringify({ schemaVersion: 1, changes: [
+    { path: 'reference.space.small', before: { value: 8, unit: 'px' }, after: { value: 12, unit: 'px' } },
+  ] }));
+  assert.equal(imported.next.graph.tokens.get('system.color.accent')?.value, '{reference.color.ink}');
+  assert.deepEqual(edit.next.graph.resolved.get('system.space.control-gap'), { value: 8, unit: 'px' });
+  assert.throws(() => reviewProposal(edit.next, JSON.stringify({ schemaVersion: 1, changes: [
+    { path: 'missing.one', before: 0, after: 1 }, { path: 'missing.two', before: 0, after: 2 },
+  ] })), /missing\.one\nmissing\.two/u);
   assert.deepEqual(original.graph.resolved.get('system.space.control-gap'), { value: 8, unit: 'px' });
 });
 
@@ -75,4 +83,45 @@ await test('refreshing a review preserves unchanged inputs and rejects edits to 
   assert.throws(() => reviewAgainstLatest(draft, conflicting), /reference\.tokens\.json changed in the repository/u);
   assert.equal(draft.graph.resolved.get('reference.gap'), 2);
   assert.equal(conflicting.graph.resolved.get('reference.gap'), 3);
+});
+
+
+await test('renames a group split across files and preserves refs before a reviewed delete', () => {
+  const workspace = openWorkspace('Split group', [
+    { path: 'reference.tokens.json', text: '{"shared":{"$type":"number","a":{"$value":1}},"dest":{}}' },
+    { path: 'system.tokens.json', text: '{"shared":{"$type":"number","b":{"$value":"{shared.a}"}},"system":{"c":{"$ref":"reference.tokens.json#/shared/a/$value"}}}' },
+  ]);
+  const renamed = reviewMove(workspace, { path: 'shared', to: 'primitives', file: 'reference.tokens.json' }).next;
+  assert.equal(renamed.graph.resolved.get('primitives.b'), 1);
+  assert.equal(renamed.graph.resolved.get('system.c'), 1);
+  assert.equal(renamed.graph.tokens.get('primitives.b')?.file, 'system.tokens.json');
+  assert.throws(() => reviewDelete(renamed, ['primitives']), /missing/u);
+  const moved = reviewMoves(renamed, [
+    { path: 'primitives.a', to: 'dest.a', file: 'reference.tokens.json' },
+    { path: 'primitives.b', to: 'dest.b', file: 'reference.tokens.json' },
+  ]).next;
+  assert.equal(moved.graph.resolved.get('dest.b'), 1);
+  assert.equal(moved.graph.resolved.get('system.c'), 1);
+  assert.equal(reviewDelete(moved, ['dest', 'system.c']).next.graph.tokens.size, 0);
+});
+
+await test('uses reference type before group type and preserves inference when moving an alias', () => {
+  const original = openWorkspace('Type inference', [{ path: 'tokens.json', text: JSON.stringify({
+    palette: { $type: 'color', ink: { $value: { colorSpace: 'srgb', components: [0, 0, 0] } } },
+    source: {
+      $type: 'number',
+      link: { $value: '{palette.ink}' },
+      pointer: { $ref: '#/palette/ink/$value' },
+      mismatch: { $type: 'number', $value: '{palette.ink}' },
+      length: { $value: 1 },
+    },
+    destination: { $type: 'dimension' },
+  }) }]);
+  assert.equal(original.graph.tokens.get('source.link')?.type, 'color');
+  assert.equal(original.graph.tokens.get('source.pointer')?.type, 'color');
+  assert.equal(original.graph.tokens.get('source.length')?.type, 'number');
+  assert.match(original.graph.issues.get('source.mismatch') ?? '', /Expected a number reference, found color/u);
+  const { next } = reviewMove(original, { file: 'tokens.json', path: 'source.link', to: 'destination.link' });
+  assert.equal(next.graph.tokens.get('destination.link')?.type, 'color');
+  assert.equal(next.graph.tokens.get('destination.link')?.node.$type, undefined);
 });

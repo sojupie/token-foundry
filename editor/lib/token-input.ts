@@ -1,4 +1,4 @@
-import { parseJson } from '../../lib/json.ts';
+import { isJsonObject, parseJson } from '../../lib/json.ts';
 import type { JsonValue } from '../../lib/json.ts';
 import { colorHex } from '../../lib/color.ts';
 import { isColor, isDimension } from '../../lib/token-types.ts';
@@ -6,7 +6,7 @@ import { isColor, isDimension } from '../../lib/token-types.ts';
 const alias = /^\{[^{}]+\}$/u;
 const dimension = /^(-?(?:\d+(?:\.\d*)?|\.\d+))\s*([a-z]+)$/iu;
 const hex = /^#[0-9a-f]{6}$/iu;
-const simpleTypes = new Set(['number', 'fontWeight', 'fontFamily', 'dimension', 'duration']);
+const simpleTypes = new Set(['number', 'fontWeight', 'fontFamily', 'dimension', 'duration', 'strokeStyle']);
 
 export function inputFormat(type: string | undefined, value?: JsonValue): 'hex' | 'text' | 'json' {
   if ((isColor(value) && value.colorSpace === 'srgb') || (type === 'color' && value === undefined)) return 'hex';
@@ -38,10 +38,42 @@ export function readInput(text: string, type: string | undefined, original?: Jso
   if (match && match[2] && Number.isFinite(Number(match[1]))) {
     return { ...(isDimension(original) ? original : {}), value: Number(match[1]), unit: match[2] };
   }
-  if ((type === 'fontFamily' || type === 'fontWeight') && !/^[[{"\d-]/u.test(value)) return value;
+  if ((type === 'fontFamily' || type === 'fontWeight' || type === 'strokeStyle') && !/^[[{"\d-]/u.test(value)) return value;
   try {
     return parseJson(value);
   } catch {
     throw new Error('Enter a value such as #336699, 8 dp, {color.primary}, or valid JSON.');
   }
+}
+
+const compositeFields: Readonly<Record<string, readonly string[] | undefined>> = {
+  strokeStyle: ['dashArray', 'lineCap'],
+  border: ['color', 'width', 'style'],
+  transition: ['duration', 'delay', 'timingFunction'],
+  shadow: ['color', 'offsetX', 'offsetY', 'blur', 'spread'],
+  gradient: ['color', 'position'],
+  typography: ['fontFamily', 'fontSize', 'fontWeight', 'letterSpacing', 'lineHeight'],
+};
+
+function isAlias(value: JsonValue | undefined): boolean {
+  return typeof value === 'string' && alias.test(value) || isJsonObject(value) && typeof value['$ref'] === 'string';
+}
+
+function hasFields(value: JsonValue | undefined, fields: readonly string[]): boolean {
+  return isAlias(value) || isJsonObject(value) && fields.every((field) => Object.hasOwn(value, field));
+}
+
+export function validateInputValue(type: string | undefined, value: JsonValue | undefined) {
+  if (!type || isAlias(value)) return;
+  const fields = Object.hasOwn(compositeFields, type) ? compositeFields[type] : undefined;
+  const valid = type === 'number' ? typeof value === 'number' :
+    type === 'dimension' || type === 'duration' ? isDimension(value) :
+    type === 'fontFamily' ? typeof value === 'string' || Array.isArray(value) && value.every((name) => typeof name === 'string') :
+    type === 'fontWeight' ? typeof value === 'string' || typeof value === 'number' :
+    type === 'color' ? isJsonObject(value) && typeof value['colorSpace'] === 'string' && Array.isArray(value['components']) :
+    type === 'cubicBezier' ? Array.isArray(value) && value.length === 4 && value.every((part) => typeof part === 'number') :
+    !fields || (type === 'strokeStyle' && typeof value === 'string') ||
+      (type === 'gradient' || type === 'shadow' && Array.isArray(value)
+        ? Array.isArray(value) && value.every((part) => hasFields(part, fields)) : hasFields(value, fields));
+  if (!valid) throw new Error('Enter a value that matches the ' + type + ' type.');
 }
