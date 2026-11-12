@@ -43,6 +43,7 @@ await test('the Worker gates access, opens pinned files and safely retries a rev
   let pullRequests = 0;
   const fixture: typeof fetch = async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : input);
+    if (url.origin !== issuer) assert.equal(init?.redirect, 'manual');
     if (url.origin === issuer && url.pathname === '/cdn-cgi/access/certs') return Response.json({ keys: [key] });
     if (url.origin === 'https://github.com' && url.pathname === '/login/oauth/access_token') {
       oauthExchanges++;

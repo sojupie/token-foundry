@@ -100,10 +100,11 @@ export async function finishSignIn(request: Request, subject: string, config: Au
       client_id: config.GITHUB_CLIENT_ID, client_secret: config.GITHUB_CLIENT_SECRET,
       redirect_uri: callback(config.EDITOR_ORIGIN), code, code_verifier: state['verifier'],
     }),
-    redirect: 'error',
+    redirect: 'manual',
   });
+  if (!response.ok) fail(502, 'GitHub could not complete sign-in. Start again in the editor.');
   const payload: unknown = await response.json();
-  if (!response.ok || !isRecord(payload) || typeof payload['access_token'] !== 'string' || !/^ghu_\w+$/u.test(payload['access_token'])) {
+  if (!isRecord(payload) || typeof payload['access_token'] !== 'string' || !/^ghu_\w+$/u.test(payload['access_token'])) {
     fail(401, 'GitHub did not authorize the app. Start sign-in again in the editor.');
   }
   const expires = payload['expires_in'];

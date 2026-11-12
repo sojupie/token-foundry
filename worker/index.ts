@@ -22,7 +22,7 @@ async function requestJson(request: Request, origin: string): Promise<unknown> {
   }
 }
 
-export function worker(transport: typeof fetch = fetch) {
+export function worker(transport: typeof fetch = (input, init) => fetch(input, init)) {
   const verifiedSubject = accessVerifier(transport);
   return {
     async fetch(request: Request, config: Config): Promise<Response> {

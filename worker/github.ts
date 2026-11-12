@@ -76,7 +76,7 @@ export class GitHub {
       method: body ? 'POST' : 'GET',
       headers: { ...this.#headers, Accept: accept, ...(body ? { 'Content-Type': 'application/json' } : {}) },
       body: body ? JSON.stringify(body) : null,
-      redirect: 'error',
+      redirect: 'manual',
     });
   }
 
