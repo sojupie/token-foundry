@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { base64url, exportJWK, generateKeyPair, SignJWT } from 'jose';
-import { isRecord } from '../lib/json.ts';
+import { isRecord, isUnknownArray } from '../lib/json.ts';
 import { worker } from '../worker/index.ts';
 import { baseChanged } from '../integrations/github/contract.ts';
 
@@ -41,6 +41,7 @@ await test('the Worker gates access, opens pinned files and safely retries a rev
   let oauthExchanges = 0;
   let commits = 0;
   let pullRequests = 0;
+  let extraTokenFiles = 0;
   const fixture: typeof fetch = async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : input);
     if (url.origin !== issuer) assert.equal(init?.redirect, 'manual');
@@ -71,11 +72,15 @@ await test('the Worker gates access, opens pinned files and safely retries a rev
     if (pathname === repo + '/git/trees/' + tokenTree && url.searchParams.get('recursive') === '1') return Response.json({
       truncated: false, tree: [
         { path: 'system.tokens.json', type: 'blob', mode: '100644', size: before.length },
+        ...Array.from({ length: extraTokenFiles }, (_, index) => ({
+          path: 'components/' + index + '.tokens.json', type: 'blob', mode: '100644', size: before.length,
+        })),
         { path: 'symlink.tokens.json', type: 'blob', mode: '120000' },
         { path: 'settings.json', type: 'blob', mode: '100644' },
       ],
     });
     if (pathname === repo + '/contents/' + path) return new Response(url.searchParams.get('ref') === headCommit ? after : before);
+    if (pathname.startsWith(repo + '/contents/tokens/components/')) return new Response(before);
     if (method === 'GET' && pathname.startsWith(repo + '/git/ref/heads/token-editor/')) {
       return head && headOid ? Response.json({ object: { sha: headOid } }) : new Response(null, { status: 404 });
     }
@@ -166,6 +171,15 @@ await test('the Worker gates access, opens pinned files and safely retries a rev
   const snapshot = await post('open', { repository });
   assert.equal(snapshot.status, 200);
   assert.deepEqual(await snapshot.json(), { repository, revision: base, files: [{ path, text: before }] });
+  extraTokenFiles = 27;
+  const expanded = await post('open', { repository });
+  assert.equal(expanded.status, 200);
+  const expandedBody: unknown = await expanded.json();
+  assert(isRecord(expandedBody) && isUnknownArray(expandedBody['files']));
+  assert.equal(expandedBody['files'].length, 28);
+  extraTokenFiles = 40;
+  assert.equal((await post('open', { repository })).status, 422);
+  extraTokenFiles = 0;
 
   const proposal = { repository, revision: base, changes: [{ path, before, after }] };
   latest = changedBase;

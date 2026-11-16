@@ -118,9 +118,11 @@ review. Opening this URL leaves the workspace and Git untouched.
 
 ## Public build
 
-Run `npm run build` for the public editor. The existing public Worker uses
-`wrangler.public.jsonc` to serve those static files. Deploy it with
-`npx wrangler deploy --config wrangler.public.jsonc`.
+Run `npm run deploy:public` to build and deploy the local-file editor to
+[tokenfoundry.lindstruct.com](https://tokenfoundry.lindstruct.com/). The command
+uses `wrangler.public.jsonc` and updates the `token-foundry` Worker. GitHub Actions
+checks changes. Deploy from a clean checkout with Wrangler signed in to the
+Cloudflare account that owns the Worker.
 
 ## Hosted Git
 
@@ -153,7 +155,7 @@ repositories available through the GitHub App. Choose a repository to open it.
 Connected workspaces read the default branch at a pinned commit. Proposals can
 modify existing `*.tokens.json`, `*.tokens`, and `tokens.json` files inside the
 configured folder. The Worker rechecks the default branch and original file
-contents and then opens a pull request. The limit is 24 files and 2 MiB per
+contents and then opens a pull request. The limit is 40 files and 2 MiB per
 workspace, 512 KiB per file, and 16 changed files per proposal.
 
 If the base revision changes during review, choose **Review latest revision**.
@@ -168,18 +170,19 @@ providers.
 
 ### Invite-only staging
 
-Run `npm run build:hosted -- --outDir .wrangler/staging-assets` and deploy with
-`npx wrangler deploy --config wrangler.staging.jsonc` to a Cloudflare account
-with Zero Trust enabled. The staging configuration serves the editor and Git
-API from one Worker with the `workers.dev` route and preview URLs enabled.
-When bootstrapping a new Worker, set `workers_dev` and `preview_urls` to
-`false` for its first upload. In Cloudflare Access, protect this Worker for
-**All traffic** with an allow policy for the pilot users before enabling the
-URLs. The staging configuration preserves variables set in Cloudflare.
+Run `npm run deploy:sevan` to build and deploy the private editor and Git API to
+[sevan.tokenfoundry.lindstruct.com](https://sevan.tokenfoundry.lindstruct.com/).
+The command updates the `token-foundry-staging` Worker using
+`wrangler.staging.jsonc`.
 
-Set the Worker variables and secrets listed above for this staging deployment.
-Use the main staging URL for `EDITOR_ORIGIN` and its `/git/callback` path for
-the GitHub App callback. Use that URL for Git operations. Install the app on
-the pilot repository and list it in `GIT_PROJECTS`. Verify that Access stops a
-signed-out visitor and that an invited user can open the repository and submit
-a reviewed pull request.
+Before the first deploy to that hostname, add
+`https://sevan.tokenfoundry.lindstruct.com/git/callback` to the GitHub App's
+callback URLs. Protect the Worker in Cloudflare Access for **All traffic** before
+attaching its custom domain. Set the Worker variables and secrets above in
+Cloudflare. The Wrangler config sets `EDITOR_ORIGIN` and keeps the other
+dashboard variables. Manage both Foundry custom domains in **Domains & Routes**.
+Both deploy configs disable the `workers.dev` and version URLs.
+
+After deploying, check that the Sevan editor asks signed-out visitors to sign in.
+As an invited user, connect GitHub and open the configured repository. Use the
+custom domain when starting a new GitHub session.

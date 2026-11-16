@@ -3,9 +3,12 @@
   "name": "token-foundry-staging",
   "main": "worker/index.ts",
   "compatibility_date": "2026-11-01",
-  "workers_dev": true,
-  "preview_urls": true,
+  "workers_dev": false,
+  "preview_urls": false,
   "keep_vars": true,
+  "vars": {
+    "EDITOR_ORIGIN": "https://sevan.tokenfoundry.lindstruct.com"
+  },
   "assets": {
     "directory": "./.wrangler/staging-assets",
     "run_worker_first": ["/git/*"]

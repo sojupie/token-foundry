@@ -8,6 +8,8 @@
     "build": "vite build",
     "build:hosted": "vite build --mode hosted",
     "build:worker": "wrangler deploy --dry-run",
+    "deploy:public": "npm run build && wrangler deploy --config wrangler.public.jsonc",
+    "deploy:sevan": "npm run build:hosted -- --outDir .wrangler/staging-assets && wrangler deploy --config wrangler.staging.jsonc",
     "preview": "vite preview",
     "test:browser": "playwright test",
     "typecheck": "tsc --noEmit",

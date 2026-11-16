@@ -6,7 +6,8 @@ import { fail, limitedText } from './http.ts';
 
 export const maximumFileBytes = 512 * 1024;
 export const maximumWorkspaceBytes = 2 * 1024 * 1024;
-const maximumFiles = 24;
+// Opening a workspace fetches each file plus authentication and Git metadata.
+const maximumFiles = 40;
 const maximumChanges = 16;
 const apiOrigin = 'https://api.github.com';
 const pathSegment = /^[a-z\d_-][a-z\d_.-]*$/iu;
