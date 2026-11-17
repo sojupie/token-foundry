@@ -34,7 +34,7 @@ function validField(type: string, value: JsonValue, expected: string | undefined
     case undefined: break;
     case 'fontName': return type === 'fontFamily' && typeof value === 'string';
     case 'numberOrNone': return type === 'number' && (value === 'none' || typeof value === 'number');
-    case 'dimensionUnit': return type === 'string' && (value === 'px' || value === 'rem');
+    case 'dimensionUnit': return type === 'string' && (typeof value === 'string' && ['px', 'rem', 'dp', 'sp'].includes(value));
     case 'durationUnit': return type === 'string' && (value === 'ms' || value === 's');
     case 'lineCap': return type === 'string' && (value === 'butt' || value === 'round' || value === 'square');
     case 'colorSpace': return type === 'string' && typeof value === 'string' && !!colorSpace(value);

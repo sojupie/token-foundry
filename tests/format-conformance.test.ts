@@ -78,7 +78,7 @@ await test('diagnoses every Format value type at the failing field or array inde
 await test('uses the same field validation for source, editor, paste, bulk, and proposal imports', () => {
   const data = workspace({ gap: { $type: 'dimension', $value: px } });
   const invalid = { ...px, unit: 'em' };
-  const expected = /\$value\/unit · Use px or rem/u;
+  const expected = /\$value\/unit · Use px, rem, dp or sp/u;
   assert.throws(() => reviewEdit(data, 'tokens.json', { path: 'gap', create: false, node: { $value: invalid } }), expected);
   assert.throws(() => reviewProposal(data, JSON.stringify({ schemaVersion: 1, changes: [{ path: 'gap', before: px, after: invalid }] })), expected);
   assert.match(reviewSource(data, 'tokens.json', JSON.stringify({ gap: { $type: 'dimension', $value: invalid } }), true).validationErrors?.join('\n') ?? '', expected);

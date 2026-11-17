@@ -193,7 +193,7 @@ function LiteralField(props: FieldProps & { action?: ReactNode }) {
     case 'lineCap':
     case 'colorSpace': {
       const options = type === 'colorSpace' ? Object.entries(colorSpaces).map(([key, definition]) => [key, definition.name] as const) :
-        choices(type === 'dimensionUnit' ? ['px', 'rem'] : type === 'durationUnit' ? ['ms', 's'] : ['butt', 'round', 'square']);
+        choices(type === 'dimensionUnit' ? ['px', 'rem', 'dp', 'sp'] : type === 'durationUnit' ? ['ms', 's'] : ['butt', 'round', 'square']);
       return <StyledSelect label={label} options={options} value={displayField(value)} busy={edit.busy} change={write} action={action} />;
     }
     case 'fontFamily':

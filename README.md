@@ -99,10 +99,14 @@ can build on its own. Run `npm run check`, `npm run build`,
 `npm run build:hosted`, and `npm run test:browser`. For changes to the grid
 or a popup, test keyboard navigation, selection, Escape, and focus return.
 
+## Import Penpot tokens
+
+Export tokens from Penpot as a single JSON file. Open the matching token files in Foundry, then choose **File → Import Penpot tokens…**, select the file and token set, and review the changes. Foundry updates values of existing tokens; it does not create or delete tokens. The export has no baseline, so compare changes carefully when the repository has changed since the export.
+
 ## Import value changes
 
 Foundry matches changes by token path in the current workspace. Open the files
-that contain those tokens together. Choose **File → Import value changes…** and select
+that contain those tokens together. Choose **File → Import proposal…** and select
 `token-proposal.json` from your Figma token plugin or a JSON file in the format
 below. Review the old and new values, then apply the changes.
 Your other edits stay in place. If an old value differs from the open value,

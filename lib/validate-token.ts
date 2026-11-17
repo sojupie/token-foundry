@@ -89,8 +89,8 @@ export function* tokenValueIssues(type: string | undefined, value: JsonValue | u
           yield* check('string', unit, path + '/unit');
           return;
         }
-        const units = expected === 'dimension' ? ['px', 'rem'] : ['ms', 's'];
-        if (typeof unit !== 'string' || !units.includes(unit)) yield path + '/unit · Use ' + units.join(' or ') + '.';
+        const units = expected === 'dimension' ? ['px', 'rem', 'dp', 'sp'] : ['ms', 's'];
+        if (typeof unit !== 'string' || !units.includes(unit)) yield path + '/unit · Use ' + (expected === 'dimension' ? 'px, rem, dp or sp' : units.join(' or ')) + '.';
         return;
       }
       case 'fontFamily':

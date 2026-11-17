@@ -2,6 +2,7 @@ import { startTransition, StrictMode, useCallback, useEffect, useEffectEvent, us
 import type { ClipboardEvent, ComponentType } from 'react';
 import { errorMessage, isJsonObject, requireValue } from '../lib/json.ts';
 import type { JsonObject, JsonValue } from '../lib/json.ts';
+import { penpotSets, reviewPenpot } from '../lib/penpot-import.ts';
 import { diagnosticKey } from '../lib/document-diagnostics.ts';
 import type { DocumentGraph } from '../lib/document.ts';
 import type { TokenNode } from '../lib/token-types.ts';
@@ -151,6 +152,9 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
   const [submittedUrl, setSubmittedUrl] = useState('');
   const [linkedProposal, setLinkedProposal] = useState(proposalLink);
   const [importChanges, setImportChanges] = useState(false);
+  const [penpotOpen, setPenpotOpen] = useState(false);
+  const [penpotFile, setPenpotFile] = useState<{ name: string; text: string; sets: string[] } | null>(null);
+  const [penpotSet, setPenpotSet] = useState('');
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [metadataLocation, setMetadataLocation] = useState<MetadataLocation | null>(null);
   const variantsHeading = useRef<HTMLHeadingElement>(null);
@@ -170,6 +174,7 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
   const fileInput = useRef<HTMLInputElement>(null);
   const folderInput = useRef<HTMLInputElement>(null);
   const proposalInput = useRef<HTMLInputElement>(null);
+  const penpotInput = useRef<HTMLInputElement>(null);
   const workspacePane = useRef<HTMLElement>(null);
   const detailsButton = useRef<HTMLButtonElement>(null);
   const inspectorCloseButton = useRef<HTMLButtonElement>(null);
@@ -346,6 +351,28 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
     } finally {
       setBusy(false);
     }
+  }
+
+  async function loadPenpot(file: File) {
+    setBusy(true);
+    setError('');
+    try {
+      const text = await file.text();
+      const sets = penpotSets(text);
+      setPenpotFile({ name: file.name, text, sets });
+      setPenpotSet(sets.length === 1 ? sets[0] ?? '' : '');
+    } catch (failure) { setPenpotFile(null); setError(errorMessage(failure)); }
+    finally { setBusy(false); }
+  }
+
+  function reviewPenpotFile() {
+    if (!penpotFile || !penpotSet) return;
+    setError('');
+    try {
+      setReview(reviewPenpot(data, penpotFile.text, penpotSet));
+      setPenpotOpen(false);
+      setPenpotFile(null);
+    } catch (failure) { setError(errorMessage(failure)); }
   }
 
   function reviewLinkedProposal() {
@@ -957,6 +984,8 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
           run: () => { void loadMd3(true); }, disabled: busy }] : []),
         { label: 'Import proposal…', icon: <FileUp aria-hidden="true" />,
           run: () => { setError(''); setImportChanges(true); }, disabled: !!activeResolver || menuDisabled },
+        { label: 'Import Penpot tokens…', icon: <FileUp aria-hidden="true" />,
+          run: () => { setError(''); setPenpotFile(null); setPenpotOpen(true); }, disabled: !!activeResolver || menuDisabled },
       ],
       [
         { label: reviewLabel + '…', icon: <ArrowDownToLine aria-hidden="true" />,
@@ -1067,6 +1096,11 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
         <input ref={proposalInput} type="file" accept=".json,application/json" hidden onChange={(event) => {
           const file = event.target.files?.[0];
           if (file) void loadProposal(file);
+          event.target.value = '';
+        }} />
+        <input ref={penpotInput} type="file" accept=".json,application/json" hidden onChange={(event) => {
+          const file = event.target.files?.[0];
+          if (file) void loadPenpot(file);
           event.target.value = '';
         }} />
         <div className="workspace-review">
@@ -1388,6 +1422,20 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
     }} description="Choose a file with edits to the tokens you have open. You’ll review the changes before applying them."
       actions={<Button disabled={busy} onClick={() => proposalInput.current?.click()}>Choose file…</Button>}>
       {importChanges && error && <Alert variant="destructive"><AlertDescription className="max-h-36 overflow-auto whitespace-pre-wrap">{error}</AlertDescription></Alert>}
+    </ActionDialog>
+    <ActionDialog open={penpotOpen} busy={busy} title="Import Penpot tokens" onOpenChange={(open) => {
+      if (!busy && !open) { setPenpotOpen(false); setPenpotFile(null); setError(''); }
+    }} description="Compare a Penpot token export with the open tokens. Review the changes before applying them."
+      actions={<><Button variant="text" disabled={busy} onClick={() => penpotInput.current?.click()}>{penpotFile ? 'Choose another file…' : 'Choose file…'}</Button>
+        <Button disabled={busy || !penpotFile || !penpotSet} onClick={reviewPenpotFile}>Review changes</Button></>}>
+      {penpotFile && <div className="grid gap-2 text-sm"><p>{penpotFile.name}</p>
+        <label htmlFor="penpot-token-set">Token set</label>
+        <NativeSelect id="penpot-token-set" value={penpotSet} onChange={event => setPenpotSet(event.target.value)}>
+          <NativeSelectOption value="">Select a token set</NativeSelectOption>
+          {penpotFile.sets.map(set => <NativeSelectOption key={set} value={set}>{set}</NativeSelectOption>)}
+        </NativeSelect>
+        <p>Only existing token values are imported. Check changes carefully if the export is older than the workspace.</p></div>}
+      {penpotOpen && error && <Alert variant="destructive"><AlertDescription className="max-h-36 overflow-auto whitespace-pre-wrap">{error}</AlertDescription></Alert>}
     </ActionDialog>
     {diagnosticsOpen && <DiagnosticsDialog graph={diagnosticGraph} close={() => setDiagnosticsOpen(false)} editSource={setSourceLocation}
       repair={(path, link) => { setView('tokens'); jump(path); if (link && !current) edit(path, 'value', true); else openInspector(path); }}
