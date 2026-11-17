@@ -11,8 +11,11 @@ const audience = 'token-editor-test';
 const repository = 'org/design-system';
 const repo = '/repos/' + repository;
 const path = 'tokens/system.tokens.json';
-const before = '{"text":{"$type":"number","$value":1}}\n';
-const after = '{"text":{"$type":"number","$value":2}}\n';
+const before = '\uFEFF{"text":{"$type":"number","$value":1e0,"$description":"Färg","$extensions":{"se.example":{"$ref":"#/opaque"}}},"alias":{"$ref":"#/text/$value"}}\r\n';
+const after = before.replace('1e0', '2');
+const movedPath = 'tokens/nested/shared.tokens.json';
+const manifestPath = 'tokens/theme.resolver.json';
+const manifest = '{"version":"2025.10","resolutionOrder":[]}\n';
 const base = '1'.repeat(40);
 const changedBase = '2'.repeat(40);
 const headCommit = '3'.repeat(40);
@@ -36,6 +39,7 @@ await test('the Worker gates access, opens pinned files and safely retries a rev
   let head = '';
   let headOid = '';
   let pullCreated = false;
+  let operation: 'edit' | 'create' | 'move' = 'edit';
   let simulateFailure = true;
   let advanceBaseOnCommit = true;
   let oauthExchanges = 0;
@@ -79,6 +83,8 @@ await test('the Worker gates access, opens pinned files and safely retries a rev
         { path: 'settings.json', type: 'blob', mode: '100644' },
       ],
     });
+    if (pathname === repo + '/contents/' + movedPath && url.searchParams.get('ref') === headCommit) return new Response(before);
+    if (pathname === repo + '/contents/' + manifestPath && url.searchParams.get('ref') === headCommit) return new Response(manifest);
     if (pathname === repo + '/contents/' + path) return new Response(url.searchParams.get('ref') === headCommit ? after : before);
     if (pathname.startsWith(repo + '/contents/tokens/components/')) return new Response(before);
     if (method === 'GET' && pathname.startsWith(repo + '/git/ref/heads/token-editor/')) {
@@ -102,7 +108,10 @@ await test('the Worker gates access, opens pinned files and safely retries a rev
         assert(isRecord(variables) && isRecord(variables['input']));
         assert.deepEqual(variables['input']['branch'], { repositoryNameWithOwner: repository, branchName: head });
         assert.equal(variables['input']['expectedHeadOid'], base);
-        assert.deepEqual(variables['input']['fileChanges'], { additions: [{ path, contents: btoa(after) }] });
+        assert.deepEqual(variables['input']['fileChanges'], operation === 'create'
+          ? { additions: [{ path: manifestPath, contents: Buffer.from(manifest).toString('base64') }] }
+          : operation === 'move' ? { additions: [{ path: movedPath, contents: Buffer.from(before).toString('base64') }], deletions: [{ path }] }
+            : { additions: [{ path, contents: Buffer.from(after).toString('base64') }] });
         headOid = headCommit;
         if (advanceBaseOnCommit) latest = changedBase;
         return Response.json({ data: { createCommitOnBranch: { commit: { oid: headCommit } } } });
@@ -117,7 +126,8 @@ await test('the Worker gates access, opens pinned files and safely retries a rev
       }
     }
     if (pathname === repo + '/compare/' + base + '...' + headCommit) {
-      return Response.json({ total_commits: 1, files: [{ filename: path, status: 'modified' }] });
+      return Response.json({ total_commits: 1, files: [operation === 'create' ? { filename: manifestPath, status: 'added' } :
+        operation === 'move' ? { filename: movedPath, previous_filename: path, status: 'renamed' } : { filename: path, status: 'modified' }] });
     }
     if (method === 'GET' && pathname === repo + '/pulls') {
       assert.equal(url.searchParams.get('head'), 'org:' + head);
@@ -170,7 +180,7 @@ await test('the Worker gates access, opens pinned files and safely retries a rev
   assert.equal((await post('open', { repository: 'other/secret' })).status, 404);
   const snapshot = await post('open', { repository });
   assert.equal(snapshot.status, 200);
-  assert.deepEqual(await snapshot.json(), { repository, revision: base, files: [{ path, text: before }] });
+  assert.deepEqual(await snapshot.json(), { repository, revision: base, root: 'tokens', files: [{ path, text: before }] });
   extraTokenFiles = 27;
   const expanded = await post('open', { repository });
   assert.equal(expanded.status, 200);
@@ -191,6 +201,15 @@ await test('the Worker gates access, opens pinned files and safely retries a rev
   latest = base;
   assert.equal((await post('propose', { ...proposal, changes: [{ path: '.github/workflows/deploy.yml', before, after }] })).status, 400);
   assert.equal((await post('propose', { ...proposal, changes: [{ path, before: '{}', after }] })).status, 409);
+  const invalid = await post('propose', { ...proposal, changes: [{ path, before, after: '{"text":{"$type":"number","$value":"invalid"}}' }] });
+  assert.equal(invalid.status, 422);
+  assert.match(await invalid.text(), /Expected a finite number/u);
+  const invalidResolver = await post('propose', { ...proposal, changes: [{ path: manifestPath, before: null, after: JSON.stringify({
+    version: '2025.10',
+    resolutionOrder: [{ type: 'set', name: 'Only', sources: [{ broken: { $type: 'number', $value: '{missing}' } }] }],
+  }) }] });
+  assert.equal(invalidResolver.status, 422);
+  assert.match(await invalidResolver.text(), /missing/u);
   assert.equal(commits, 0);
   const duringCommit = await post('propose', proposal);
   assert.equal(duringCommit.status, 409);
@@ -210,4 +229,23 @@ await test('the Worker gates access, opens pinned files and safely retries a rev
   assert.equal((await post('propose', proposal)).status, 200);
   assert.equal(commits, 1);
   assert.equal(pullRequests, 2);
+  head = '';
+  headOid = '';
+  pullCreated = false;
+  operation = 'create';
+  const addition = { ...proposal, changes: [{ path: manifestPath, before: null, after: manifest }] };
+  assert.equal((await post('propose', { ...proposal, changes: [{ path, before: null, after: manifest }] })).status, 400);
+  assert.equal((await post('propose', addition)).status, 200);
+  assert.equal((await post('propose', addition)).status, 200);
+  assert.equal(commits, 2);
+  assert.equal(pullRequests, 3);
+  head = '';
+  headOid = '';
+  pullCreated = false;
+  operation = 'move';
+  const move = { ...proposal, changes: [{ path, before, after: null }, { path: movedPath, before: null, after: before }] };
+  assert.equal((await post('propose', move)).status, 200);
+  assert.equal((await post('propose', move)).status, 200);
+  assert.equal(commits, 3);
+  assert.equal(pullRequests, 4);
 });

@@ -1,7 +1,11 @@
 import { base64url } from 'jose';
 import { baseChanged, commitOid, repositoryName } from '../integrations/github/contract.ts';
 import type { PullRequestProposal, RepositorySnapshot } from '../integrations/github/contract.ts';
-import { isRecord, isUnknownArray } from '../lib/json.ts';
+import { compileResolver, isResolverFile } from '../lib/resolver.ts';
+import { parseTokenFile } from '../lib/parse-token-file.ts';
+import type { TokenFile } from '../lib/token-types.ts';
+import { errorMessage, isRecord, isUnknownArray } from '../lib/json.ts';
+import { reviewRepositorySources } from '../lib/workspace.ts';
 import { fail, limitedText } from './http.ts';
 
 export const maximumFileBytes = 512 * 1024;
@@ -12,6 +16,7 @@ const maximumChanges = 16;
 const apiOrigin = 'https://api.github.com';
 const pathSegment = /^[a-z\d_-][a-z\d_.-]*$/iu;
 const tokenFile = /(?:^|\/)(?:tokens\.json|[^/]+\.tokens(?:\.json)?)$/iu;
+const resolverFile = /\.resolver\.json$/iu;
 const encoder = new TextEncoder();
 
 function staleBase(): never {
@@ -69,6 +74,8 @@ interface Project {
   revision: string;
   files: string[];
   size: number;
+  documents: Map<string, string>;
+  entries: Map<string, unknown>;
 }
 
 export class GitHub {
@@ -148,30 +155,61 @@ export class GitHub {
     const commit = object(await this.#json(this.#prefix + '/git/commits/' + revision));
     const tree = await this.#directoryTree(oid(object(commit['tree'])['sha']), root.split('/'));
     const entries = await this.#tree(tree, true);
+    const occupied = new Map(entries.flatMap(({ path, type }) =>
+      typeof path === 'string' ? [[root + '/' + path, type] as const] : []));
+    const candidates = new Map(entries.flatMap(({ path, type, mode, size: bytes }) =>
+      type === 'blob' && mode === '100644' && typeof path === 'string' && safePath(path) ?
+        [[root + '/' + path, bytes] as const] : []));
+    const files = new Set<string>();
+    const documents = new Map<string, string>();
     let size = 0;
-    const files = entries.flatMap(({ path, type, mode, size: bytes }) => {
-      if (type !== 'blob' || mode !== '100644' || typeof path !== 'string' || !safePath(path) || !tokenFile.test(path)) return [];
+    function include(path: string) {
+      if (files.has(path) || !candidates.has(path)) return;
+      const bytes = candidates.get(path);
       if (typeof bytes !== 'number' || !Number.isSafeInteger(bytes) || bytes < 0 || bytes > maximumFileBytes) {
-        fail(422, 'A token file exceeds the size limit or could not be read.');
+        fail(422, 'A token or Resolver source exceeds the size limit or could not be read.');
       }
       size += bytes;
-      return [root + '/' + path];
-    }).toSorted();
-    if (!files.length || files.length > maximumFiles) fail(422, 'The token folder must contain between 1 and ' + maximumFiles + ' token files.');
-    if (size > maximumWorkspaceBytes) fail(422, 'The token workspace exceeds the size limit.');
-    return { branch, revision, files, size };
+      files.add(path);
+      if (files.size > maximumFiles || size > maximumWorkspaceBytes) fail(422, 'The token workspace exceeds the size limit.');
+    }
+    for (const path of candidates.keys()) {
+      if (tokenFile.test(path) || resolverFile.test(path)) include(path);
+    }
+    if (!files.size) fail(422, 'The token folder contains no token files or Resolver documents.');
+
+    if ([...files].some(path => resolverFile.test(path))) {
+      const expandSources = async (): Promise<void> => {
+        const pending = [...files].filter(path => !documents.has(path));
+        if (!pending.length) return;
+        const texts = await Promise.all(pending.map(async path => [path, await this.#file(path, revision)] as const));
+        for (const [path, text] of texts) documents.set(path, text);
+        const parsed = [...documents].flatMap(([path, text]): TokenFile[] => {
+          try { return [{ path, tree: parseTokenFile(text, path) }]; }
+          catch { return []; }
+        });
+        for (const document of parsed.filter(isResolverFile)) {
+          for (const path of compileResolver(document, parsed).sourceFiles) {
+            if (path.toLowerCase().endsWith('.json') || tokenFile.test(path)) include(path);
+          }
+        }
+        await expandSources();
+      };
+      await expandSources();
+    }
+    return { branch, revision, files: [...files].toSorted(), size, documents, entries: occupied };
   }
 
   async #file(path: string, revision: string): Promise<string> {
     const response = await this.#request(this.#prefix + '/contents/' + path + '?ref=' + revision, undefined, 'application/vnd.github.raw+json');
     if (!response.ok) apiError(response);
-    return limitedText(response, maximumFileBytes, 422);
+    return limitedText(response, maximumFileBytes, 422, true);
   }
 
   async open(repository: string, root: string): Promise<RepositorySnapshot> {
-    const { revision, files } = await this.#project(root);
-    const sources = await Promise.all(files.map(async (path) => ({ path, text: await this.#file(path, revision) })));
-    return { repository, revision, files: sources };
+    const { revision, files, documents } = await this.#project(root);
+    const sources = await Promise.all(files.map(async (path) => ({ path, text: documents.get(path) ?? await this.#file(path, revision) })));
+    return { repository, revision, root, files: sources };
   }
 
   async #findPull(repository: string, head: string, base: string): Promise<string | undefined> {
@@ -202,7 +240,10 @@ export class GitHub {
         branch: { repositoryNameWithOwner: repository, branchName: head },
         expectedHeadOid: revision,
         message: { headline: 'Update design tokens' },
-        fileChanges: { additions: changes.map(({ path, after }) => ({ path, contents: base64(after) })) },
+        fileChanges: {
+          additions: changes.flatMap(({ path, after }) => after === null ? [] : [{ path, contents: base64(after) }]),
+          ...(changes.some(({ after }) => after === null) ? { deletions: changes.flatMap(({ path, after }) => after === null ? [{ path }] : []) } : {}),
+        },
       } },
     }));
     if (!isRecord(response['data']) || !isRecord(response['data']['createCommitOnBranch'])) {
@@ -214,13 +255,17 @@ export class GitHub {
   async #verifyCommit(revision: string, headOid: string, changes: PullRequestProposal['changes']) {
     const comparison = object(await this.#json(this.#prefix + '/compare/' + revision + '...' + headOid));
     const changed = comparison['files'];
-    const expected = new Set(changes.map(({ path }) => path));
-    if (comparison['total_commits'] !== 1 || !isUnknownArray(changed) || changed.length !== expected.size ||
-      !changed.every((value) => isRecord(value) && typeof value['filename'] === 'string' &&
-        value['status'] === 'modified' && expected.delete(value['filename']))) {
+    const expected = new Map(changes.map(({ path, before, after }) => [path, before === null ? 'added' : after === null ? 'removed' : 'modified']));
+    function accepts(path: unknown, status: unknown) {
+      return typeof path === 'string' && expected.get(path) === status && expected.delete(path);
+    }
+    if (comparison['total_commits'] !== 1 || !isUnknownArray(changed) ||
+      !changed.every(value => isRecord(value) && (value['status'] === 'renamed'
+        ? accepts(value['previous_filename'], 'removed') && accepts(value['filename'], 'added')
+        : accepts(value['filename'], value['status']))) || expected.size) {
       fail(409, 'The proposal branch contains different changes.');
     }
-    const matches = await Promise.all(changes.map(async ({ path, after }) => await this.#file(path, headOid) === after));
+    const matches = await Promise.all(changes.map(async ({ path, after }) => after === null || await this.#file(path, headOid) === after));
     if (matches.includes(false)) fail(409, 'The proposal branch contains different file contents.');
   }
 
@@ -229,19 +274,78 @@ export class GitHub {
     const project = await this.#project(root);
     if (revision !== project.revision) staleBase();
     const paths = new Set(project.files);
+    const seen = new Set<string>();
+    const prospective = new Map(project.documents);
+    const additions = new Set<string>();
     let size = project.size;
+    let count = paths.size;
     for (const { path, before, after } of changes) {
-      if (!paths.delete(path)) fail(400, 'A proposed file is duplicated or outside the configured token workspace.');
-      const bytes = encoder.encode(after).byteLength;
+      if (seen.has(path) || !safePath(path) || !path.startsWith(root + '/')) {
+        fail(400, 'A proposed file is duplicated or outside the configured token workspace.');
+      }
+      seen.add(path);
+      if (before === null) {
+        const parts = path.split('/');
+        if (project.entries.has(path) || (!tokenFile.test(path) && !path.toLowerCase().endsWith('.json')) ||
+          parts.slice(root.split('/').length, -1).some((_, index) => {
+            const type = project.entries.get(parts.slice(0, root.split('/').length + index + 1).join('/'));
+            return type !== undefined && type !== 'tree';
+          })) {
+          fail(400, 'A new file would overwrite a repository entry or has an unsupported name.');
+        }
+        additions.add(path);
+        count++;
+      } else if (!paths.has(path)) fail(400, 'The proposed file is outside the opened token workspace.');
+      if (after === null) count--;
+      const bytes = after === null ? 0 : encoder.encode(after).byteLength;
       if (after === before || bytes > maximumFileBytes) fail(400, 'A changed file is unchanged or too large.');
-      size += bytes - encoder.encode(before).byteLength;
+      size += bytes - (before === null ? 0 : encoder.encode(before).byteLength);
+      if (after === null) {
+        prospective.delete(path);
+        continue;
+      }
+      prospective.set(path, after);
       let value: unknown;
-      try { value = JSON.parse(after); } catch { fail(422, path + ' is not valid JSON.'); }
+      try { value = JSON.parse(after.replace(/^\uFEFF/u, '')); } catch { fail(422, path + ' is not valid JSON.'); }
       if (!isRecord(value)) fail(422, path + ' must contain a token document.');
     }
-    const matches = await Promise.all(changes.map(async ({ path, before }) => await this.#file(path, revision) === before));
-    if (matches.includes(false)) fail(409, 'The proposal no longer matches the original file contents.');
-    if (size > maximumWorkspaceBytes) fail(422, 'The proposed token workspace exceeds the size limit.');
+    if ([...additions].some(path => [...additions].some(other => path !== other && path.startsWith(other + '/')))) {
+      fail(400, 'A proposed destination conflicts with another new file.');
+    }
+    const dependentAdditions = [...additions].filter(path => !tokenFile.test(path) && !resolverFile.test(path));
+    if (dependentAdditions.length) {
+      const parsed = [...prospective].flatMap(([path, text]): TokenFile[] => {
+        try { return [{ path, tree: parseTokenFile(text, path) }]; }
+        catch { return []; }
+      });
+      const referenced = new Set<string>();
+      for (const file of parsed.filter(isResolverFile)) {
+        for (const path of compileResolver(file, parsed).sourceFiles) referenced.add(path);
+      }
+      if (dependentAdditions.some(path => !referenced.has(path))) {
+        fail(400, 'A new JSON file must be referenced by a Resolver or use a token file name.');
+      }
+    }
+    if (size > maximumWorkspaceBytes || count > maximumFiles) fail(422, 'The proposed token workspace exceeds the size limit.');
+    const sources = await Promise.all(project.files.map(async path => ({
+      path, text: project.documents.get(path) ?? await this.#file(path, revision),
+    })));
+    const original = new Map(sources.map(({ path, text }) => [path, text]));
+    for (const { path, before } of changes) {
+      if ((original.get(path) ?? null) !== before) fail(409, 'The proposal no longer matches the original file contents.');
+    }
+    const proposed = new Map(original);
+    for (const { path, after } of changes) {
+      if (after === null) proposed.delete(path);
+      else proposed.set(path, after);
+    }
+    let validation: ReturnType<typeof reviewRepositorySources>;
+    try {
+      validation = reviewRepositorySources(repository, sources, [...proposed].map(([path, text]) => ({ path, text })));
+    } catch (failure) {
+      fail(422, errorMessage(failure));
+    }
+    if (validation.validationErrors?.length) fail(422, validation.validationErrors.join('\n'));
 
     const ordered = changes.toSorted((left, right) => left.path.localeCompare(right.path, 'en'));
     const digest = base64url.encode(new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(JSON.stringify([revision, ordered.map(({ path, after }) => [path, after])])))));

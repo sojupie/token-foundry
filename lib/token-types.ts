@@ -5,6 +5,10 @@ import type { JsonObject, JsonValue } from './json.ts';
 export const dtcgTypes = ['color', 'dimension', 'fontFamily', 'fontWeight', 'duration', 'cubicBezier', 'number',
   'strokeStyle', 'border', 'transition', 'shadow', 'gradient', 'typography'] as const;
 
+export function clampGradientPosition(position: number): number {
+  return Math.min(1, Math.max(0, position));
+}
+
 export interface TokenNode extends JsonObject {
   $type?: string;
   $value?: JsonValue;

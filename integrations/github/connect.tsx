@@ -36,6 +36,7 @@ async function openConnection(repository: string): Promise<WorkspaceConnection> 
   if (!isSnapshot(response) || response.repository !== repository) throw new Error('The repository snapshot could not be read.');
   return {
     workspace: openWorkspace(repository, response.files),
+    root: response.root,
     refresh: () => openConnection(repository),
     submit: async (changes) => {
       const result = await post('propose', { repository, revision: response.revision, changes });

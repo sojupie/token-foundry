@@ -1,11 +1,10 @@
 import type { ComponentProps } from 'react';
 import { ChevronDown } from 'lucide-react';
-import { cn } from '@/lib/utils';
 
 export function NativeSelect({ className, ...props }: ComponentProps<'select'>) {
-  return <div className="native-select">
-    <select className={cn('native-field', className)} {...props} />
-    <ChevronDown aria-hidden="true" />
+  return <div className="md-outlined-select min-w-0 w-full">
+    <select className={className} {...props} />
+    <span data-slot="trailing-icon" aria-hidden="true"><ChevronDown /></span>
   </div>;
 }
 

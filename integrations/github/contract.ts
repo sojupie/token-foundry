@@ -4,6 +4,7 @@ import type { FileChange } from '../../lib/workspace.ts';
 export interface RepositorySnapshot {
   repository: string;
   revision: string;
+  root: string;
   files: { path: string; text: string }[];
 }
 
@@ -22,12 +23,13 @@ function sourceFile(value: unknown): value is { path: string; text: string } {
 }
 
 function fileChange(value: unknown): value is FileChange {
-  return isRecord(value) && typeof value['path'] === 'string' && typeof value['before'] === 'string' && typeof value['after'] === 'string';
+  return isRecord(value) && typeof value['path'] === 'string' && (typeof value['before'] === 'string' || value['before'] === null) &&
+    (typeof value['after'] === 'string' || value['after'] === null);
 }
 
 export function isSnapshot(value: unknown): value is RepositorySnapshot {
   return isRecord(value) && typeof value['repository'] === 'string' && repositoryName.test(value['repository']) &&
-    typeof value['revision'] === 'string' && commitOid.test(value['revision']) && isUnknownArray(value['files']) &&
+    typeof value['revision'] === 'string' && commitOid.test(value['revision']) && typeof value['root'] === 'string' && isUnknownArray(value['files']) &&
     value['files'].every(sourceFile);
 }
 

@@ -1,6 +1,6 @@
 import { diffFile, openWorkspace, workspaceChanges } from '../../lib/workspace.ts';
 import type { Workspace } from '../../lib/workspace.ts';
-import { emptyFolder, ignoredDirectories, isTokenFile } from './local-folder.ts';
+import { emptyFolder, folderTokenSources, ignoredDirectories, isResolverName, isTokenFile } from './local-folder.ts';
 import reference from '../../examples/reference.tokens.json?raw';
 import system from '../../examples/system.tokens.json?raw';
 
@@ -15,17 +15,20 @@ export async function openFiles(files: readonly File[], folder: boolean): Promis
   const first = files[0];
   if (!first) throw new Error('Choose at least one token file.');
   const name = folder ? first.webkitRelativePath.split('/')[0] : first.name;
-  const selected = folder ? files.filter((file) => isTokenFile(file.name) &&
+  const available = folder ? files.filter((file) =>
     !file.webkitRelativePath.split('/').slice(1, -1).some((part) => ignoredDirectories.has(part))) : files;
+  const withResolver = available.some(file => isResolverName(file.name));
+  const selected = folder ? available.filter(file => isTokenFile(file.name) || withResolver && file.name.toLowerCase().endsWith('.json')) : available;
+  const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
   const sources = await Promise.all(selected.map(async (file) => ({
     path: folder ? file.webkitRelativePath.split('/').slice(1).join('/') : file.name,
-    text: await file.text(),
+    text: decoder.decode(await file.arrayBuffer()),
   })));
   if (!sources.length) throw new Error(emptyFolder);
-  return openWorkspace(name ?? 'Token files', sources);
+  return openWorkspace(name ?? 'Token files', folder ? folderTokenSources(sources) : sources);
 }
 
-export function download(name: string, content: string, type: string): void {
+export function download(name: string, content: BlobPart, type: string): void {
   const url = URL.createObjectURL(new Blob([content], { type }));
   const link = document.createElement('a');
   link.href = url;

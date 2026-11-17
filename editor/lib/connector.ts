@@ -2,6 +2,7 @@ import type { FileChange, Workspace } from '../../lib/workspace.ts';
 
 export interface WorkspaceConnection {
   workspace: Workspace;
+  root: string;
   submit: (changes: FileChange[]) => Promise<{ status: 'submitted'; url: string } | { status: 'stale' }>;
   refresh: () => Promise<WorkspaceConnection>;
 }

@@ -1,30 +1,58 @@
 import { ArrowRight, Link2 } from 'lucide-react';
-import { useRef, useState } from 'react';
-import { Button } from '@token-catalog/forge-react';
-import { ActionDialog } from '@/components/ui/dialog';
+import { List, ListItemButton } from '@token-catalog/forge-react';
+import { referenceConsumers, referenceProblems } from '../lib/document.ts';
 import type { DocumentGraph } from '../lib/document.ts';
+import { TokenValue } from './token-value.tsx';
 
-export function ReferenceDetails({ path, graph, close, jump }: {
-  path: string; graph: DocumentGraph; close: () => void; jump: (path: string) => void;
+export function ReferenceDetails({ path, graph, jump, disabled }: {
+  path: string; graph: DocumentGraph; jump: (path: string) => void; disabled: boolean;
 }) {
-  const issue = graph.issues.get(path);
-  const [open, setOpen] = useState(true);
-  const destination = useRef<string | null>(null);
-  return <ActionDialog open={open} onOpenChange={setOpen} title="Token references"
-    description={<code className="wrap-anywhere">{path}</code>} onAfterClose={() => {
-      close();
-      if (destination.current) jump(destination.current);
-    }}>
-      {issue && <p className="wrap-anywhere text-sm text-destructive">{issue}</p>}
-      {([['References', graph.dependencies.get(path)], ['Used by', graph.usedBy.get(path)]] as const).map(([label, paths]) =>
-        <section key={label} className="grid min-w-0 gap-1">
-          <h3 className="text-sm font-medium">{label}</h3>
-          {paths?.size ? [...paths].map((item) => graph.tokens.has(item) ?
-            <Button key={item} size="xsmall" variant="text" className="reference-choice"
-              onClick={() => { destination.current = item; setOpen(false); }}><Link2 aria-hidden="true" />
-              <span className="min-w-0 text-start whitespace-normal wrap-anywhere">{item}</span><ArrowRight aria-hidden="true" />
-            </Button> : <code key={item} className="wrap-anywhere text-xs">{item}</code>) :
-            <p className="text-xs text-muted-foreground">None</p>}
-        </section>)}
-  </ActionDialog>;
+  const referenceIssue = graph.issues.get(path);
+  const problems = referenceIssue ? referenceProblems(graph, path, referenceIssue) : graph.validation.get(path);
+  const links = graph.links.get(path);
+  const { direct, downstream } = referenceConsumers(graph, path);
+  return <section aria-label="Token references" className="grid gap-4">
+    {problems?.length ? <ul className="grid gap-1 text-sm text-destructive">
+      {problems.map(issue => <li key={issue} className="wrap-anywhere">{issue}</li>)}
+    </ul> : null}
+    <section className="grid min-w-0 gap-1">
+      <h3 className="text-sm font-medium">References</h3>
+      {links?.size ? <List aria-label="References" data-variant="segmented" data-surface="transparent">
+        {[...links].map(([key, link]) => <li key={key} className="grid gap-1 py-1">
+          {link.target && graph.tokens.has(link.target) ?
+            <ListItemButton leading={<Link2 />} disabled={disabled}
+              trailing={<span className="md-list-trailing-icon"><ArrowRight aria-hidden="true" /></span>}
+              onClick={() => { if (link.target) jump(link.target); }}>
+              <span className="wrap-anywhere">{link.target}</span>
+            </ListItemButton> : null}
+          <dl className="grid gap-1 px-2 text-xs">
+            <div className="wrap-anywhere"><dt>Source field</dt><dd><code>{link.field.join(' / ')}</code></dd></div>
+            <div className="wrap-anywhere"><dt>Authored link</dt><dd><code>{link.text}</code></dd></div>
+            {link.parts.length > 0 && <div className="wrap-anywhere"><dt>Target location</dt>
+              <dd><code>{link.file ? link.file + ' · ' : ''}{link.parts.join(' / ')}</code></dd>
+            </div>}
+            {link.value !== undefined && <div><dt>Resolved</dt><dd><TokenValue value={link.value} swatch wrap /></dd></div>}
+          </dl>
+        </li>)}
+      </List> : <p className="text-xs text-muted-foreground">None</p>}
+    </section>
+    {([['Used by', [...direct]], ['Indirectly used by', [...downstream]]] as const).map(([label, paths]) =>
+      <section key={label} className="grid min-w-0 gap-1">
+        <h3 className="text-sm font-medium">{label}</h3>
+        {paths.length ? <List aria-label={label} data-variant="segmented" data-surface="transparent">
+          {paths.map(item => {
+            const fields = label === 'Used by' ? [...(graph.links.get(item)?.values() ?? [])]
+              .filter(link => link.target === path).map(link => link.field.join(' / ')) : [];
+            return <li key={item}><ListItemButton leading={<Link2 />} disabled={disabled}
+              trailing={<span className="md-list-trailing-icon"><ArrowRight aria-hidden="true" /></span>}
+              onClick={() => jump(item)}>
+              <span className="grid min-w-0 gap-1">
+                <span className="wrap-anywhere">{item}</span>
+                {!!fields.length && <span className="wrap-anywhere text-xs text-muted-foreground">{fields.join(', ')}</span>}
+              </span>
+            </ListItemButton></li>;
+          })}
+        </List> : <p className="text-xs text-muted-foreground">None</p>}
+      </section>)}
+  </section>;
 }

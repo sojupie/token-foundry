@@ -1,5 +1,5 @@
 import type { ReactNode, Ref } from 'react';
-import { Button, Menu as AriaMenu, MenuItem, MenuSection, MenuTrigger, Popover, Separator } from 'react-aria-components';
+import { Button, Header, Menu as AriaMenu, MenuItem, MenuSection, MenuTrigger, Popover, Separator } from 'react-aria-components';
 
 interface Command {
   label: string;
@@ -15,15 +15,17 @@ export interface Menu {
   sections: readonly (readonly Command[])[];
 }
 
-export function CommandMenu({ label, sections, status, triggerRef, icon, disabled }: Menu & {
+export function CommandMenu({ label, sections, status, triggerRef, icon, disabled, heading, triggerClassName }: Menu & {
   status?: string;
   triggerRef?: Ref<HTMLButtonElement>;
   icon?: ReactNode;
   disabled?: boolean;
+  heading?: string;
+  triggerClassName?: string;
 }) {
   return <MenuTrigger>
     <Button ref={triggerRef} aria-label={label} aria-description={status || undefined} isDisabled={disabled ?? false}
-      className={icon ? 'md-icon-button md-standard-icon-button' : 'command-trigger inline-flex shrink-0 items-center gap-1.5'}
+      className={(icon ? 'md-icon-button md-standard-icon-button' : 'command-trigger inline-flex shrink-0 items-center gap-1.5') + (triggerClassName ? ' ' + triggerClassName : '')}
       data-size={icon ? 'xsmall' : undefined} data-shape={icon ? 'round' : undefined} data-width={icon ? 'default' : undefined}>
       {icon ?? label}
       {status && <span aria-hidden="true" className="size-1.5 rounded-full bg-emerald-600" />}
@@ -31,6 +33,7 @@ export function CommandMenu({ label, sections, status, triggerRef, icon, disable
     <Popover className="command-menu" placement={icon ? 'bottom end' : 'bottom start'} offset={4} containerPadding={8}>
       <AriaMenu aria-label={label}>
         {sections.filter(section => section.length > 0).map((section, index) => <MenuSection key={section[0]?.label}>
+          {index === 0 && heading && <Header className="command-menu-heading">{heading}</Header>}
           {index > 0 && <Separator className="my-1 h-px bg-border" />}
           {section.map(command => <MenuItem key={command.label} isDisabled={command.disabled ?? false}
             textValue={command.label} aria-description={command.title} onAction={command.run}

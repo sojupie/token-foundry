@@ -33,10 +33,10 @@ export function readCookie(request: Request, name: string): string | undefined {
   return request.headers.get('Cookie')?.split(';').map((part) => part.trim()).find((part) => part.startsWith(name + '='))?.slice(name.length + 1);
 }
 
-export async function limitedText(message: Request | Response, maximum: number, status = 413): Promise<string> {
+export async function limitedText(message: Request | Response, maximum: number, status = 413, preserveBOM = false): Promise<string> {
   if (Number(message.headers.get('Content-Length')) > maximum) fail(status, 'Token payload exceeds the size limit.');
   if (!message.body) return '';
-  const decoder = new TextDecoder('utf-8', { fatal: true });
+  const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: preserveBOM });
   let text = '';
   let size = 0;
   for await (const chunk of message.body) {
