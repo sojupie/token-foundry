@@ -1,3 +1,6 @@
+import { colorSpace } from '../../lib/color.ts';
+import { isJsonObject } from '../../lib/json.ts';
+import { tokenFieldType } from '../../lib/validate-token.ts';
 import type { JsonValue } from '../../lib/json.ts';
 import { dtcgTypes } from '../../lib/token-types.ts';
 
@@ -45,3 +48,40 @@ export function defaultValue(type: string): JsonValue {
 }
 
 export const canEditType = (type: string | undefined): type is typeof dtcgTypes[number] => dtcgTypes.some(known => known === type);
+
+
+export function tokenDisplayName(path: string) {
+  return path.replace(/(^|\.)\$root$/u, '$1Group value');
+}
+
+export function valueFieldLabel(parts: readonly string[], value?: JsonValue, type?: string) {
+  let parent = value;
+  let parentType = type;
+  return parts.map((key, index) => {
+    if (key === '$value') return 'Value';
+    const numeric = /^\d+$/u.test(key);
+    const names = parentType === 'cubicBezier' ? ['X1', 'Y1', 'X2', 'Y2'] :
+      parts[index - 1] === 'components' && isJsonObject(parent) && typeof parent['colorSpace'] === 'string'
+        ? colorSpace(parent['colorSpace'])?.components : undefined;
+    const name = numeric ? names?.[Number(key)] ??
+      (parentType === 'gradient' ? 'Gradient stop ' : parentType === 'shadow' ? 'Shadow layer ' : 'Item ') + (Number(key) + 1) :
+      (parentType ? compositeFields[parentType]?.find(([member]) => member === key)?.[1] : undefined) ??
+        key.replace(/([a-z])([A-Z])/gu, '$1 $2').replace(/^./u, letter => letter.toUpperCase());
+    parentType = tokenFieldType(parentType, [key]);
+    // Component names depend on the containing color space.
+    if (key !== 'components') parent = Array.isArray(parent) ? parent[Number(key)] : isJsonObject(parent) ? parent[key] : undefined;
+    return name;
+  }).join(' › ');
+}
+
+
+export function valueFieldEditorType(type: string | undefined, parts: readonly string[]) {
+  const parent = tokenFieldType(type, parts.slice(0, -1));
+  const field = parts.at(-1);
+  if (parent === 'color' && (field === 'hex' || field === 'colorSpace')) return field;
+  if (parent === 'dimension' && field === 'unit') return 'dimensionUnit';
+  if (parent === 'duration' && field === 'unit') return 'durationUnit';
+  if (parent === 'strokeStyle' && field === 'lineCap') return 'lineCap';
+  if (parent === 'fontFamily' && field && /^[0-9]+$/u.test(field)) return 'fontName';
+  return tokenFieldType(type, parts);
+}

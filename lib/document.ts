@@ -75,7 +75,7 @@ export function inspectDocument(tree: JsonObject) {
   return inspectDocuments([{ path: '', tree }]);
 }
 
-export function inspectDocuments(files: readonly TokenFile[]) {
+export function inspectDocuments(files: readonly TokenFile[], preferredSource?: string) {
   const trees = new Map(files.map(({ path, tree }) => [path, tree]));
   const tokens = new Map<string, TokenEntry>();
   const fileTokens = new Map<string, Map<string, TokenEntry>>();
@@ -139,6 +139,7 @@ export function inspectDocuments(files: readonly TokenFile[]) {
       fileTokens.set(file, definitions);
       if (visible && (groups.has(path) || tokens.has(path))) {
         const existing = tokens.get(path)?.file ?? groups.get(path)?.files.keys().next().value;
+        if (preferredSource && existing !== file) return false;
         conflicts.add(path);
         report('', 'Conflicting definition also exists in ' + existing + '.', { kind: 'group', path: parentPath(path) });
         return false;
@@ -147,7 +148,7 @@ export function inspectDocuments(files: readonly TokenFile[]) {
       return visible;
     }
     const hiddenGroup = visible && tokens.has(path);
-    if (hiddenGroup) {
+    if (hiddenGroup && (!preferredSource || tokens.get(path)?.file === file)) {
       conflicts.add(path);
       report('', 'Conflicting token definition exists in ' + tokens.get(path)?.file + '.', { kind: 'group', path: parentPath(path) });
     }
@@ -409,7 +410,9 @@ export function inspectDocuments(files: readonly TokenFile[]) {
     }
   }
 
-  for (const root of roots) collect(root, '', undefined, root.source.file);
+  const orderedRoots = preferredSource ? roots.toSorted((a, b) =>
+    Number(b.source.file === preferredSource) - Number(a.source.file === preferredSource)) : roots;
+  for (const root of orderedRoots) collect(root, '', undefined, root.source.file);
   indexGroup('');
   for (const path of tokens.keys()) {
     try { resolve(path); } catch { /* Diagnostics are available for each row. */ }

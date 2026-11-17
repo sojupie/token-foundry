@@ -51,12 +51,18 @@ export function ReviewChanges({ review, busy, error, notice, close, save, onClos
 }) {
   // Keep the reviewed diff visible while the native dialog fades out.
   const [exitingReview, setExitingReview] = useState<Review | null>(null);
-  if (review && review !== exitingReview) setExitingReview(review);
+  const [recordsPage, setRecordsPage] = useState(0);
+  if (review && review !== exitingReview) {
+    setExitingReview(review);
+    setRecordsPage(0);
+  }
   const visibleReview = review ?? exitingReview;
   const importedValues = visibleReview?.importedValues;
   const structure = visibleReview?.structure;
   const bulk = visibleReview?.bulk;
   const records = importedValues ?? bulk?.records;
+  const pageSize = 50;
+  const firstRecord = recordsPage * pageSize;
   return <ActionDialog busy={busy} className="review-dialog" open={Boolean(review)} onOpenChange={(open) => { if (!open && !busy) close(); }}
     onAfterClose={() => { if (!review) setExitingReview(null); onClosed?.(); }}
     style={{ inlineSize: '48rem' }}
@@ -104,7 +110,7 @@ export function ReviewChanges({ review, busy, error, notice, close, save, onClos
               </TableRow>
             </TableHeader>
             <TableBody>
-              {records.map(({ path, before, after }) => {
+              {records.slice(firstRecord, firstRecord + pageSize).map(({ path, before, after }) => {
                 const showFullValues = describeTokenValue(before) === describeTokenValue(after);
                 return <TableRow key={path}>
                   <TableCell className="font-mono text-xs wrap-anywhere whitespace-normal">{path}</TableCell>
@@ -118,6 +124,11 @@ export function ReviewChanges({ review, busy, error, notice, close, save, onClos
             </TableBody>
           </Table>
         </div>
+        {records.length > pageSize && <div className="flex items-center justify-end gap-2 text-sm">
+          <Button size="xsmall" variant="text" disabled={!recordsPage} onClick={() => setRecordsPage(recordsPage - 1)}>Previous changes</Button>
+          <span>{firstRecord + 1}–{Math.min(firstRecord + pageSize, records.length)} of {records.length}</span>
+          <Button size="xsmall" variant="text" disabled={firstRecord + pageSize >= records.length} onClick={() => setRecordsPage(recordsPage + 1)}>Next changes</Button>
+        </div>}
       </> : null}
       {visibleReview.inheritanceImpact.length > 0 && <ReviewDisclosure label={'Inherited paths affected (' + visibleReview.inheritanceImpact.length + ')'}>
         <List className="mt-2 max-h-40 overflow-auto font-mono">

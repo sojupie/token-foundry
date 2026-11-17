@@ -1,21 +1,22 @@
-import { startTransition, StrictMode, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { startTransition, StrictMode, useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { ClipboardEvent, ComponentType } from 'react';
 import { errorMessage, isJsonObject, requireValue } from '../lib/json.ts';
 import type { JsonObject, JsonValue } from '../lib/json.ts';
 import { diagnosticKey } from '../lib/document-diagnostics.ts';
 import type { DocumentGraph } from '../lib/document.ts';
 import type { TokenNode } from '../lib/token-types.ts';
-import { compileResolver, isResolverFile, newResolverDocument, resolveResolver, resolverValueAt, winningOrigins } from '../lib/resolver.ts';
+import { compileResolver, isResolverFile, resolverValueAt, winningOrigins } from '../lib/resolver.ts';
 import type { ResolverOrigin } from '../lib/resolver.ts';
 import { serializeTokenPointer, tokenPointer } from '../lib/token-path.ts';
 import { copyEntries, decodeClipboard, encodeClipboard } from '../lib/structure.ts';
 import type { ClipboardEntry } from '../lib/structure.ts';
 import { PasteDialog } from './paste-dialog.tsx';
-import { ResolverPane, VariantComparison, downloadEditableSources, downloadVariant, labelOrigin, variantLabel } from './resolver-pane.tsx';
+import { ContextInputs, ResolverPane, VariantComparison, downloadEditableSources, downloadVariant, labelOrigin, variantLabel } from './resolver-pane.tsx';
 import type { Inputs } from './resolver-pane.tsx';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
-import { openWorkspace, reviewAgainstLatest, reviewCreateSource, reviewDelete, reviewDuplicate, reviewEdit, reviewMove, reviewMoves, reviewProposal, reviewRenameWithEdit, reviewMetadata, reviewRemoveOverride, reviewResolverValue, workspaceChanges } from '../lib/workspace.ts';
+import { openWorkspace, reviewAgainstLatest, reviewCreateSource, reviewDelete, reviewDuplicate, reviewEdit, reviewMove, reviewMoves, reviewProposal, reviewRenameWithEdit, reviewMetadataChanges, reviewRemoveOverride, reviewResolverValue, scopeWorkspace, workspaceChanges } from '../lib/workspace.ts';
 import type { ResolverEditScope, Review, Workspace } from '../lib/workspace.ts';
+import { useVariantResolution } from './lib/variant-resolution.ts';
 import { runWorkspaceReview } from './lib/workspace-review.ts';
 import type { CellPosition, Draft, EditableColumn, GridColumn } from './lib/draft.ts';
 import type { WorkspaceConnection, WorkspaceConnectorProps } from './lib/connector.ts';
@@ -23,11 +24,12 @@ import { OpenGitHub } from '../integrations/github/connect.tsx';
 import { createRoot } from 'react-dom/client';
 import { AlertCircle, ArrowDownToLine, ArrowRightLeft, ChevronLeft, ChevronRight, ClipboardPaste, Copy, FileUp, FolderOpen, GitPullRequest, Layers, Moon, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Pencil, SquarePen, Plus, Redo2, Search, Settings2, Sun, Trash2, Undo2, X } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Button, ButtonLink, IconButton, NavigationRail, NavigationRailItem, SearchBar, SideSheet, TextField } from '@token-catalog/forge-react';
+import { Button, ButtonLink, ConnectedButtonGroup, IconButton, NavigationRail, NavigationRailItem, SearchBar, SideSheet } from '@token-catalog/forge-react';
 import { BulkEditDialog, selectionEditLabels } from './bulk-edit-dialog.tsx';
 import { ReviewChanges } from './review-dialog.tsx';
 import type { SelectionEdit } from './bulk-edit-dialog.tsx';
 import { DiagnosticsDialog } from './diagnostics-dialog.tsx';
+import { VariantSetupDialog } from './variant-setup-dialog.tsx';
 import { SourceFileDialog } from './source-file-dialog.tsx';
 import type { SourceFileAction } from './source-file-dialog.tsx';
 import { SourceDialog } from './source-dialog.tsx';
@@ -44,13 +46,14 @@ import { MetadataDialog } from './metadata-dialog.tsx';
 import type { MetadataLocation } from './metadata-dialog.tsx';
 import { GroupActions } from './group-actions.tsx';
 import { ReferenceDetails } from './reference-details.tsx';
+import { tokenDisplayName } from './lib/value-shape.ts';
 import { TokenValue } from './token-value.tsx';
 import { TokenEditForm } from './token-edit-form.tsx';
 import { ActionDialog } from '@/components/ui/dialog';
 import { displayInput, inputFormat, readInput, validateInputValue } from './lib/token-input';
 import { canEditType, defaultValue } from './lib/value-shape.ts';
 import { referenceProblems, leafName, parentPath, referenceLabel } from '../lib/document.ts';
-import { download, downloadPatch, openExample, openFiles } from './lib/sources.ts';
+import { download, downloadPatch, openExample, openFiles, openMaterialExample } from './lib/sources.ts';
 import { openLocalFolder } from './lib/local-folder.ts';
 import './workspace.css';
 import './components/ui/primitives.css';
@@ -101,7 +104,8 @@ type SaveTarget = { kind: 'folder'; save: (workspace: Workspace) => Promise<void
   { kind: 'pull-request'; connection: WorkspaceConnection };
 
 function Editor({ Connector, proposalLink }: { Connector: ComponentType<WorkspaceConnectorProps> | null; proposalLink: string }) {
-  const [data, setData] = useState(openExample);
+  const [workspace, setData] = useState(openExample);
+  const [initiallyExpanded, setInitiallyExpanded] = useState<string>();
   const [history, setHistory] = useState(emptyHistory);
   const [group, setGroup] = useState('');
   const [query, setQuery] = useState('');
@@ -129,7 +133,7 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
     localStorage.setItem(themeKey, next);
     setTheme(next);
   }
-  const [view, setView] = useState<'tokens' | 'workspace'>('tokens');
+  const [view, setView] = useState<'tokens' | 'workspace' | 'variants'>('tokens');
   const [relocate, setRelocate] = useState<{ paths: string[]; operation: MoveOperation } | null>(null);
   const [showTree, setShowTree] = useState(true);
   const desktop = useSyncExternalStore(subscribeViewport, isDesktopViewport);
@@ -149,6 +153,7 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
   const [importChanges, setImportChanges] = useState(false);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [metadataLocation, setMetadataLocation] = useState<MetadataLocation | null>(null);
+  const variantsHeading = useRef<HTMLHeadingElement>(null);
   const sourceManagement = useRef<HTMLElement>(null);
   const sourceFocusAfterReview = useRef<string | null>(null);
   const [sourceFileAction, setSourceFileAction] = useState<SourceFileAction | null>(null);
@@ -156,13 +161,12 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
   const [primary, setPrimary] = useState<Inputs>({});
   const [secondary, setSecondary] = useState<Inputs>({});
   const [comparing, setComparing] = useState(false);
-  const [definitionOpen, setDefinitionOpen] = useState(false);
+  const [libraryMode, setLibraryMode] = useState<boolean>();
+  const [librarySource, setLibrarySource] = useState<string>();
   const [variantDirty, setVariantDirty] = useState(false);
   const [variantEdit, setVariantEdit] = useState<{ path: string; origin: ResolverOrigin; insert?: true }>();
   const [resolverFile, setResolverFile] = useState('');
   const [newResolver, setNewResolver] = useState(false);
-  const [resolverName, setResolverName] = useState('');
-  const [resolverError, setResolverError] = useState('');
   const fileInput = useRef<HTMLInputElement>(null);
   const folderInput = useRef<HTMLInputElement>(null);
   const proposalInput = useRef<HTMLInputElement>(null);
@@ -174,15 +178,27 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
   const pendingRename = useRef<{ after: CellPosition | null | undefined } | null>(null);
   const refocusAfterReview = useRef(false);
   const [focusRequest, setFocusRequest] = useState<CellPosition | null>(null);
-  const resolvers = useMemo(() => data.files.filter(isResolverFile), [data.files]);
+  const resolvers = useMemo(() => workspace.files.filter(isResolverFile), [workspace.files]);
+  const librarySources = useMemo(() => workspace.files.filter(file => !file.parseIssue && !isResolverFile(file)), [workspace.files]);
   const activeResolver = resolvers.find(file => file.path === resolverFile) ?? resolvers[0];
-  const model = useMemo(() => activeResolver && compileResolver(activeResolver, data.files.filter(file => !file.parseIssue)), [activeResolver, data.files]);
-  const current = useMemo(() => model && resolveResolver(model, primary), [model, primary]);
-  const alternative = useMemo(() => model && comparing ? resolveResolver(model, secondary) : undefined, [model, comparing, secondary]);
+  const model = useMemo(() => activeResolver && compileResolver(activeResolver, workspace.files.filter(file => !file.parseIssue)), [activeResolver, workspace.files]);
+  const largeWorkspace = useMemo(() => workspace.files.reduce((sum, file) => sum + file.text.length, 0) >= 64_000, [workspace.files]);
+  const activeVariant = useVariantResolution(model, primary, largeWorkspace);
+  const resolution = activeVariant.value;
+  const preview = !!resolution && !(libraryMode ?? !!resolution.errors.length);
+  const current = preview ? resolution : undefined;
+  const baseSource = model?.order.find(entry => entry.kind === 'set')?.sources
+    .find(entry => librarySources.some(file => file.path === entry.origin.file))?.origin.file;
+  const preferredSource = model && !preview && !activeVariant.pending ?
+    (librarySources.find(file => file.path === (librarySource ?? workspace.authoredSource ?? baseSource)) ?? librarySources[0])?.path : undefined;
+  const data = useMemo(() => scopeWorkspace(workspace, preferredSource), [workspace, preferredSource]);
+  const comparisonVariant = useVariantResolution(preview && comparing ? model : undefined, secondary, largeWorkspace);
+  const alternative = comparisonVariant.value;
+  const resolvingVariant = activeVariant.pending || comparisonVariant.pending;
   const graph = current?.graph ?? data.graph;
   const displayedGroup = nearestGroup(graph, group);
-  const variantScope: ResolverEditScope | undefined = model && current ? { file: model.file, contexts: [
-    { label: variantLabel(current), inputs: primary },
+  const variantScope: ResolverEditScope | undefined = model && resolution ? { file: model.file, contexts: [
+    { label: variantLabel(resolution), inputs: primary },
     ...(alternative ? [{ label: variantLabel(alternative), inputs: secondary }] : []),
   ] } : undefined;
   const diagnosticGraph = useMemo(() => current ? {
@@ -233,7 +249,7 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
   const showOnlyUnresolved = onlyUnresolved && unresolvedCount > 0;
   const filtered = useMemo(() => !search && !showOnlyUnresolved ? groupRows : groupRows.filter(([path, { type, node }]) =>
     (!showOnlyUnresolved || graph.issues.has(path)) &&
-    (!search || [path, type, node.$description].some((value) => typeof value === 'string' && value.toLowerCase().includes(search)))),
+    (!search || [path, tokenDisplayName(path), type, node.$description].some((value) => typeof value === 'string' && value.toLowerCase().includes(search)))),
   [graph, groupRows, search, showOnlyUnresolved]);
   const pages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const shownPage = Math.min(page, pages - 1);
@@ -244,14 +260,16 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
   const saveStatus = busy ? 'Working…' : status || (dirty ? 'Unsaved changes' : '');
   const hasChanges = useMemo(() => workspaceChanges(data).length > 0, [data]);
 
-  function activate(next: Workspace, target: SaveTarget | null = null) {
+  function activate(next: Workspace, target: SaveTarget | null = null, initialBranch?: string) {
     setView('tokens');
     setData(next);
+    setInitiallyExpanded(initialBranch);
     setResolverFile('');
     setPrimary({});
     setSecondary({});
+    setLibraryMode(undefined);
+    setLibrarySource(undefined);
     setComparing(false);
-    setDefinitionOpen(false);
     setVariantEdit(undefined);
     setVariantDirty(false);
     setHistory(emptyHistory);
@@ -278,8 +296,8 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
     setError('');
     try {
       const directory = await window.showDirectoryPicker({ id: 'token-workspace', mode: 'read' });
-      const { workspace, save } = await openLocalFolder(directory);
-      activate(workspace, { kind: 'folder', save });
+      const { workspace: opened, save } = await openLocalFolder(directory);
+      activate(opened, { kind: 'folder', save });
     } catch (failure) {
       if (!(failure instanceof DOMException && failure.name === 'AbortError')) setError(errorMessage(failure));
     } finally {
@@ -300,15 +318,17 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
     }
   }
 
-  async function loadMd3() {
+  async function loadMd3(benchmark = false) {
     if (!canReplace()) return;
     setBusy(true);
     setError('');
     try {
-      const response = await fetch('/__md3-sample.json');
-      if (!response.ok) throw new Error('The MD3 sample could not be loaded.');
-      const file = new File([await response.blob()], 'md3-token-set.json', { type: 'application/json' });
-      activate(await openFiles([file], false));
+      if (benchmark) {
+        const response = await fetch('/__md3-sample.json');
+        if (!response.ok) throw new Error('The Material 3 benchmark could not be loaded.');
+        const file = new File([await response.blob()], 'md3-token-set.json', { type: 'application/json' });
+        activate(await openFiles([file], false));
+      } else activate(await openMaterialExample(), null, 'md');
     } catch (failure) {
       setError(errorMessage(failure));
     } finally { setBusy(false); }
@@ -364,24 +384,24 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
     return () => window.removeEventListener('beforeunload', warn);
   }, [hasUnsavedWork]);
 
-  function clearSelection() {
+  const clearTokenSearch = useCallback(() => {
+    if (tokenSearch.current) tokenSearch.current.value = '';
+    setQuery('');
+  }, []);
+
+  const clearSelection = useCallback((preserveSearch = false) => {
     setFocusRequest(null);
     setDraft(null);
     setSelected('');
-    setChecked(new Set());
+    setChecked(previous => previous.size ? new Set() : previous);
     setPage(0);
-    clearTokenSearch();
+    if (!preserveSearch) clearTokenSearch();
     setOnlyUnresolved(false);
-  }
+  }, [clearTokenSearch]);
 
-  function resetScroll() {
+  const resetScroll = useCallback(() => {
     grid.current?.querySelector('[data-slot="table-container"]')?.scrollTo(0, 0);
-  }
-
-  function clearTokenSearch() {
-    if (tokenSearch.current) tokenSearch.current.value = '';
-    setQuery('');
-  }
+  }, []);
 
   function searchTokens(value: string) {
     // The input owns its text. Updating the results can wait until the browser can paint it.
@@ -393,14 +413,15 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
     resetScroll();
   }
 
-  function selectGroup(path: string) {
+  const selectGroup = useCallback((path: string) => {
     if (variantDirty) return;
+    if (path === displayedGroup) { setMobileTree(false); return; }
     setGroup(path);
     setMobileTree(false);
     setError('');
     clearSelection();
     resetScroll();
-  }
+  }, [variantDirty, displayedGroup, clearSelection, resetScroll]);
 
   function select(path: string, column?: GridColumn) {
     if (variantDirty && selected !== path) return;
@@ -414,6 +435,11 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
     const stop = grid.current?.querySelector<HTMLElement>('[data-token-row][tabindex="0"], [data-token-row] [tabindex="0"]');
     stop?.focus({ preventScroll: true });
     setChecked(new Set());
+  }
+
+  function copyTokenPath(path: string) {
+    if (!navigator.clipboard) return;
+    void navigator.clipboard.writeText(path).then(() => setStatus('Token path copied.'), () => setError('Could not copy the token path.'));
   }
 
   function copyPaths(paths: readonly string[], event?: ClipboardEvent<HTMLElement>) {
@@ -501,6 +527,7 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
     const parent = parentPath(path);
     const start = requireValue(graph.groups.get(parent), 'parent group').start;
     setGroup(parent);
+    groupsTree.current?.reveal(parent);
     clearTokenSearch();
     setOnlyUnresolved(false);
     setPage(Math.floor((graph.rows.findIndex(([id]) => id === path) - start) / pageSize));
@@ -538,6 +565,7 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
   }
 
   function cancel(restore = true) {
+    if (busy) return;
     setError('');
     if (restore && draft && !draft.create && draft.mode !== 'inspector') setFocusRequest({ path: draft.path, column: draft.column });
     setDraft(null);
@@ -551,16 +579,16 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
 
   function stepHistory(direction: 'undo' | 'redo') {
     if (busy || draft || variantDirty || review || finalReview || relocate || paste || bulkEdit) return;
-    const source = direction === 'undo' ? history.past.at(-1) : history.future.at(-1);
-    if (!source) return;
-    const restored = { ...openWorkspace(data.name, source), baseline: data.baseline };
+    const historySources = direction === 'undo' ? history.past.at(-1) : history.future.at(-1);
+    if (!historySources) return;
+    const restored = { ...openWorkspace(data.name, historySources), baseline: data.baseline };
     const previousSnapshot = snapshot(data);
     setHistory(direction === 'undo'
       ? { past: history.past.slice(0, -1), future: [...history.future, previousSnapshot] }
       : { past: [...history.past, previousSnapshot], future: history.future.slice(0, -1) });
     setData(restored);
     setDirty(workspaceChanges(restored).length > 0);
-    selectGroup(nearestGroup(restored.graph, group));
+    selectGroup(nearestGroup(scopeWorkspace(restored, preferredSource).graph, group));
     setStatus('');
   }
 
@@ -774,10 +802,15 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
         return true;
       }
       if (!change.create && !hasEdits) return closeUnchanged();
-      const updated = reviewEdit(data, file, tokenChange);
-      if (change.create || token?.inheritedFrom) {
-        setReview(updated);
-      } else finishChange(updated.next, path, change, after);
+      const finish = (updated: Review) => {
+        if (change.create || token?.inheritedFrom || updated.contextImpact?.length || updated.validationErrors?.length) setReview(updated);
+        else finishChange(updated.next, path, change, after);
+      };
+      if ((graph.rows.length >= 1000 || !!data.authoredSource) && (change.create || change.mode !== 'link')) {
+        setBusy(true);
+        void runWorkspaceReview({ kind: 'edit', workspace: data, file, change: tokenChange }).then(finish)
+          .catch((failure: unknown) => setError(errorMessage(failure))).finally(() => setBusy(false));
+      } else finish(reviewEdit(data, file, tokenChange));
       return true;
     } catch (failure) {
       setError(errorMessage(failure));
@@ -796,11 +829,14 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
 
   function deletePaths(paths: string[]) {
     setError('');
-    try {
-      setReview(reviewDelete(data, paths));
-    } catch (failure) {
-      setError(errorMessage(failure));
+    if (graph.rows.length >= 1000 || data.authoredSource) {
+      setBusy(true);
+      void runWorkspaceReview({ kind: 'delete', workspace: data, paths }).then(setReview)
+        .catch((failure: unknown) => setError(errorMessage(failure))).finally(() => setBusy(false));
+      return;
     }
+    try { setReview(reviewDelete(data, paths)); }
+    catch (failure) { setError(errorMessage(failure)); }
   }
 
   function canReplace() {
@@ -869,7 +905,8 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
   const editActions = (['rename', 'value', 'type', 'description'] as const).map(action => ({
     action, label: selectionEditLabels[action], run: () => setBulkEdit({ paths: [...checked], action }),
   }));
-  const menuDisabled = busy || !!draft || variantDirty;
+  const editingBlocked = busy || !!draft || variantDirty;
+  const menuDisabled = editingBlocked || resolvingVariant;
   const treeVisible = desktop ? showTree : mobileTree;
   const treeLabel = treeVisible ? 'Hide groups sidebar' : 'Show groups sidebar';
   const inspectorLabel = inspectorOpen ? 'Close token editor' : 'Edit token';
@@ -887,23 +924,37 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
   const canCreate = !menuDisabled && (current ? sourceChoices.size > 0 : folder.files.size > 0);
   const canAddGroupValue = canCreate && !!displayedGroup && !graph.tokens.has(displayedGroup + '.$root');
   function setUpVariants() {
-    setResolverName(data.name === 'Example' ? '' : data.name);
-    setResolverError('');
     setNewResolver(true);
   }
+  const canCompare = !!model?.modifiers.size && !!resolution;
   function manageVariants() {
-    setView('tokens');
-    setDefinitionOpen(true);
+    setView('variants');
+    requestAnimationFrame(() => variantsHeading.current?.focus());
   }
-  const showMd3 = import.meta.env.DEV && import.meta.env['VITE_MD3_SAMPLE'] === '1';
+  function changeTokenView(mode: string) {
+    const library = mode === 'library';
+    setLibraryMode(library);
+    if (library) setComparing(false);
+    setVariantEdit(undefined);
+    clearSelection(true);
+  }
+  function toggleComparison() {
+    setView('tokens');
+    setLibraryMode(false);
+    setComparing(!comparing);
+    setVariantEdit(undefined);
+    clearSelection(true);
+  }
+  const showMd3Benchmark = import.meta.env.DEV && import.meta.env['VITE_MD3_SAMPLE'] === '1';
   const menus: Menu[] = [
     { label: 'File', sections: [
       [
         { label: 'Open token files…', icon: <FileUp aria-hidden="true" />, run: () => fileInput.current?.click(), disabled: busy },
         { label: 'Open token folder…', icon: <FolderOpen aria-hidden="true" />, run: () => { void loadFolder(); }, disabled: busy },
         { label: 'Open built-in example', icon: <FolderOpen aria-hidden="true" />, run: () => { if (canReplace()) activate(openExample()); }, disabled: busy },
-        { label: 'Open Material 3 sample', icon: <FolderOpen aria-hidden="true" />, run: () => { void loadMd3(); },
-          disabled: busy || !showMd3, title: showMd3 ? undefined : 'This build does not include the Material 3 sample.' },
+        { label: 'Open Material 3 sample', icon: <FolderOpen aria-hidden="true" />, run: () => { void loadMd3(); }, disabled: busy },
+        ...(showMd3Benchmark ? [{ label: 'Open Material 3 benchmark', icon: <FolderOpen aria-hidden="true" />,
+          run: () => { void loadMd3(true); }, disabled: busy }] : []),
         { label: 'Import proposal…', icon: <FileUp aria-hidden="true" />,
           run: () => { setError(''); setImportChanges(true); }, disabled: !!activeResolver || menuDisabled },
       ],
@@ -925,12 +976,12 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
           run: () => { downloadPatch(data); },
         },
       ],
-      model && current ? [
+      model ? [
         { label: 'Download editable sources (.zip)', icon: <ArrowDownToLine aria-hidden="true" />, disabled: menuDisabled,
           run: () => { void downloadEditableSources(data, model).catch((failure: unknown) => setError(errorMessage(failure))); } },
-        { label: 'Download resolved tokens · ' + variantLabel(current), icon: <ArrowDownToLine aria-hidden="true" />,
-          disabled: menuDisabled || !!current.errors.length || model.issues.some(issue => issue.severity === 'error'),
-          run: () => { try { downloadVariant(current); } catch (failure) { setError(errorMessage(failure)); } } },
+        { label: resolution ? 'Download resolved tokens · ' + variantLabel(resolution) : 'Download resolved tokens', icon: <ArrowDownToLine aria-hidden="true" />,
+          disabled: menuDisabled || !resolution || !!resolution.errors.length || model.issues.some(issue => issue.severity === 'error'),
+          run: () => { if (resolution) try { downloadVariant(resolution); } catch (failure) { setError(errorMessage(failure)); } } },
       ] : [],
     ] },
     { label: 'Edit', sections: [
@@ -966,10 +1017,10 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
       { label: 'Source files', icon: <FolderOpen aria-hidden="true" />, disabled: menuDisabled, run: () => setView('workspace') },
     ]] },
     { label: 'Variants', sections: [[
-      current ? { label: 'Manage variants', icon: <Settings2 aria-hidden="true" />, disabled: menuDisabled, run: manageVariants } :
+      activeResolver ? { label: 'Manage variants', icon: <Settings2 aria-hidden="true" />, disabled: menuDisabled, run: manageVariants } :
         { label: 'Set up variants…', icon: <Settings2 aria-hidden="true" />, disabled: menuDisabled, run: setUpVariants },
       { label: comparing ? 'Return to active variant' : 'Compare variants', icon: <ArrowRightLeft aria-hidden="true" />,
-        disabled: !current || menuDisabled, run: () => { setView('tokens'); setComparing(!comparing); } },
+        disabled: !canCompare || menuDisabled, run: toggleComparison },
     ]] },
   ];
 
@@ -1040,11 +1091,17 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
       </IconButton>}>
       <NavigationRailItem label="Tokens" icon={<Layers />} aria-current={view === 'tokens' ? 'page' : undefined}
         disabled={menuDisabled} onClick={() => setView('tokens')} />
-      <NavigationRailItem label="Workspace" icon={<Settings2 />} aria-current={view === 'workspace' ? 'page' : undefined}
+      <NavigationRailItem label="Workspace" icon={<Settings2 />} aria-current={view !== 'tokens' ? 'page' : undefined}
         disabled={menuDisabled} onClick={() => setView('workspace')} />
     </NavigationRail>
-    <section className="workspace-management" aria-label="Workspace management" hidden={view !== 'workspace'}>
+    <section className="workspace-management" aria-label="Workspace management" hidden={view === 'tokens' || (view === 'variants' && !!activeResolver)}>
       <h2>Workspace</h2>
+      <section aria-label="Variants">
+        <h3>Variants</h3>
+        <Button size="xsmall" variant="outlined" disabled={menuDisabled} onClick={activeResolver ? manageVariants : setUpVariants}>
+          {activeResolver ? 'Manage variants' : 'Set up variants'}
+        </Button>
+      </section>
       <section aria-label="Source" ref={sourceManagement}>
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div>
@@ -1081,6 +1138,41 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
           }]]} />}
       </section>
     </section>
+    {view === 'variants' && activeResolver && model && <main className="workspace-management" aria-labelledby="workspace-variants-title">
+      <div className="workspace-variant-management">
+        <header className="flex flex-wrap items-center justify-between gap-2">
+          <h2 id="workspace-variants-title" tabIndex={-1} ref={variantsHeading}>Variants</h2>
+          <Button size="xsmall" variant="text" disabled={menuDisabled} onClick={() => {
+            setView('tokens');
+            requestAnimationFrame(() => workspacePane.current?.querySelector<HTMLElement>('[data-workspace-group-title]')?.focus());
+          }}>Back to tokens</Button>
+        </header>
+        {resolvers.length > 1 && <label className="variant-field">Variant configuration
+          <NativeSelect aria-label="Variant configuration" disabled={menuDisabled} value={activeResolver.path} onChange={event => { setResolverFile(event.target.value); setPrimary({}); setSecondary({}); setLibraryMode(undefined); setComparing(false); setVariantEdit(undefined); clearSelection(); }}>
+            {resolvers.map(resolver => <NativeSelectOption key={resolver.path} value={resolver.path}>{resolver.path}</NativeSelectOption>)}
+          </NativeSelect>
+        </label>}
+        {!resolution && activeVariant.pending && <output className="text-sm text-muted-foreground">Loading variant configuration…</output>}
+        {!resolution && activeVariant.error && <Alert variant="destructive"><AlertDescription>{activeVariant.error}</AlertDescription></Alert>}
+        {resolution && variantScope && <ResolverPane key={activeResolver.path} workspace={data} file={activeResolver.path} disabled={menuDisabled} current={resolution} {...{ model, alternative }}
+          scope={variantScope}
+          prepareReview={async (pending, scope) => {
+            setBusy(true);
+            try {
+              return await runWorkspaceReview({ kind: 'resolver', workspace: data, draft: pending, scope });
+            } finally {
+              setBusy(false);
+            }
+          }} editSource={setSourceLocation} reviewing={!!review} review={(next, onApply, focusAfterApply) => {
+            afterReviewApplied.current = () => {
+              onApply?.();
+              resolverFocusAfterApply.current = focusAfterApply ?? null;
+            };
+            setError('');
+            setReview(next);
+          }} />}
+      </div>
+    </main>}
     <WorkspacePanes hidden={view !== 'tokens'} groupsOpen={treeVisible} inspectorOpen={inspectorOpen} grid={grid} groups={
       <aside id="groups" aria-label="Groups" hidden={!treeVisible} className="workspace-sidebar" onCopy={event => copySelection(event, true)} onPaste={pasteSelection}>
         <div className="workspace-sidebar-heading">
@@ -1095,15 +1187,33 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
             remove={() => deletePaths([group])} />
         </div>
         <fieldset disabled={!!draft || busy || variantDirty}>
-          <FolderTree key={data.name} ref={groupsTree} graph={graph} current={displayedGroup} select={selectGroup} independentExpansion />
+          <FolderTree key={data.name} ref={groupsTree} graph={graph} current={displayedGroup} select={selectGroup} independentExpansion initiallyExpanded={initiallyExpanded} />
         </fieldset>
       </aside>
     } inspector={
       <SideSheet id="token-inspector" hidden={!inspectorOpen} variant="detached" className="workspace-inspector"
         title="Token details" onKeyDown={event => { if (event.key === 'Escape' && !event.defaultPrevented) closeInspector(); }}
         headerAction={<IconButton ref={inspectorCloseButton} size="xsmall" label="Close inspector" disabled={busy} onClick={closeInspector}><X aria-hidden="true" /></IconButton>}>
+        {inspectorOpen && current && alternative && selected && <section aria-label="Compared values" className="mb-4 grid min-w-0 gap-2">
+          <h3 className="text-sm font-medium">Compared values</h3>
+          {[{ label: variantLabel(current), result: current, side: 'Active' },
+            { label: variantLabel(alternative), result: alternative, side: 'Compared' }].map(({ label, result, side }) => {
+            const origin = winningOrigins(result, selected).at(-1);
+            return <div key={side} className="grid min-w-0 gap-1 rounded-md border p-2 text-sm">
+              <span>{side} · {label}</span>
+              {result.graph.tokens.has(selected) ? <TokenValue value={result.graph.resolved.get(selected)} swatch wrap /> : <span>Token absent</span>}
+              {origin && <span className="wrap-anywhere text-xs text-muted-foreground">{labelOrigin(origin)}</span>}
+            </div>;
+          })}
+          {alternative.graph.tokens.has(selected) && <Button size="xsmall" variant="text" disabled={menuDisabled} onClick={() => {
+            setPrimary(secondary); setSecondary(primary); setVariantEdit(undefined);
+          }}>Edit compared variant</Button>}
+        </section>}
         {inspectorOpen && (inspectorInitial ? <div className="grid gap-4" key={selected}>
-          <code className="wrap-anywhere">{selected}</code>
+          <div className="flex min-w-0 items-center justify-between gap-2">
+            <code title={selected} className="wrap-anywhere">{tokenDisplayName(selected)}</code>
+            <IconButton size="xsmall" label="Copy token path" title="Copy token path" onClick={() => copyTokenPath(selected)}><Copy aria-hidden="true" /></IconButton>
+          </div>
           {inspected?.inheritedFrom && <div className="grid gap-1 text-xs text-muted-foreground">
             <p className="wrap-anywhere">Inherited from {inspected.inheritedFrom.path} · {inspected.inheritedFrom.file}</p>
             <Button variant="text" size="xsmall" className="justify-self-start" disabled={menuDisabled}
@@ -1138,39 +1248,19 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
                   onClick={() => setSourceLocation({ file: origin.file, path: origin.parts, ...(variantScope ? { resolver: variantScope } : {}) })}>
                   {index === 0 ? 'Current value' : 'Earlier value'} · {labelOrigin(origin)}</Button></li>)}</ul>
             </details>}
-          </> : <TokenEditForm initialDraft={inspectorInitial} graph={graph} busy={busy || !!draft && !inspectorDraft}
+          </> : <TokenEditForm initialDraft={inspectorInitial} graph={graph} busy={busy || resolvingVariant || !!draft && !inspectorDraft}
             inspectorActive={!!inspectorDraft} onEdit={() => setDraft(inspectorInitial)} cancel={() => cancel(false)} error={inspectorDraft ? error : ''}
             commit={commit} />}
           <ReferenceDetails path={selected} graph={graph} jump={jump} disabled={menuDisabled} />
-        </div> : <p className="workspace-inspector-empty">Select a token to see its details.</p>)}
+        </div> : !selected || !alternative ? <p className="workspace-inspector-empty">Select a token to see its details.</p> : null)}
       </SideSheet>
     }>
       <main ref={workspacePane} aria-label="Token library" className="workspace-main @container/grid" onCopy={copySelection} onPaste={pasteSelection}>
         <section aria-label="Token commands" className="workspace-tools">
-    {activeResolver && model && current && variantScope && <div>
-      {resolvers.length > 1 && <label className="flex flex-wrap items-center gap-2 text-sm">Variant configuration
-        <NativeSelect aria-label="Variant configuration" disabled={menuDisabled} value={activeResolver.path} onChange={event => { setResolverFile(event.target.value); setPrimary({}); setSecondary({}); setVariantEdit(undefined); clearSelection(); }}>
-          {resolvers.map(resolver => <NativeSelectOption key={resolver.path} value={resolver.path}>{resolver.path}</NativeSelectOption>)}
-        </NativeSelect>
-      </label>}
-      <ResolverPane key={activeResolver.path} workspace={data} file={activeResolver.path} disabled={menuDisabled} {...{ model, current, alternative, primary, secondary, comparing, setComparing, definitionOpen, setDefinitionOpen }}
-        scope={variantScope} setPrimary={value => { setPrimary(value); setVariantEdit(undefined); clearSelection(); }} setSecondary={setSecondary}
-        prepareReview={async (pending, scope) => {
-          setBusy(true);
-          try {
-            return await runWorkspaceReview({ kind: 'resolver', workspace: data, draft: pending, scope });
-          } finally {
-            setBusy(false);
-          }
-        }} editSource={setSourceLocation} reviewing={!!review} review={(next, onApply, focusAfterApply) => {
-          afterReviewApplied.current = () => {
-            onApply?.();
-            resolverFocusAfterApply.current = focusAfterApply ?? null;
-          };
-          setError('');
-          setReview(next);
-        }} />
-    </div>}
+          {resolvingVariant && <output className="block px-3 py-1 text-sm text-muted-foreground">Resolving variant…</output>}
+          {(activeVariant.error || comparisonVariant.error) && <Alert variant="destructive"><AlertDescription>
+            {activeVariant.error || comparisonVariant.error}
+          </AlertDescription></Alert>}
 
           <section aria-label="Group context" className="workspace-heading">
             <IconButton size="xsmall" label={treeLabel} title={treeLabel} aria-controls="groups" aria-expanded={treeVisible}
@@ -1180,7 +1270,7 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
                 {parentPath(displayedGroup) && <span className="workspace-ancestors">{parentPath(displayedGroup).split('.').join(' / ')} / </span>}
                 <span className="workspace-group-name">{leafName(displayedGroup) || 'All tokens'}</span>
               </h2>
-              {!current && <Button className="hidden shrink-0 sm:inline-flex" size="xsmall" variant="text"
+              {!activeResolver && <Button className="hidden shrink-0 sm:inline-flex" size="xsmall" variant="text"
                 disabled={menuDisabled} onClick={setUpVariants}>Set up variants</Button>}
             </div>
             <SearchBar ref={tokenSearch} label="Search tokens in group" placeholder="Search tokens" leading={<Search aria-hidden="true" />}
@@ -1193,6 +1283,35 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
                 }}><X aria-hidden="true" /></IconButton> : undefined}
               disabled={menuDisabled} onChange={event => searchTokens(event.currentTarget.value)} />
           </section>
+          {activeResolver && model && resolution && <div className="workspace-variant-row">
+            <div className="workspace-token-mode">
+              <ConnectedButtonGroup label="Token view" size="xsmall" value={preview ? 'preview' : 'library'}
+                options={[{ value: 'library', label: 'Edit library' }, { value: 'preview', label: 'Preview variant' }]}
+                onChange={changeTokenView} disabled={menuDisabled} />
+            </div>
+            {!preview && librarySources.length > 1 && <label className="variant-field" title="Used when more than one file defines the same token">
+              Prefer values from
+              <NativeSelect aria-label="Prefer values from" value={preferredSource} disabled={menuDisabled} onChange={event => {
+                setLibrarySource(event.target.value); setGroup(''); clearSelection(); resetScroll();
+              }}>
+                {librarySources.map(file => <NativeSelectOption key={file.path} value={file.path}>{file.path}</NativeSelectOption>)}
+              </NativeSelect>
+            </label>}
+            {preview && (model.modifiers.size ? <>
+              <ContextInputs model={model} disabled={editingBlocked} label="Active variant" showLabel={comparing} inputs={primary} update={value => {
+                setPrimary(value); setVariantEdit(undefined); clearSelection(true);
+              }} />
+              {comparing && <ContextInputs model={model} disabled={editingBlocked} label="Compare with" showLabel inputs={secondary} update={setSecondary} />}
+              <Button className="ms-auto" size="xsmall" variant="text" disabled={menuDisabled} onClick={toggleComparison}>
+                {comparing ? 'Stop comparing' : 'Compare variants'}
+              </Button>
+            </> : <>
+              <span className="text-sm text-muted-foreground">Shared values</span>
+              <Button size="xsmall" variant="text" disabled={menuDisabled} onClick={manageVariants}>Add variant options</Button>
+            </>)}
+            {preview && !!(resolution.errors.length || model.issues.length || alternative?.errors.length) &&
+              <Button size="xsmall" variant="text" disabled={menuDisabled} onClick={manageVariants}>Variant issues</Button>}
+          </div>}
           <div className="workspace-command-row">
             <div className="workspace-filters flex min-w-0 gap-1">
               {diagnosticsCount > 0 && <Button size="xsmall" variant="text" className="tabular-nums"
@@ -1225,9 +1344,9 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
             </Button>
           </div>
         </section>
-        <div ref={grid} aria-busy={busy} className="min-h-0 flex-1 [&>[data-slot=table-container]]:h-full [&>[data-slot=table-container]]:overflow-auto">
-          {current && alternative ? <VariantComparison {...{ current, alternative }} group={displayedGroup} query={search} /> :
-          <TokenGrid narrow={!desktop} variant={!!current} group={displayedGroup} {...{ rows, graph, selected, activeColumn, checked, setChecked, select, edit, draft, setDraft, busy, cancel, commit, error }}
+        <div ref={grid} aria-busy={busy || resolvingVariant} className="min-h-0 flex-1 [&>[data-slot=table-container]]:h-full [&>[data-slot=table-container]]:overflow-auto">
+          {current && alternative ? <VariantComparison {...{ current, alternative }} group={displayedGroup} query={search} inspect={openInspector} /> :
+          <TokenGrid narrow={!desktop} variant={!!current} group={displayedGroup} {...{ rows, graph, selected, activeColumn, checked, setChecked, select, edit, draft, setDraft, cancel, commit, error }} busy={busy || resolvingVariant}
             metadata={path => setMetadataLocation({ kind: 'token', path })} restoreInherited={restoreInherited} inspect={openInspector} move={path => setRelocate({ paths: [path], operation: 'move' })}
             duplicate={path => setRelocate({ paths: [path], operation: 'duplicate' })} copy={path => copyPaths([path])} remove={path => deletePaths([path])} />}
         </div>
@@ -1237,7 +1356,7 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
             <output id="inline-edit-error" role="alert" className="text-destructive">{error}</output> :
             <output>{saveStatus}</output>}
           <div className="workspace-footer-end">
-            {pages > 1 && <div className="workspace-pagination">
+            {pages > 1 && !alternative && <div className="workspace-pagination">
               <IconButton size="xsmall" label="Previous page" disabled={shownPage === 0 || !!draft}
                 onClick={() => { setPage(shownPage - 1); select(''); resetScroll(); }}><ChevronLeft aria-hidden="true" /></IconButton>
               <span>Page {shownPage + 1} of {pages}</span>
@@ -1255,39 +1374,15 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
         </footer>
       </main>
     </WorkspacePanes>
-    {newResolver && <ActionDialog open={!review} title="Set up variants" onOpenChange={open => { if (!open) setNewResolver(false); }}>
-      <form className="grid gap-3" onSubmit={event => {
-        event.preventDefault();
-        const name = resolverName.trim();
-        const stem = name.toLowerCase().replace(/[^a-z0-9]+/gu, '-').replace(/^-+|-+$/gu, '') || 'resolver';
-        const prefix = saveTarget?.kind === 'pull-request' && saveTarget.connection.root ? saveTarget.connection.root + '/' : '';
-        const file = prefix + stem + '.resolver.json';
-        if (data.files.some(source => source.path === file)) {
-          setResolverError('A document named ' + file + ' is already open. Choose another name.');
-          return;
-        }
-        const sources = data.files.filter(source => !isResolverFile(source) && !source.parseIssue);
-        const json = newResolverDocument(name);
-        if (sources.length) {
-          json['sets'] = { foundation: { sources: sources.map(source => ({ $ref: serializeTokenPointer(file, source.path, []).slice(0, -1) })) } };
-          json['resolutionOrder'] = [{ $ref: '#/sets/foundation' }];
-        }
-        try {
-          const next = reviewCreateSource(data, file, JSON.stringify(json, null, 2) + '\n');
-          afterReviewApplied.current = () => { setNewResolver(false); setView('tokens'); setResolverFile(file); setDefinitionOpen(true); };
-          setReview(next);
-        } catch (failure) {
-          setResolverError(errorMessage(failure));
-        }
-      }}>
-        <TextField label="Configuration name" required data-initial-focus value={resolverName} onChange={event => setResolverName(event.target.value)} />
-        {resolverError && <Alert variant="destructive"><AlertDescription>{resolverError}</AlertDescription></Alert>}
-        <div className="flex justify-end gap-2">
-          <Button type="button" variant="text" data-dialog-close="">Cancel</Button>
-          <Button type="submit" disabled={!resolverName.trim()}>Set up variants</Button>
-        </div>
-      </form>
-    </ActionDialog>}
+    {newResolver && <VariantSetupDialog workspace={data} files={librarySources.map(file => file.path)}
+      root={saveTarget?.kind === 'pull-request' ? saveTarget.connection.root : undefined}
+      reviewing={!!review} close={() => setNewResolver(false)} create={(file, text) => {
+        const next = reviewCreateSource(data, file, text);
+        afterReviewApplied.current = () => {
+          setNewResolver(false); setView('tokens'); setResolverFile(file); setLibraryMode(undefined);
+        };
+        setReview(next);
+      }} />}
     <ActionDialog open={importChanges} busy={busy} title="Import proposal" onOpenChange={(open) => {
       if (!busy && !open) { setImportChanges(false); setError(''); }
     }} description="Choose a file with edits to the tokens you have open. You’ll review the changes before applying them."
@@ -1295,6 +1390,7 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
       {importChanges && error && <Alert variant="destructive"><AlertDescription className="max-h-36 overflow-auto whitespace-pre-wrap">{error}</AlertDescription></Alert>}
     </ActionDialog>
     {diagnosticsOpen && <DiagnosticsDialog graph={diagnosticGraph} close={() => setDiagnosticsOpen(false)} editSource={setSourceLocation}
+      repair={(path, link) => { setView('tokens'); jump(path); if (link && !current) edit(path, 'value', true); else openInspector(path); }}
       sourceFor={(issue, location) => {
         if (!current || location.file !== model?.file || issue.target.kind === 'source' || issue.offset !== undefined) return location;
         const source = winningOrigins(current, issue.path).at(-1);
@@ -1303,7 +1399,7 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
       }}
       jump={({ kind, path }) => { setView('tokens'); if (kind === 'token') jump(path); else selectGroup(path); }} />}
     {metadataLocation && <MetadataDialog workspace={data} location={metadataLocation} reviewing={!!review}
-      close={() => setMetadataLocation(null)} prepare={(file, changes) => reviewMetadata(data, file, metadataLocation.path, changes)}
+      close={() => setMetadataLocation(null)} prepare={changes => reviewMetadataChanges(data, metadataLocation.path, changes)}
       review={next => { setError(''); setReview(next); }} />}
     {paste && <PasteDialog workspace={data} entries={paste.entries} group={paste.group}
       reviewing={!!review} close={() => setPaste(null)} review={next => {
@@ -1345,7 +1441,9 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
         kind: 'source', workspace: data, file: sourceLocation.file, scope: sourceLocation.resolver, text,
       }, signal)} review={next => { setError(''); setReview(next); }} />}
     {relocate && <MoveDialog {...relocate} graph={graph} reviewing={!!review} close={() => setRelocate(null)}
-      prepare={moves => relocate.operation === 'duplicate' ? reviewDuplicate(data, moves) : reviewMoves(data, moves, relocate.operation === 'rename')}
+      prepare={moves => graph.rows.length >= 1000 || data.authoredSource ?
+        runWorkspaceReview({ kind: 'move', workspace: data, moves, operation: relocate.operation }) :
+        relocate.operation === 'duplicate' ? reviewDuplicate(data, moves) : reviewMoves(data, moves, relocate.operation === 'rename')}
       review={pending => {
         afterReviewApplied.current = () => setRelocate(null);
         setError('');

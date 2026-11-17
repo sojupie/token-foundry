@@ -1,9 +1,8 @@
 import { useId, useMemo, useRef, useState } from 'react';
 import { Button, IconButton, TextField } from '@token-catalog/forge-react';
-import { ArrowDown, ArrowRightLeft, ArrowUp, Download, MoreHorizontal, Pencil, Plus, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowRightLeft, ArrowUp, MoreHorizontal, Pencil, Plus, Trash2 } from 'lucide-react';
 import { ActionDialog } from '@/components/ui/dialog';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { FieldRow } from '@/components/ui/field-row';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Textarea } from '@/components/ui/textarea';
@@ -11,7 +10,7 @@ import { errorMessage, isJsonObject, parseJson } from '../lib/json.ts';
 import type { JsonObject, JsonValue } from '../lib/json.ts';
 import { compareContexts, isResolverFile, resolvedSnapshot, winningOrigins } from '../lib/resolver.ts';
 import type { ResolverModel, ResolverOrigin, ResolverResolution } from '../lib/resolver.ts';
-import { serializeTokenPointer } from '../lib/token-path.ts';
+import { serializeTokenPointer, tokenPointer } from '../lib/token-path.ts';
 import { reviewResolverValue, reviewSetPath } from '../lib/workspace.ts';
 import type { ResolverEditScope, Review, Workspace } from '../lib/workspace.ts';
 import { CommandMenu } from './command-bar.tsx';
@@ -28,17 +27,16 @@ export function labelOrigin(origin: ResolverOrigin) {
   return [origin.file, origin.set, origin.modifier && origin.modifier + ' / ' + origin.context].filter(Boolean).join(' · ');
 }
 
-function ContextInputs({ model, label, inputs, update, disabled }: {
-  model: ResolverModel; label: string; inputs: Inputs; update: (inputs: Inputs) => void; disabled: boolean;
+export function ContextInputs({ model, label, inputs, update, disabled, showLabel }: {
+  model: ResolverModel; label: string; inputs: Inputs; update: (inputs: Inputs) => void; disabled: boolean; showLabel: boolean;
 }) {
   const id = useId();
-  return <fieldset disabled={disabled} className="min-w-0 rounded-lg border p-2">
-    <legend className="mx-1 px-1 text-xs font-medium">{label}</legend>
-    <FieldRow>
+  return <fieldset disabled={disabled} aria-label={label} className="variant-inputs">
+    {showLabel && <span className="text-xs font-medium">{label}</span>}
       {[...model.modifiers].map(([name, modifier], index) => {
         const idValue = id + '-' + index;
         const value = Object.hasOwn(inputs, name) ? inputs[name] ?? '' : modifier.defaultContext ?? '';
-        return <div key={name} className="grid min-w-0 gap-1">
+        return <div key={name} className="variant-field">
           <label htmlFor={idValue} className="text-xs">{name}</label>
           <NativeSelect id={idValue} value={modifier.contexts.has(value) ? value : ''} onChange={event => {
             const next = { ...inputs };
@@ -51,12 +49,10 @@ function ContextInputs({ model, label, inputs, update, disabled }: {
           </NativeSelect>
         </div>;
       })}
-    </FieldRow>
-    {!model.modifiers.size && <span className="text-sm text-muted-foreground">No variant options yet.</span>}
   </fieldset>;
 }
 
-type AuthorTarget = { kind: Authoring; name?: string };
+type AuthorTarget = { kind: Authoring; name?: string; index?: number };
 
 function AuthorDialog({ target, tree, file, files, author, close, reviewing, checking }: {
   target: AuthorTarget; tree: JsonObject; file: string; files: Workspace['files']; reviewing: boolean; checking: boolean;
@@ -73,27 +69,44 @@ function AuthorDialog({ target, tree, file, files, author, close, reviewing, che
     return typeof value === 'string' && isJsonObject(initial?.['contexts']) ? Object.keys(initial['contexts']).indexOf(value) : -1;
   });
   const { sources, setSources, contexts, setContexts } = useResolverSourceDraft(initial);
-  const [json, setJson] = useState('{\n  "name": "",\n  "type": "set",\n  "sources": []\n}');
-  const [reference, setReference] = useState('');
+  const existingOrder = Array.isArray(tree['resolutionOrder']) && target.index !== undefined ? tree['resolutionOrder'][target.index] : undefined;
+  const [json, setJson] = useState(JSON.stringify(existingOrder ?? { name: '', type: 'set', sources: [] }, null, 2));
+  const [reference, setReference] = useState(isJsonObject(existingOrder) && typeof existingOrder['$ref'] === 'string' ? existingOrder['$ref'] : '');
   const [error, setError] = useState('');
   const options = ['sets', 'modifiers'].flatMap(collectionKey => {
     const object = tree[collectionKey];
     return isJsonObject(object) ? Object.keys(object).map(key => ({
-      label: (collectionKey === 'sets' ? 'Set · ' : 'Modifier · ') + key,
+      label: (collectionKey === 'sets' ? 'Set · ' : 'Dimension · ') + key,
       reference: serializeTokenPointer(file, file, [collectionKey, key]),
     })) : [];
   });
+  const fragments = useMemo(() => files.flatMap(source => {
+    if (source.parseIssue || isResolverFile(source)) return [];
+    const result: ResolverSourceOption[] = [];
+    function groups(node: JsonObject, parts: readonly string[]) {
+      for (const [key, child] of Object.entries(node)) {
+        if (key.startsWith('$') || !isJsonObject(child) || Object.hasOwn(child, '$value') ||
+          Object.hasOwn(child, '$ref') && !Object.keys(child).some(childKey => !childKey.startsWith('$'))) continue;
+        const path = [...parts, key];
+        result.push({ label: path.join(' › ') + ' · ' + source.path, reference: serializeTokenPointer(file, source.path, path) });
+        groups(child, path);
+      }
+    }
+    groups(source.tree, []);
+    return result;
+  }), [file, files]);
   const sourceOptions: ResolverSourceOption[] = [
     ...files.filter(source => !source.parseIssue && !isResolverFile(source)).map(source => ({
       label: source.path, reference: serializeTokenPointer(file, source.path, []).slice(0, -1),
     })),
+    ...fragments,
     ...options.filter(option => option.reference.startsWith('#/sets/') &&
       option.reference !== serializeTokenPointer(file, file, ['sets', originalName ?? ''])),
   ];
   const id = useId();
   const addContext = useRef<HTMLButtonElement>(null);
   const report = (failure: unknown) => setError(errorMessage(failure));
-  const title = kind === 'entry' ? 'Add to override order' : (originalName ? 'Edit ' : 'New ') + (kind === 'set' ? 'token set' : 'variant option');
+  const title = kind === 'entry' ? target.index === undefined ? 'Add to override order' : 'Edit override order entry' : (originalName ? 'Edit ' : 'New ') + (kind === 'set' ? 'token set' : 'variant dimension');
   return <ActionDialog open={!reviewing} busy={checking} onKeyDown={event => { if (checking && event.key === 'Escape') event.preventDefault(); }} title={title} description={originalName} onOpenChange={open => { if (!open && !checking) close(); }}>
     <form className="grid min-w-0 gap-3" onSubmit={event => {
       event.preventDefault();
@@ -103,7 +116,9 @@ function AuthorDialog({ target, tree, file, files, author, close, reviewing, che
         if (kind === 'entry') {
           const order = tree['resolutionOrder'];
           if (!Array.isArray(order)) throw new Error('Repair the resolution order before adding an entry.');
-          void author(file, ['resolutionOrder', String(order.length)], reference ? { $ref: reference } : parseJson(json), true).catch(report);
+          const existingReference = isJsonObject(existingOrder) && existingOrder['$ref'] === reference ? existingOrder : undefined;
+          const next = reference ? existingReference ?? { $ref: reference } : parseJson(json);
+          void author(file, ['resolutionOrder', String(target.index ?? order.length)], next, target.index === undefined).catch(report);
           return;
         }
         const label = name.trim();
@@ -132,14 +147,16 @@ function AuthorDialog({ target, tree, file, files, author, close, reviewing, che
       {kind === 'entry' && <div className="grid gap-1 text-sm">
         <label htmlFor={id + '-entry'}>Entry</label>
         <NativeSelect id={id + '-entry'} value={reference} onChange={event => setReference(event.target.value)}>
-          <NativeSelectOption value="">Inline entry</NativeSelectOption>
+          <NativeSelectOption value="">Inline entry (advanced)</NativeSelectOption>
+          {reference && !options.some(option => option.reference === reference) &&
+            <NativeSelectOption value={reference}>{orderEntryLabel({ $ref: reference }, file, target.index ?? 0)}</NativeSelectOption>}
           {options.map(option => <NativeSelectOption key={option.reference} value={option.reference}>{option.label}</NativeSelectOption>)}
         </NativeSelect>
       </div>}
       {kind === 'entry' && !reference && <label htmlFor={id} className="grid gap-1 text-sm">Inline entry JSON
         <Textarea id={id} rows={6} value={json} spellCheck={false} className="font-mono text-xs" onChange={event => setJson(event.target.value)} />
       </label>}
-      {kind === 'set' && <ResolverSourceFields {...{ sources, setSources }} options={sourceOptions} />}
+      {kind === 'set' && <ResolverSourceFields {...{ sources, setSources, file }} options={sourceOptions} />}
       {kind === 'modifier' && <>
         {contexts.map((context, index) => (
           <section key={context.id} aria-label={'Option ' + (index + 1)} className="grid gap-2 rounded-lg border p-3">
@@ -153,7 +170,7 @@ function AuthorDialog({ target, tree, file, files, author, close, reviewing, che
                 }}><Trash2 aria-hidden="true" /></IconButton>} />
             <details className="grid gap-2">
               <summary className="cursor-pointer text-sm">{context.sources.length} {context.sources.length === 1 ? 'source' : 'sources'}</summary>
-              <ResolverSourceFields sources={context.sources} options={sourceOptions}
+              <ResolverSourceFields sources={context.sources} options={sourceOptions} file={file}
                 setSources={next => setContexts(contexts.map(item => item.id === context.id ? { ...item, sources: next } : item))} />
             </details>
           </section>
@@ -229,9 +246,18 @@ function SetPathDialog({ action, destinations, reviewing, checking, close, submi
   </ActionDialog>;
 }
 
-function orderEntryLabel(item: JsonValue, index: number) {
+function orderEntryLabel(item: JsonValue, file: string, index: number) {
   if (!isJsonObject(item)) return 'Entry ' + (index + 1);
-  if (typeof item['$ref'] === 'string') return item['$ref'];
+  if (typeof item['$ref'] === 'string') {
+    try {
+      const target = tokenPointer(item['$ref'], file);
+      const [section, name] = target.parts;
+      if (name && (section === 'modifiers' || section === 'sets')) {
+        return (section === 'sets' ? 'Set · ' : 'Dimension · ') + name + (target.file === file ? '' : ' · ' + target.file);
+      }
+      return target.file === file && target.parts.length ? target.parts.join(' › ') : target.file;
+    } catch { return item['$ref']; }
+  }
   return typeof item['name'] === 'string' ? item['name'] : 'Inline entry ' + (index + 1);
 }
 
@@ -251,14 +277,10 @@ export function downloadVariant(resolution: ResolverResolution) {
   download('resolved-' + label + '.tokens.json', JSON.stringify(resolvedSnapshot(resolution), null, 2) + '\n', 'application/json');
 }
 
-export function ResolverPane({ workspace, file, model, current, alternative, primary, secondary, setPrimary, setSecondary,
-  definitionOpen, setDefinitionOpen, comparing, setComparing, scope, disabled, prepareReview, review, editSource, reviewing }: {
+export function ResolverPane({ workspace, file, model, current, alternative, scope, disabled, prepareReview, review, editSource, reviewing }: {
   prepareReview: (draft: Review, scope: ResolverEditScope) => Promise<Review>;
   workspace: Workspace; file: string; disabled: boolean; reviewing: boolean;
-  model: ResolverModel; current: ResolverResolution; alternative: ResolverResolution | undefined;
-  primary: Inputs; secondary: Inputs; setPrimary: (value: Inputs) => void; setSecondary: (value: Inputs) => void;
-  definitionOpen: boolean; setDefinitionOpen: (open: boolean) => void;
-  comparing: boolean; setComparing: (open: boolean) => void; scope: ResolverEditScope;
+  model: ResolverModel; current: ResolverResolution; alternative: ResolverResolution | undefined; scope: ResolverEditScope;
   review: (next: Review, onApply?: () => void, focusAfterApply?: HTMLElement | null) => void;
   editSource: (source: SourceLocation) => void;
 }) {
@@ -266,7 +288,7 @@ export function ResolverPane({ workspace, file, model, current, alternative, pri
   const [setPath, setSetPath] = useState<SetPathAction>();
   const destinations = useMemo(() => workspace.files.filter(source => source.path !== file && !source.parseIssue && isResolverFile(source))
     .map(source => source.path).toSorted(), [workspace.files, file]);
-  const definitionButton = useRef<HTMLButtonElement>(null);
+  const setsHeading = useRef<HTMLHeadingElement>(null);
   const [authoring, setAuthoring] = useState<AuthorTarget>();
   const [error, setError] = useState('');
   const [checking, setChecking] = useState(false);
@@ -275,20 +297,21 @@ export function ResolverPane({ workspace, file, model, current, alternative, pri
   const order = Array.isArray(tree['resolutionOrder']) ? tree['resolutionOrder'] : [];
   const seenEntries = new Map<string, number>();
   const orderRows = order.map((item, index) => {
-    const name = orderEntryLabel(item, index);
+    const name = orderEntryLabel(item, file, index);
     const observed = seenEntries.get(name) ?? 0;
     seenEntries.set(name, observed + 1);
     return { name, id: JSON.stringify([name, observed]) };
   });
-  const issueCount = model.issues.length + current.errors.length + (alternative?.errors.length ?? 0);
+  const errors = [...new Set([...current.errors, ...(alternative?.errors ?? [])])];
+  const issueCount = model.issues.length + errors.length;
   const contextDiagnostics = [
-    { resolution: current, name: 'Active context' },
-    ...(alternative ? [{ resolution: alternative, name: 'Comparison context' }] : []),
-  ].flatMap(({ resolution, name }) => resolution.graph.documentDiagnostics.map(issue => {
+    { resolution: current, label: alternative ? 'Active variant' : '' },
+    ...(alternative ? [{ resolution: alternative, label: 'Compared variant' }] : []),
+  ].flatMap(({ resolution, label }) => resolution.graph.documentDiagnostics.map(issue => {
     const path = issue.path ? issue.path.split('.') : [];
     const fieldPath = issue.sourcePath ?? (issue.field ? [issue.field] : []);
     const origin = winningOrigins(resolution, issue.path).at(-1);
-    return { name, issue, source: origin ? { file: origin.file, path: [...origin.parts, ...fieldPath] } : { file, path } };
+    return { label, issue, source: origin ? { file: origin.file, path: [...origin.parts, ...fieldPath] } : { file, path } };
   }));
 
   async function check(draft: Review, onApply?: () => void, focusAfterApply?: HTMLElement | null) {
@@ -312,116 +335,105 @@ export function ResolverPane({ workspace, file, model, current, alternative, pri
     void author(file, ['resolutionOrder'], entries).catch((failure: unknown) => setError(errorMessage(failure)));
   }
 
-  return <section className="resolver-workspace px-3 py-2" aria-label="Variants">
-    <header className="flex flex-wrap items-center justify-between gap-2">
-      <div>
-        <h2>{typeof tree['name'] === 'string' ? tree['name'] : file}</h2>
-      </div>
-      <div className="flex flex-wrap gap-1">
-        <Button ref={definitionButton} size="xsmall" variant={definitionOpen ? 'tonal' : 'text'} pressed={definitionOpen} disabled={disabled}
-          onClick={() => setDefinitionOpen(!definitionOpen)}>Manage variants</Button>
-        <Button size="xsmall" variant="text" disabled={disabled} onClick={() => { void downloadEditableSources(workspace, model).catch((failure: unknown) => setError(errorMessage(failure))); }}><Download aria-hidden="true" /> Download editable sources (.zip)</Button>
-        <Button size="xsmall" variant="text" disabled={disabled || model.issues.some(issue => issue.severity === 'error') || !!current.errors.length}
-          onClick={() => {
-            try { downloadVariant(current); }
-            catch (failure) { setError(errorMessage(failure)); }
-          }}><Download aria-hidden="true" /> Download resolved tokens</Button>
-      </div>
-    </header>
+  return <div className="resolver-workspace">
     {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
-    {definitionOpen && <section aria-label="Manage variants" className="grid max-h-[36dvh] gap-3 overflow-auto">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3>Manage variants</h3>
-        <Button size="xsmall" variant="text" disabled={disabled} onClick={() => editSource({ file, path: [], resolver: scope })}><Pencil aria-hidden="true" /> Edit resolver JSON</Button>
-      </div>
-      <div className="grid gap-2 md:grid-cols-2">
-        {(['sets', 'modifiers'] as const).map(section => {
-          const members = tree[section];
-          return <section key={section} aria-label={section === 'sets' ? 'Token sets' : 'Variant options'} className="rounded-lg border p-2">
-            <h4 className="text-sm font-medium">{section === 'sets' ? 'Token sets' : 'Variant options'}</h4>
-            <ul>{isJsonObject(members) && Object.keys(members).map(name => <li key={name} className="flex items-center gap-1">
-              <Button size="xsmall" variant="text" disabled={disabled} onClick={() => {
-                if (hasStructuredSources(members[name], section)) setAuthoring({ kind: section === 'sets' ? 'set' : 'modifier', name });
-                else editSource({ file, path: [section, name], resolver: scope });
-              }}>
-                <Pencil aria-hidden="true" /> {name}
-              </Button>
-              {section === 'sets' && <CommandMenu label={'Actions for set ' + name} icon={<MoreHorizontal aria-hidden="true" />} disabled={disabled}
-                sections={[[{ label: 'Rename set…', icon: <Pencil aria-hidden="true" />, run: () => setSetPath({ kind: 'rename', name }) },
-                  { label: 'Move set…', icon: <ArrowRightLeft aria-hidden="true" />, disabled: !destinations.length,
-                    run: () => setSetPath({ kind: 'move', name }) }],
-                  [{ label: 'Remove set…', icon: <Trash2 aria-hidden="true" />, destructive: true, run: () => setSetPath({ kind: 'remove', name }) }]]} />}
-            </li>)}</ul>
-            <Button size="xsmall" variant="text" disabled={disabled} onClick={() => setAuthoring({ kind: section === 'sets' ? 'set' : 'modifier' })}>
-              <Plus aria-hidden="true" /> {section === 'sets' ? 'New token set' : 'New variant option'}
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <p className="wrap-anywhere text-sm font-medium">{typeof tree['name'] === 'string' && tree['name'] ? tree['name'] : file}</p>
+      <Button className="ms-auto" size="xsmall" variant="text" disabled={disabled}
+        onClick={() => editSource({ file, path: [], resolver: scope })}><Pencil aria-hidden="true" /> Edit resolver JSON</Button>
+    </div>
+    <div className="resolver-sections">
+      {(['sets', 'modifiers'] as const).map(section => {
+        const members = tree[section];
+        return <section key={section} aria-label={section === 'sets' ? 'Token sets' : 'Variant dimensions'} className="resolver-section">
+          <h3 tabIndex={section === 'sets' ? -1 : undefined} ref={section === 'sets' ? setsHeading : undefined}>{section === 'sets' ? 'Token sets' : 'Variant dimensions'}</h3>
+          <p className="text-sm text-muted-foreground">{section === 'sets'
+            ? 'Collect shared tokens from files or add them here.'
+            : 'Define the choices people can preview, such as Light and Dark.'}</p>
+          <ul>{isJsonObject(members) && Object.keys(members).map(name => <li key={name} className="flex items-center gap-1">
+            <Button size="xsmall" variant="text" disabled={disabled} onClick={() => {
+              if (hasStructuredSources(members[name], section)) setAuthoring({ kind: section === 'sets' ? 'set' : 'modifier', name });
+              else editSource({ file, path: [section, name], resolver: scope });
+            }}>
+              <Pencil aria-hidden="true" /> {name}
             </Button>
-          </section>;
-        })}
-      </div>
-      <section aria-label="Order of overrides" className="rounded-lg border p-2">
-        <h4 className="text-sm font-medium">Order of overrides</h4>
-        <ol className="grid gap-1">{orderRows.map(({ name, id }, index) => {
-          return <li key={id} className="flex min-w-0 items-center justify-between gap-1">
-            <code className="wrap-anywhere text-xs">{name}</code>
-            <div className="flex shrink-0">
-              <IconButton size="xsmall" label={'Edit ' + name} disabled={disabled}
-                onClick={() => editSource({ file, path: ['resolutionOrder', String(index)], resolver: scope })}><Pencil aria-hidden="true" /></IconButton>
-              <IconButton size="xsmall" label={'Move ' + name + ' up'} disabled={disabled || index === 0} onClick={() => reorder(index, index - 1)}><ArrowUp aria-hidden="true" /></IconButton>
-              <IconButton size="xsmall" label={'Move ' + name + ' down'} disabled={disabled || index + 1 === order.length}
-                onClick={() => reorder(index, index + 1)}><ArrowDown aria-hidden="true" /></IconButton>
-              <IconButton size="xsmall" label={'Remove ' + name} disabled={disabled} onClick={() => reorder(index, -1)}><Trash2 aria-hidden="true" /></IconButton>
-            </div>
-          </li>;
-        })}</ol>
-        <Button size="xsmall" variant="text" disabled={disabled} onClick={() => setAuthoring({ kind: 'entry' })}><Plus aria-hidden="true" /> Add to override order</Button>
-      </section>
-    </section>}
-    <section aria-label="Contexts" className="grid gap-2">
-      <div className="flex flex-wrap items-start gap-2">
-        <ContextInputs model={model} disabled={disabled} label="Active variant" inputs={primary} update={setPrimary} />
-        {comparing && <ContextInputs model={model} disabled={disabled} label="Compare with" inputs={secondary} update={setSecondary} />}
-        <Button size="xsmall" variant={comparing ? 'tonal' : 'text'} pressed={comparing} disabled={disabled}
-          onClick={() => setComparing(!comparing)}>Compare variants</Button>
-      </div>
+            {section === 'sets' && <CommandMenu label={'Actions for set ' + name} icon={<MoreHorizontal aria-hidden="true" />} disabled={disabled}
+              sections={[[{ label: 'Rename set…', icon: <Pencil aria-hidden="true" />, run: () => setSetPath({ kind: 'rename', name }) },
+                { label: 'Move set…', icon: <ArrowRightLeft aria-hidden="true" />, disabled: !destinations.length,
+                  run: () => setSetPath({ kind: 'move', name }) }],
+                [{ label: 'Remove set…', icon: <Trash2 aria-hidden="true" />, destructive: true, run: () => setSetPath({ kind: 'remove', name }) }]]} />}
+          </li>)}</ul>
+          <Button size="xsmall" variant="text" disabled={disabled} onClick={() => setAuthoring({ kind: section === 'sets' ? 'set' : 'modifier' })}>
+            <Plus aria-hidden="true" /> {section === 'sets' ? 'New token set' : 'New variant dimension'}
+          </Button>
+        </section>;
+      })}
+    </div>
+    <section aria-label="Order of overrides" className="resolver-section">
+      <h3>Order of overrides</h3>
+      <p className="text-sm text-muted-foreground">Add sets and dimensions here to include them in the preview. If two entries define the same token, the last one wins.</p>
+      <ol className="grid gap-1">{orderRows.map(({ name, id }, index) => {
+        return <li key={id} className="flex min-w-0 items-center justify-between gap-1">
+          <span className="wrap-anywhere text-sm">{name}</span>
+          <div className="flex shrink-0">
+            <IconButton size="xsmall" label={'Edit ' + name} disabled={disabled}
+              onClick={() => setAuthoring({ kind: 'entry', index })}><Pencil aria-hidden="true" /></IconButton>
+            <IconButton size="xsmall" label={'Move ' + name + ' up'} disabled={disabled || index === 0} onClick={() => reorder(index, index - 1)}><ArrowUp aria-hidden="true" /></IconButton>
+            <IconButton size="xsmall" label={'Move ' + name + ' down'} disabled={disabled || index + 1 === order.length}
+              onClick={() => reorder(index, index + 1)}><ArrowDown aria-hidden="true" /></IconButton>
+            <IconButton size="xsmall" label={'Remove ' + name} disabled={disabled} onClick={() => reorder(index, -1)}><Trash2 aria-hidden="true" /></IconButton>
+          </div>
+        </li>;
+      })}</ol>
+      <Button size="xsmall" variant="text" disabled={disabled} onClick={() => setAuthoring({ kind: 'entry' })}><Plus aria-hidden="true" /> Add to override order</Button>
+    </section>
+    {(issueCount > 0 || contextDiagnostics.length > 0) && <section aria-label="Variant issues" className="resolver-section">
+      <h3>Variant issues</h3>
       {!!issueCount && <ul className="grid gap-1 text-sm" aria-label="Resolver diagnostics">
         {model.issues.map(issue => <li key={JSON.stringify([issue.file, issue.parts, issue.message])}>
           <Button size="xsmall" variant="text" disabled={disabled} onClick={() => editSource({ file: issue.file, path: issue.parts, resolver: scope })}>
             {issue.parts.join(' / ')} · {issue.message}
           </Button>
         </li>)}
-        {[...new Set([...current.errors, ...(alternative?.errors ?? [])])].map(message => <li key={message}>{message}</li>)}
+        {errors.map(message => <li key={message}>{message}</li>)}
       </ul>}
       {contextDiagnostics.length > 0 && <details className="rounded-lg border px-3 py-2 text-sm">
         <summary className="cursor-pointer">Context source diagnostics ({contextDiagnostics.length})</summary>
         <ul className="mt-1 grid gap-1">
-          {contextDiagnostics.map(({ name, issue, source }) => <li key={JSON.stringify([name, issue.path, issue.field, issue.message])} className="min-w-0">
+          {contextDiagnostics.map(({ label, issue, source }) => <li key={JSON.stringify([label, issue.path, issue.field, issue.message])} className="min-w-0">
             <Button size="xsmall" variant="text" disabled={disabled} onClick={() => editSource({ ...source, resolver: scope })}>
-              <span className="wrap-anywhere text-start">{[name, issue.path, issue.field, issue.message].filter(Boolean).join(' · ')}</span>
+              <span className="wrap-anywhere text-start">{[label, issue.path, issue.field, issue.message].filter(Boolean).join(' · ')}</span>
             </Button>
           </li>)}
         </ul>
       </details>}
-    </section>
+    </section>}
     {authoring && <AuthorDialog target={authoring} files={workspace.files} {...{ tree, file, reviewing, checking }} author={(target, path, next, insert) => author(target, path, next, insert, () => setAuthoring(undefined))} close={() => setAuthoring(undefined)} />}
     {setPath && <SetPathDialog action={setPath} destinations={destinations} reviewing={reviewing} checking={checking} close={() => setSetPath(undefined)}
       submit={(name, destination = file) => {
         const next = reviewSetPath(workspace, file, setPath.name, name, destination);
-        return check(next, () => setSetPath(undefined), definitionButton.current);
+        return check(next, () => setSetPath(undefined), setsHeading.current);
       }} />}
-  </section>;
+  </div>;
 }
 
-export function VariantComparison({ current, alternative, group, query }: {
-  current: ResolverResolution; alternative: ResolverResolution; group: string; query: string;
+export function VariantComparison({ current, alternative, group, query, inspect }: {
+  current: ResolverResolution; alternative: ResolverResolution; group: string; query: string; inspect: (path: string) => void;
 }) {
-  const changes = !current.errors.length && !alternative.errors.length ? compareContexts(alternative, current)
-    .filter(({ path }) => (!group || path.startsWith(group + '.')) && path.toLowerCase().includes(query)) : [];
-  return <Table aria-label="Variant comparison">
+  const differences = useMemo(() => !current.errors.length && !alternative.errors.length ? compareContexts(alternative, current) : [],
+    [alternative, current]);
+  const changes = useMemo(() => differences.filter(({ path }) => (!group || path.startsWith(group + '.')) && path.toLowerCase().includes(query)),
+    [differences, group, query]);
+  const [page, setPage] = useState(0);
+  const size = 50;
+  const currentPage = Math.min(page, Math.max(0, Math.ceil(changes.length / size) - 1));
+  return <><Table aria-label="Variant comparison">
     <TableHeader><TableRow><TableHead>Token</TableHead><TableHead>Change</TableHead>
       <TableHead>{variantLabel(current)}</TableHead><TableHead>{variantLabel(alternative)}</TableHead>
     </TableRow></TableHeader>
-    <TableBody>{changes.map(change => <TableRow key={change.path}>
-      <TableCell>{change.path}</TableCell><TableCell>{change.kind}</TableCell>
+    <TableBody>{changes.slice(currentPage * size, (currentPage + 1) * size).map(change => <TableRow key={change.path}>
+      <TableCell><Button size="xsmall" variant="text" onClick={() => inspect(change.path)}>{change.path}</Button></TableCell>
+      <TableCell>{change.kind}</TableCell>
       <TableCell>{change.afterProblem ?? <TokenValue value={change.after} swatch />}</TableCell>
       <TableCell>{change.beforeProblem ?? <TokenValue value={change.before} swatch />}</TableCell>
     </TableRow>)}
@@ -429,5 +441,12 @@ export function VariantComparison({ current, alternative, group, query }: {
         {current.errors.length || alternative.errors.length ? 'Choose the options for both variants to compare them.' : 'No differences in these tokens.'}
       </TableCell></TableRow>}
     </TableBody>
-  </Table>;
+  </Table>
+    {changes.length > size && <div className="flex items-center justify-end gap-2 p-2">
+      <Button size="xsmall" variant="text" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>Previous differences</Button>
+      <span className="text-xs">{currentPage * size + 1}–{Math.min((currentPage + 1) * size, changes.length)} of {changes.length}</span>
+      <Button size="xsmall" variant="text" disabled={(currentPage + 1) * size >= changes.length}
+        onClick={() => setPage(currentPage + 1)}>Next differences</Button>
+    </div>}
+  </>;
 }

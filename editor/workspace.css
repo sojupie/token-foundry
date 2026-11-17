@@ -125,7 +125,22 @@
 .workspace-management > section { margin-block: 16px; padding-block: 12px; border-block-start: 1px solid var(--border); }
 .workspace-management h3 { margin-block-end: 8px; font-weight: 600; }
 .workspace-management code { overflow-wrap: anywhere; }
-.resolver-workspace > section { margin-block-start: 8px; padding-block-start: 8px; border-block-start: 1px solid var(--border); }
+.workspace-variant-management {
+  display: grid;
+  gap: var(--md-sys-measurement-space200);
+  max-inline-size: 56rem;
+}
+.resolver-workspace { display: grid; gap: var(--md-sys-measurement-space200); }
+.resolver-sections {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
+  gap: var(--md-sys-measurement-space200);
+}
+.resolver-section {
+  min-inline-size: 0;
+  border-block-start: 1px solid var(--border);
+  padding-block-start: var(--md-sys-measurement-space100);
+}
 .workspace-body.md-sheet-host > .workspace-inspector.md-side-sheet {
   flex: none;
   inline-size: var(--inspector-width);
@@ -200,6 +215,29 @@
 .workspace-ancestors { min-inline-size: 0; color: var(--muted-foreground); }
 .workspace-group-name { flex: none; max-inline-size: 100%; }
 .workspace-tools { flex: none; border-block-end: 1px solid var(--border); background: var(--card); }
+.workspace-variant-row, .variant-inputs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--md-sys-measurement-space100);
+  min-inline-size: 0;
+}
+.workspace-variant-row {
+  padding: var(--md-sys-measurement-space50) var(--md-sys-measurement-space100);
+  border-block-end: 1px solid var(--border);
+}
+.workspace-token-mode { display: flex; }
+.variant-field {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--md-sys-measurement-space50);
+  min-inline-size: 0;
+  font-size: var(--md-sys-typescale-label-medium-size);
+  color: var(--muted-foreground);
+}
+.variant-field > .md-outlined-select { inline-size: auto; max-inline-size: min(100%, 16rem); }
+.variant-inputs > .variant-field > .md-outlined-select { max-inline-size: min(100%, 11rem); }
 .workspace-search.md-search-bar {
   --_search-height: 34px;
   --md-comp-search-bar-contained-avatar-target-size: 24px;
@@ -340,6 +378,8 @@
 
 .folder-tree { padding: 4px 8px 12px; }
 .workspace-sidebar .folder-tree { padding: 0 var(--md-sys-measurement-space100) var(--md-sys-measurement-space100); }
+/* Give the animated list its own raster surface without changing its motion. */
+.workspace-sidebar .foundry-folder-list { transform: translateZ(0); }
 .foundry-folder-list .md-list-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* The modal keeps search and actions visible while each browser pane scrolls. */

@@ -189,6 +189,38 @@ test('exports an applicable patch from a read-only folder', async ({ page, brows
   execFileSync('git', ['apply', '--check', await (await download).path()], { cwd: directory });
 });
 
+test('opens the full Material 3 sample and switches Catalog appearances', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/');
+  await command(page, 'File', 'Open Material 3 sample');
+  await expect(page.locator('[data-workspace-name]')).toHaveText('Material 3');
+  await expect(page.getByText('6,814 tokens', { exact: true })).toBeVisible();
+  const groups = page.getByRole('complementary', { name: 'Groups', exact: true });
+  await Promise.all(['comp', 'ref', 'sys', 'fab', 'outlined-icon-button'].map(branch =>
+    expect(groups.getByRole('button', { name: branch, exact: true })).toBeVisible()));
+
+  const appearance = page.getByRole('combobox', { name: 'Appearance', exact: true });
+  await expect(appearance.locator('option')).toHaveText([
+    'Choose…', 'Light', 'Light · medium contrast', 'Light · high contrast',
+    'Dark', 'Dark · medium contrast', 'Dark · high contrast',
+  ]);
+  const search = page.getByRole('searchbox', { name: 'Search tokens in group' });
+  await search.fill('md.comp.assist-chip.label-text.weight');
+  await expect(page.getByRole('button', { name: 'Value for md.comp.assist-chip.label-text.weight', exact: true }))
+    .toHaveText('{md.sys.typescale.label-large.weight.$root}');
+  await expect(page.getByRole('button', { name: 'Resolved value for md.comp.assist-chip.label-text.weight', exact: true }))
+    .toHaveText('500');
+  await search.fill('md.sys.color.primary');
+  const value = page.getByRole('button', { name: 'Value for md.sys.color.primary', exact: true });
+  await expect(value).toHaveText('{md.ref.palette.primary40}');
+  await appearance.selectOption('Dark');
+  await expect(value).toHaveText('{md.ref.palette.primary80}');
+  await expect(search).toHaveValue('md.sys.color.primary');
+  await page.getByRole('button', { name: 'Compare variants', exact: true }).click();
+  const comparison = page.getByRole('table', { name: 'Variant comparison' });
+  await expect(comparison.getByRole('button', { name: 'md.sys.color.primary', exact: true })).toBeVisible();
+});
+
 test('finds unresolved tokens and shows why the alias fails', async ({ page }) => {
   const benchmark = process.env['MD3_TOKEN_BENCHMARK'];
   const fallback = { name: 'reference.tokens.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({
@@ -200,7 +232,7 @@ test('finds unresolved tokens and shows why the alias fails', async ({ page }) =
   const unresolvedCount = benchmark ? 38 : 1;
   await page.setViewportSize({ width: 1075, height: 880 });
   await page.goto('/');
-  if (benchmark) await command(page, 'File', 'Open Material 3 sample');
+  if (benchmark) await command(page, 'File', 'Open Material 3 benchmark');
   else {
     const chooser = page.waitForEvent('filechooser');
     await command(page, 'File', 'Open token files…');
@@ -291,7 +323,7 @@ test('finds unresolved tokens and shows why the alias fails', async ({ page }) =
   await expect(referenceSearch).toBeFocused();
   expect((await token.boundingBox())?.height).toBe(rowHeight);
   await referenceSearch.fill(benchmark ? 'label large weight' : 'scale');
-  await expect(picker.getByRole('button', { name: rootPath, exact: true })).toBeVisible();
+  await expect(picker.getByRole('button', { name: rootPath.replace(/\$root$/u, 'Group value'), exact: true })).toBeVisible();
   await referenceSearch.clear();
   const hierarchy = picker.getByRole('navigation', { name: 'Reference groups' });
   const branch = benchmark ? ['md', 'sys', 'typescale', 'label-large', 'weight'] : ['base', 'scale'];
@@ -299,7 +331,7 @@ test('finds unresolved tokens and shows why the alias fails', async ({ page }) =
     await previous;
     await hierarchy.getByRole('button', { name: group, exact: true }).click();
   }, Promise.resolve());
-  await picker.getByRole('button', { name: rootPath, exact: true }).click();
+  await picker.getByRole('button', { name: rootPath.replace(/\$root$/u, 'Group value'), exact: true }).click();
   expect(await picker.evaluate(node => node.matches(':modal'))).toBe(true);
   await picker.getByRole('button', { name: 'Link token', exact: true }).click();
   await expect(unresolved).toHaveCount(0);
@@ -835,7 +867,13 @@ test('keeps keyboard focus in the grid independently of checked rows', async ({ 
   await expect(name('paper')).toBeFocused();
   await expect(check('ocean')).not.toBeChecked();
   await page.keyboard.press('Shift+ArrowRight');
-  await expect(grid.getByRole('button', { name: 'Value for reference.color.paper', exact: true })).toBeFocused();
+  const paperValue = grid.getByRole('button', { name: 'Value for reference.color.paper', exact: true });
+  await expect(paperValue).toBeFocused();
+  await page.keyboard.press('Shift+F10');
+  await expect(page.getByRole('menuitem', { name: 'Edit token', exact: true })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('menu', { name: 'Token actions for reference.color.paper' })).toBeHidden();
+  await expect(paperValue).toBeFocused();
   await expect(check('ink')).toBeChecked();
   await expect(check('paper')).toBeChecked();
   await page.keyboard.press('Space');
@@ -970,8 +1008,8 @@ test('creates a root token and links to it by its explicit path', async ({ page 
   await page.getByRole('button', { name: 'Name for spacing.small', exact: true }).click();
   await page.getByRole('button', { name: 'Link reference for spacing.small', exact: true }).click();
   const finder = page.getByRole('dialog');
-  await finder.getByRole('searchbox', { name: 'Search tokens' }).fill('$root');
-  await finder.getByRole('button', { name: 'spacing.$root', exact: true }).click();
+  await finder.getByRole('searchbox', { name: 'Search tokens' }).fill('group value');
+  await finder.getByRole('button', { name: 'spacing.Group value', exact: true }).click();
   await finder.getByRole('button', { name: 'Link token', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Value for spacing.small', exact: true })).toHaveText('{spacing.$root}');
   await expect(page.getByRole('button', { name: 'Resolved value for spacing.small', exact: true })).toHaveText('8');
@@ -992,7 +1030,7 @@ test('links to a compatible field in another source and inspects the authored po
   const finder = page.getByRole('dialog', { name: 'Link a token' });
   await finder.getByRole('searchbox', { name: 'Search tokens' }).fill('palette');
   await finder.getByRole('button', { name: 'Browse fields in palette.iris', exact: true }).click();
-  await finder.getByRole('button', { name: /components \/ 0/iu }).click();
+  await finder.getByRole('button', { name: /Components › Red/u }).click();
   await finder.getByRole('button', { name: 'Link token', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Resolved value for theme.channel', exact: true })).toHaveText('0.25');
   await expect(page.getByRole('button', { name: 'Resolved value for theme.alias', exact: true })).toHaveText('0.25');
@@ -1041,9 +1079,9 @@ test('offers safe fields of a partially unresolved token', async ({ page }) => {
   await page.getByRole('button', { name: 'Link reference for source', exact: true }).click();
   const finder = page.getByRole('dialog', { name: 'Link a token' });
   await finder.getByRole('button', { name: 'Browse fields in partial', exact: true }).click();
-  const available = finder.getByRole('button', { name: /components \/ 0/iu });
+  const available = finder.getByRole('button', { name: /Components › Red/u });
   await expect(available).toBeFocused();
-  await expect(finder.getByRole('button', { name: /components \/ [12]/u })).toHaveCount(0);
+  await expect(finder.getByRole('button', { name: /Components › (Green|Blue)/u })).toHaveCount(0);
   await expect(finder.getByRole('button', { name: 'Link token', exact: true })).toBeDisabled();
   await available.press('Enter');
   await finder.getByRole('button', { name: 'Link token', exact: true }).click();
@@ -1333,8 +1371,8 @@ test('links independent fields in the same value and previews the current draft'
   await green.locator('..').locator('[data-slot="trailing-icon"]').getByRole('button', { name: 'Link Green', exact: true }).click();
   const finder = page.getByRole('dialog', { name: 'Link a token', exact: true });
   await finder.getByRole('button', { name: 'Browse fields in shade', exact: true }).click();
-  await expect(finder.getByRole('button', { name: /components \/ 1/u })).toHaveCount(0);
-  await finder.getByRole('button', { name: /components \/ 0/iu }).click();
+  await expect(finder.getByRole('button', { name: /Components › Green/u })).toHaveCount(0);
+  await finder.getByRole('button', { name: /Components › Red/u }).click();
   await finder.getByRole('button', { name: 'Link token', exact: true }).click();
   await expect(inspector.getByLabel('Color preview', { exact: true }).locator('[style]')).toHaveAttribute('style', /0\.8 0\.8 0\.6/u);
   await inspector.getByRole('button', { name: 'Apply to workspace', exact: true }).click();
@@ -1357,7 +1395,7 @@ test('opens a Resolver, compares contexts, edits the intended context, and expor
     { name: 'dark.tokens.json', mimeType: 'application/json', buffer: Buffer.from(darkSource) },
   ]);
   const pane = page.getByRole('main', { name: 'Token library', exact: true });
-  await expect(pane.getByRole('heading', { name: 'Theme workspace' })).toBeVisible();
+  await expect(pane.getByRole('group', { name: 'Token view' })).toBeVisible();
   await pane.getByRole('group', { name: 'Active variant', exact: true }).getByLabel('theme', { exact: true }).selectOption('dark');
   await pane.getByRole('button', { name: 'Name for gap', exact: true }).click();
   const inspector = page.getByRole('complementary', { name: 'Token details' });
@@ -1376,11 +1414,11 @@ test('opens a Resolver, compares contexts, edits the intended context, and expor
   const table = pane.getByRole('table', { name: 'Variant comparison' });
   await expect(table.getByRole('row', { name: /padding Changed 20 4/u })).toBeVisible();
   const snapshotWait = page.waitForEvent('download');
-  await pane.getByRole('button', { name: 'Download resolved tokens' }).click();
+  await command(page, 'File', 'Download resolved tokens · dark');
   const snapshot = await snapshotWait;
   expect(parseJson(await readFile(await snapshot.path(), 'utf8'))).toMatchObject({ gap: { $value: 20 }, padding: { $value: 20 } });
   const bundleWait = page.waitForEvent('download');
-  await pane.getByRole('button', { name: 'Download editable sources (.zip)', exact: true }).click();
+  await command(page, 'File', 'Download editable sources (.zip)');
   const bundle = await bundleWait;
   const { unzipSync, strFromU8 } = await import('fflate');
   const unpacked = unzipSync(new Uint8Array(await readFile(await bundle.path())));
@@ -1420,16 +1458,28 @@ test('creates a Resolver and authors named sets, modifier contexts and ordered i
   };
   await apply();
   const pane = page.getByRole('main', { name: 'Token library', exact: true });
-  await expect(pane.getByRole('heading', { name: 'Density example' })).toBeVisible();
+  const manager = page.getByRole('main', { name: 'Variants' });
+  const manage = () => command(page, 'Variants', 'Manage variants');
+  const back = () => manager.getByRole('button', { name: 'Back to tokens' }).click();
+  await pane.getByRole('button', { name: 'Add variant options' }).click();
+  await expect(manager.getByRole('heading', { name: 'Variants', exact: true })).toBeFocused();
+  await expect(manager.getByText('Density example', { exact: true })).toBeVisible();
+  await expect(pane.getByRole('grid', { name: 'Tokens' })).toBeHidden();
   const table = pane.getByRole('grid', { name: 'Tokens' });
 
-  await pane.getByRole('button', { name: 'New token set', exact: true }).click();
+  await manager.getByRole('button', { name: 'New token set', exact: true }).click();
   const set = page.getByRole('dialog', { name: 'New token set', exact: true });
   await set.getByRole('textbox', { name: 'Set name' }).fill('Extras');
   await set.getByRole('combobox', { name: 'Open file or set' }).selectOption({ label: 'base.tokens.json' });
   await set.getByRole('button', { name: 'Add source' }).click();
   await set.getByRole('button', { name: 'Add inline tokens' }).click();
-  await set.getByRole('textbox', { name: 'Source 2 · Inline tokens' }).fill('{"accent":{"$type":"number","$value":7}}');
+  await set.getByRole('button', { name: 'Add inline token', exact: true }).click();
+  const inline = page.getByRole('dialog', { name: 'Add inline token', exact: true });
+  await inline.getByRole('textbox', { name: 'Token name' }).fill('accent');
+  await inline.getByRole('combobox', { name: 'Token type' }).selectOption('number');
+  await inline.getByRole('textbox', { name: 'Token value' }).fill('7');
+  await inline.getByRole('button', { name: 'Review changes' }).click();
+  await expect(inline).toBeHidden();
   await set.getByRole('button', { name: 'Move source 2 up' }).click();
   await set.getByRole('button', { name: 'Add reference' }).click();
   await set.getByRole('button', { name: 'Remove source 3' }).click();
@@ -1440,8 +1490,8 @@ test('creates a Resolver and authors named sets, modifier contexts and ordered i
   await set.getByRole('button', { name: 'Review changes' }).click();
   await apply();
 
-  await pane.getByRole('button', { name: 'New variant option', exact: true }).click();
-  const modifier = page.getByRole('dialog', { name: 'New variant option', exact: true });
+  await manager.getByRole('button', { name: 'New variant dimension', exact: true }).click();
+  const modifier = page.getByRole('dialog', { name: 'New variant dimension', exact: true });
   await modifier.getByRole('textbox', { name: 'Variant name' }).fill('density');
   await modifier.getByRole('button', { name: 'Add option' }).click();
   await modifier.getByRole('textbox', { name: 'Option 1 name' }).fill('compact');
@@ -1453,33 +1503,41 @@ test('creates a Resolver and authors named sets, modifier contexts and ordered i
   const spacious = modifier.getByRole('region', { name: 'Option 2' });
   await spacious.getByText('0 sources', { exact: true }).click();
   await spacious.getByRole('button', { name: 'Add inline tokens' }).click();
+  await spacious.getByText('Inline source JSON', { exact: true }).click();
   await spacious.getByRole('textbox', { name: 'Source 1 · Inline tokens' }).fill('{"gap":{"$type":"number","$value":16}}');
   await modifier.getByRole('combobox', { name: 'Default option' }).selectOption({ label: 'spacious' });
   await modifier.getByRole('button', { name: 'Review changes' }).click();
   await apply();
 
-  await pane.getByRole('button', { name: 'Add to override order' }).click();
+  await manager.getByRole('button', { name: 'Add to override order' }).click();
   const entry = page.getByRole('dialog', { name: 'Add to override order' });
   await entry.getByLabel('Entry', { exact: true }).selectOption({ label: 'Set · Extras' });
   await entry.getByRole('button', { name: 'Review changes' }).click();
   await apply();
+  await back();
   await expect(table.getByRole('row').filter({ has: page.getByRole('button', { name: 'Name for accent', exact: true }) }).getByText('7', { exact: true })).toBeVisible();
 
-  await pane.getByRole('button', { name: 'Add to override order' }).click();
-  await entry.getByLabel('Entry', { exact: true }).selectOption({ label: 'Modifier · density' });
+  await manage();
+  await manager.getByRole('button', { name: 'Add to override order' }).click();
+  await entry.getByLabel('Entry', { exact: true }).selectOption({ label: 'Dimension · density' });
   await entry.getByRole('button', { name: 'Review changes' }).click();
   await apply();
+  await back();
   await expect(table.getByRole('row').filter({ has: page.getByRole('button', { name: 'Name for gap', exact: true }) }).getByText('16', { exact: true })).toBeVisible();
 
-  await pane.getByRole('button', { name: 'Add to override order' }).click();
+  await manage();
+  await manager.getByRole('button', { name: 'Add to override order' }).click();
   await entry.getByRole('textbox', { name: 'Inline entry JSON' }).fill(
     '{"name":"Late","type":"set","sources":[{"gap":{"$type":"number","$value":30}}]}',
   );
   await entry.getByRole('button', { name: 'Review changes' }).click();
   await apply();
+  await back();
   await expect(table.getByRole('row').filter({ has: page.getByRole('button', { name: 'Name for gap', exact: true }) }).getByText('30', { exact: true })).toBeVisible();
-  await pane.getByRole('button', { name: 'Move Late up', exact: true }).press('Enter');
+  await manage();
+  await manager.getByRole('button', { name: 'Move Late up', exact: true }).press('Enter');
   await apply();
+  await back();
   await expect(table.getByRole('row').filter({ has: page.getByRole('button', { name: 'Name for gap', exact: true }) }).getByText('16', { exact: true })).toBeVisible();
   await pane.getByRole('group', { name: 'Active variant' }).getByLabel('density', { exact: true }).selectOption('compact');
   await expect(table.getByRole('row').filter({ has: page.getByRole('button', { name: 'Name for gap', exact: true }) }).getByText('30', { exact: true })).toBeVisible();
@@ -1550,7 +1608,9 @@ test('reviews source file moves, blocks broken links, and keeps file history und
   const management = page.getByRole('region', { name: 'Workspace management' });
   const newFile = management.getByRole('button', { name: 'New source file' });
   await newFile.click();
-  await page.getByRole('textbox', { name: 'File path' }).fill('nested/unused.tokens.json');
+  await page.getByRole('textbox', { name: 'File name' }).fill('unused');
+  await page.getByRole('combobox', { name: 'Folder' }).selectOption({ label: 'New folder…' });
+  await page.getByRole('textbox', { name: 'New folder path' }).fill('nested');
   await page.getByRole('button', { name: 'Review file change' }).click();
   await page.getByRole('dialog', { name: 'Review changes' }).getByRole('button', { name: 'Apply to workspace' }).click();
   await expect(management.getByRole('button', { name: 'nested/unused.tokens.json', exact: true })).toBeVisible();
@@ -1645,8 +1705,9 @@ test('renames a Resolver set and previews references before removal', async ({ p
     name: 'brand.resolver.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(tree, null, 2)),
   });
   const pane = page.getByRole('main', { name: 'Token library' });
-  await pane.getByRole('button', { name: 'Manage variants' }).click();
-  await pane.getByRole('button', { name: 'Actions for set brand' }).click();
+  await command(page, 'Variants', 'Manage variants');
+  const manager = page.getByRole('main', { name: 'Variants' });
+  await manager.getByRole('button', { name: 'Actions for set brand' }).click();
   await page.getByRole('menuitem', { name: 'Rename set…' }).click();
   const rename = page.getByRole('dialog', { name: 'Rename set', exact: true });
   await rename.getByRole('textbox', { name: 'Set name' }).fill('foundation');
@@ -1656,8 +1717,10 @@ test('renames a Resolver set and previews references before removal', async ({ p
   await review.getByText('Show file changes', { exact: true }).click();
   await expect(review.getByRole('region', { name: 'File changes' })).toContainText('#/sets/foundation');
   await review.getByRole('button', { name: 'Apply to workspace' }).click();
+  await manager.getByRole('button', { name: 'Back to tokens' }).click();
   await expect(pane.getByRole('row').filter({ has: page.getByRole('button', { name: 'Name for gap', exact: true }) }).getByText('4', { exact: true })).toBeVisible();
-  await pane.getByRole('button', { name: 'Actions for set foundation' }).click();
+  await command(page, 'Variants', 'Manage variants');
+  await manager.getByRole('button', { name: 'Actions for set foundation' }).click();
   await page.getByRole('menuitem', { name: 'Remove set…' }).click();
   const remove = page.getByRole('dialog', { name: 'Remove set', exact: true });
   await remove.getByRole('button', { name: 'Review removal' }).click();
@@ -1684,8 +1747,7 @@ test('reviews and undoes a bulk field edit while keeping the selection and draft
   await form.getByLabel('Part to change').selectOption({ label: 'Value' });
   await form.getByText('Mixed values', { exact: true }).click();
   await expect(form.getByRole('region', { name: 'Current values' })).toContainText('12');
-  await form.getByRole('button', { name: 'Review edits' }).click();
-  await expect(form.getByRole('alert')).toContainText('Enter a replacement value');
+  await expect(form.getByRole('textbox', { name: 'Replacement value' })).toHaveValue('0');
   await form.getByRole('textbox', { name: 'Replacement value' }).fill('8');
   await form.getByRole('button', { name: 'Review edits' }).click();
   const review = page.getByRole('dialog', { name: 'Review selected token edits', exact: true });
@@ -1840,9 +1902,9 @@ test('moves a named set between Resolver manifests without changing their resolu
     name: file.name, mimeType: 'application/json', buffer: Buffer.from(file.text),
   })));
   const pane = page.getByRole('main', { name: 'Token library', exact: true });
-  const definition = pane.getByRole('button', { name: 'Manage variants', exact: true });
-  await definition.click();
-  await pane.getByRole('button', { name: 'Actions for set brand', exact: true }).click();
+  await command(page, 'Variants', 'Manage variants');
+  const manager = page.getByRole('main', { name: 'Variants' });
+  await manager.getByRole('button', { name: 'Actions for set brand', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Move set…', exact: true }).click();
   const form = page.getByRole('dialog', { name: 'Move set', exact: true });
   await expect(form.getByRole('combobox', { name: 'Destination Resolver' })).toHaveValue('shared.resolver.json');
@@ -1857,14 +1919,16 @@ test('moves a named set between Resolver manifests without changing their resolu
   await expect(form.getByRole('textbox', { name: 'Set name' })).toHaveValue('foundation');
   await form.getByRole('button', { name: 'Review move' }).click();
   await review.getByRole('button', { name: 'Apply to workspace' }).click();
-  await expect(definition).toBeFocused();
+  await expect(manager.getByRole('heading', { name: 'Token sets', exact: true })).toBeFocused();
+  await manager.getByRole('button', { name: 'Back to tokens' }).click();
   await expect(pane.getByRole('row').filter({ has: page.getByRole('button', { name: 'Name for gap', exact: true }) }).getByText('4', { exact: true })).toBeVisible();
-  await expect(pane.getByRole('region', { name: 'Order of overrides' })).toContainText('shared.resolver.json#/sets/foundation');
-  await expect(pane.getByRole('button', { name: 'Actions for set brand', exact: true })).toHaveCount(0);
+  await command(page, 'Variants', 'Manage variants');
+  await expect(manager.getByRole('region', { name: 'Order of overrides' })).toContainText('Set · foundation · shared.resolver.json');
+  await expect(manager.getByRole('button', { name: 'Actions for set brand', exact: true })).toHaveCount(0);
 
   await page.getByRole('combobox', { name: 'Variant configuration' }).selectOption('shared.resolver.json');
-  await expect(pane.getByRole('button', { name: 'Actions for set foundation', exact: true })).toBeVisible();
-  await expect(pane.getByRole('region', { name: 'Order of overrides' }).locator('li')).toHaveCount(0);
+  await expect(manager.getByRole('button', { name: 'Actions for set foundation', exact: true })).toBeVisible();
+  await expect(manager.getByRole('region', { name: 'Order of overrides' }).locator('li')).toHaveCount(0);
 
   await page.getByRole('button', { name: 'Review changes', exact: true }).click();
   const download = page.waitForEvent('download');
@@ -1948,7 +2012,8 @@ test('opens a Resolver diagnostic at its authored field', async ({ page }) => {
     })) },
     { name: 'base.tokens.json', mimeType: 'application/json', buffer: Buffer.from('{"gap":{"$type":"number","$value":4,"$description":12}}') },
   ]);
-  const pane = page.getByRole('main', { name: 'Token library' });
+  await command(page, 'Variants', 'Manage variants');
+  const pane = page.getByRole('main', { name: 'Variants' });
   await pane.getByText('Context source diagnostics (1)', { exact: true }).click();
   await pane.getByRole('button', { name: /gap.*\$description.*Invalid value/u }).click();
   const dialog = page.getByRole('dialog', { name: 'Edit token source' });
@@ -1956,4 +2021,38 @@ test('opens a Resolver diagnostic at its authored field', async ({ page }) => {
   const source = dialog.getByRole('textbox', { name: 'Token source JSON' });
   await expect(source).toBeFocused();
   await expect.poll(() => source.evaluate(node => node instanceof HTMLTextAreaElement ? node.value.slice(node.selectionStart, node.selectionEnd) : '')).toBe('12');
+});
+
+
+const fixtureFile = (name: string, value: object) => ({
+    name, mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(value)),
+  });
+test('keeps the authored library available when a variant needs a choice', async ({ page }) => {
+  await page.goto('/');
+  await page.locator('input[type=file][multiple]').setInputFiles([
+    fixtureFile('appearance.resolver.json', { version: '2025.10', resolutionOrder: [
+      { name: 'base', type: 'set', sources: [{ $ref: 'base.tokens.json' }, { $ref: 'shared.tokens.json' }] },
+      { name: 'appearance', type: 'modifier', contexts: { light: [], dark: [{ $ref: 'dark.tokens.json' }] } },
+    ] }),
+    fixtureFile('base.tokens.json', { alias: { $type: 'number', $value: '{shared}' } }),
+    fixtureFile('shared.tokens.json', { shared: { $type: 'number', $value: 4 } }),
+    fixtureFile('dark.tokens.json', { shared: { $type: 'number', $value: 8 } }),
+  ]);
+  await expect(page.getByRole('button', { name: 'Edit library', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('button', { name: 'Resolved value for alias', exact: true })).toHaveText('4');
+  await expect(page.getByRole('button', { name: 'New token', exact: true })).toBeEnabled();
+  const modes = page.getByRole('group', { name: 'Token view' });
+  await expect(modes).toHaveClass('md-button-group');
+  await expect(modes).toHaveAttribute('data-control', 'connected');
+  await expect(modes).toHaveAttribute('data-variant', 'filled');
+  await modes.getByRole('button', { name: 'Edit library' }).press('ArrowRight');
+  const preview = modes.getByRole('button', { name: 'Preview variant' });
+  await expect(preview).toBeFocused();
+  await preview.press('Enter');
+  await expect(preview).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('button', { name: 'Variant issues', exact: true })).toBeVisible();
+  await page.getByRole('group', { name: 'Active variant' }).getByRole('combobox', { name: 'appearance' }).selectOption('dark');
+  await expect(page.getByRole('button', { name: 'Resolved value for alias', exact: true })).toHaveText('8');
+  await page.getByRole('button', { name: 'Edit library', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Resolved value for alias', exact: true })).toHaveText('4');
 });

@@ -59,7 +59,7 @@ export function MetadataDialog({ workspace, location, reviewing, close, prepare,
   location: MetadataLocation;
   reviewing: boolean;
   close: () => void;
-  prepare: (file: string, changes: MetadataChange) => Review;
+  prepare: (changes: ReadonlyMap<string, MetadataChange>) => Review;
   review: (next: Review) => void;
 }) {
   const { kind, path } = location;
@@ -71,6 +71,7 @@ export function MetadataDialog({ workspace, location, reviewing, close, prepare,
   const [file, setFile] = useState(() => files[0] ?? '');
   const [drafts, setDrafts] = useState(() => new Map<string, Fields>());
   const [error, setError] = useState('');
+  const [namespace, setNamespace] = useState('');
   const initial = useMemo(() => formattedMetadata(workspace, file, path), [workspace, file, path]);
   const draft = drafts.get(file) ?? initial;
   const definition = group?.definitions.get(file);
@@ -91,7 +92,16 @@ export function MetadataDialog({ workspace, location, reviewing, close, prepare,
     }));
   }) : [], [file, graph.groups, kind, path]);
   const hasBase = targets.some(target => target.value === draft.base);
-  const changed = draft !== initial && (['description', 'type', 'base', 'deprecation', 'reason', 'extensions'] as const).some(field => draft[field] !== initial[field]);
+  const changedFiles = [...drafts].filter(([source, fields]) => {
+    const original = formattedMetadata(workspace, source, path);
+    return (['description', 'type', 'base', 'deprecation', 'reason', 'extensions'] as const).some(field => fields[field] !== original[field]);
+  });
+  const extensions = useMemo(() => {
+    try {
+      const value = draft.extensions.trim() ? parseJson(draft.extensions) : {};
+      return isJsonObject(value) ? value : undefined;
+    } catch { return undefined; }
+  }, [draft.extensions]);
 
   function update<K extends keyof Fields>(field: K, value: Fields[K]) {
     setDrafts(previous => new Map(previous).set(file, { ...draft, [field]: value }));
@@ -103,16 +113,22 @@ export function MetadataDialog({ workspace, location, reviewing, close, prepare,
     <form className="grid min-w-0 gap-4" onSubmit={event => {
       event.preventDefault();
       try {
-        review(prepare(file, metadataPatch(initial, draft)));
+        const patches = new Map(changedFiles.map(([source, fields]) => [source, metadataPatch(formattedMetadata(workspace, source, path), fields)]));
+        for (const [source, patch] of patches) if (!Object.keys(patch).length) patches.delete(source);
+        if (patches.size) review(prepare(patches));
       } catch (failure) {
         setError(errorMessage(failure));
       }
     }}>
       {files.length > 1 ? <label htmlFor={id + "-file"} className="grid gap-1 text-sm">Source file
-        <NativeSelect id={id + "-file"} value={file} onChange={event => { setFile(event.currentTarget.value); setError(''); }}>
+        <NativeSelect id={id + "-file"} value={file} onChange={event => { setFile(event.currentTarget.value); setNamespace(''); setError(''); }}>
           {files.map(source => <NativeSelectOption value={source} key={source}>{source}</NativeSelectOption>)}
         </NativeSelect>
       </label> : <p className="wrap-anywhere text-xs">{file}</p>}
+      {files.length > 1 && <p className="text-xs text-muted-foreground">
+        {changedFiles.length ? changedFiles.map(([source]) => source).join(', ') + ' will be reviewed together.' :
+          'Each source has its own definition of this group.'}
+      </p>}
       {definition && !definition.authored && <p className="wrap-anywhere text-xs">
         Inherited from {definition.source.path} · {definition.source.file}. Saving creates a local group.
       </p>}
@@ -150,6 +166,24 @@ export function MetadataDialog({ workspace, location, reviewing, close, prepare,
         onChange={event => update('reason', event.currentTarget.value)} /> :
         !draft.deprecation && currentDeprecation && <p className="text-xs">Inherited deprecation{typeof currentDeprecation === 'string' ? ' · ' + currentDeprecation : ''}</p>}
       <details className="grid gap-2"><summary className="cursor-pointer text-sm">Advanced metadata</summary>
+        {extensions && <div className="grid gap-2 py-2">
+          {Object.keys(extensions).map(key => <div key={key} className="flex items-center justify-between gap-2 text-sm">
+            <span className="wrap-anywhere">{key}</span>
+            <Button type="button" size="xsmall" variant="text" aria-label={'Remove namespace ' + key} onClick={() => {
+              const next = { ...extensions };
+              delete next[key];
+              update('extensions', Object.keys(next).length ? JSON.stringify(next, null, 2) : '');
+            }}>Remove</Button>
+          </div>)}
+          <div className="flex flex-wrap items-center gap-2">
+            <TextField label="Vendor namespace" value={namespace} containerClassName="min-w-0 flex-1"
+              onChange={event => setNamespace(event.target.value)} />
+            <Button type="button" size="xsmall" variant="text" disabled={!namespace.trim() || Object.hasOwn(extensions, namespace.trim())}
+              onClick={() => {
+                update('extensions', JSON.stringify({ ...extensions, [namespace.trim()]: {} }, null, 2)); setNamespace('');
+              }}>Add namespace</Button>
+          </div>
+        </div>}
         <label htmlFor={id + "-extensions"} className="grid gap-1 text-sm">Vendor extensions JSON
           <Textarea id={id + "-extensions"} value={draft.extensions} onChange={event => update('extensions', event.currentTarget.value)}
             rows={4} spellCheck={false} className="font-mono text-xs" placeholder='{"vendor.namespace": {}}' />
@@ -162,7 +196,7 @@ export function MetadataDialog({ workspace, location, reviewing, close, prepare,
       {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
       <div className="flex justify-end gap-2">
         <Button variant="text" data-dialog-close="">Cancel</Button>
-        <Button type="submit" disabled={!changed}>Review metadata changes</Button>
+        <Button type="submit" disabled={!changedFiles.length}>Review metadata changes</Button>
       </div>
     </form>
   </ActionDialog>;

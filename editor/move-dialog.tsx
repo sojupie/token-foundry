@@ -13,7 +13,7 @@ export type MoveOperation = 'rename' | 'move' | 'duplicate';
 
 export function MoveDialog({ paths, operation, graph, close, prepare, review, reviewing }: {
   paths: readonly string[]; operation: MoveOperation; graph: DocumentGraph; reviewing: boolean; close: () => void;
-  prepare: (moves: Move[]) => Review; review: (pending: Review) => void;
+  prepare: (moves: Move[]) => Review | Promise<Review>; review: (pending: Review) => void;
 }) {
   const single = paths.length === 1 ? paths[0] : undefined;
   const rename = operation === 'rename';
@@ -33,15 +33,17 @@ export function MoveDialog({ paths, operation, graph, close, prepare, review, re
     return candidate;
   });
   const [error, setError] = useState('');
+  const [checking, setChecking] = useState(false);
   const allowed = useMemo(() => new Set(rename ? [] : [...graph.groups.keys()].filter((group) =>
     !paths.some((path) => group === path || group.startsWith(path + '.')))), [graph, paths, rename]);
   const action = rename ? 'Rename' : duplicate ? 'Duplicate' : 'Move';
   const title = action + (single ? graph.groups.has(single) ? ' group' : ' token' : ' selected tokens');
 
-  return <ActionDialog open={!reviewing} onOpenChange={open => { if (!open && !reviewing) close(); }} title={title}
+  return <ActionDialog open={!reviewing} busy={checking} onOpenChange={open => { if (!open && !reviewing && !checking) close(); }} title={title}
     description={single ?? paths.length + ' tokens selected'}>
       <form noValidate className="grid gap-4" onSubmit={(event) => {
         event.preventDefault();
+        if (checking) return;
         try {
           if (named && (!name.trim() || /[.{}]/u.test(name))) throw new Error('Enter a name without periods or braces.');
           const occupied = new Set([...graph.tokens.keys(), ...graph.groups.keys()]);
@@ -63,8 +65,10 @@ export function MoveDialog({ paths, operation, graph, close, prepare, review, re
             if (!file) throw new Error('Choose a more specific destination group.');
             return [{ path, to, file }];
           });
-          review(prepare(moves));
-        } catch (failure) { setError(errorMessage(failure)); }
+          setChecking(true);
+          void Promise.resolve(prepare(moves)).then(review)
+            .catch((failure: unknown) => setError(errorMessage(failure))).finally(() => setChecking(false));
+        } catch (failure) { setChecking(false); setError(errorMessage(failure)); }
       }}>
         {named && <TextField label={label} data-initial-focus value={name} onChange={(event) => setName(event.target.value)} required />}
         {!rename && <div className="grid gap-2">
@@ -80,8 +84,8 @@ export function MoveDialog({ paths, operation, graph, close, prepare, review, re
         {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
         <div className="flex flex-wrap justify-end gap-2">
           <Button type="button" variant="text" data-dialog-close="">Cancel</Button>
-          <Button type="submit" disabled={named ? !name.trim() || destination === parentPath(single ?? '') && name.trim() === leafName(single ?? '') :
-            !duplicate && paths.every(path => destination === parentPath(path))}>{'Review ' + operation}</Button>
+          <Button type="submit" disabled={checking || (named ? !name.trim() || destination === parentPath(single ?? '') && name.trim() === leafName(single ?? '') :
+            !duplicate && paths.every(path => destination === parentPath(path)))}>{'Review ' + operation}</Button>
         </div>
       </form>
   </ActionDialog>;

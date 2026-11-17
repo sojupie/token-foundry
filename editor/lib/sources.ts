@@ -1,4 +1,5 @@
 import { diffFile, openWorkspace, workspaceChanges } from '../../lib/workspace.ts';
+import { openSampleInWorker, openWorkspaceInWorker } from './workspace-review.ts';
 import type { Workspace } from '../../lib/workspace.ts';
 import { emptyFolder, folderTokenSources, ignoredDirectories, isResolverName, isTokenFile } from './local-folder.ts';
 import reference from '../../examples/reference.tokens.json?raw';
@@ -9,6 +10,11 @@ export function openExample(): Workspace {
     { path: 'reference.tokens.json', text: reference },
     { path: 'system.tokens.json', text: system },
   ]);
+}
+
+export async function openMaterialExample(): Promise<Workspace> {
+  const { default: url } = await import('../../examples/material-3.zip?url&no-inline');
+  return openSampleInWorker(new URL(url, document.baseURI).href);
 }
 
 export async function openFiles(files: readonly File[], folder: boolean): Promise<Workspace> {
@@ -25,7 +31,9 @@ export async function openFiles(files: readonly File[], folder: boolean): Promis
     text: decoder.decode(await file.arrayBuffer()),
   })));
   if (!sources.length) throw new Error(emptyFolder);
-  return openWorkspace(name ?? 'Token files', folder ? folderTokenSources(sources) : sources);
+  const input = folder ? folderTokenSources(sources) : sources;
+  return input.reduce((sum, file) => sum + file.text.length, 0) >= 64_000 ?
+    openWorkspaceInWorker(name ?? 'Token files', input) : openWorkspace(name ?? 'Token files', input);
 }
 
 export function download(name: string, content: BlobPart, type: string): void {

@@ -42,8 +42,12 @@ function PaneResize({ pane, label, width, resize, grid, direction = 1 }: {
   direction?: 1 | -1;
 }) {
   const start = useRef({ x: 0, width: 0 });
+  const dragFrame = useRef(0);
+  const pendingWidth = useRef(width);
   const measuredTable = useRef<HTMLDivElement | null>(null);
   const unfreezeTable = useCallback(() => {
+    cancelAnimationFrame(dragFrame.current);
+    dragFrame.current = 0;
     if (!measuredTable.current) return;
     measuredTable.current.style.inlineSize = '';
     measuredTable.current = null;
@@ -74,7 +78,11 @@ function PaneResize({ pane, label, width, resize, grid, direction = 1 }: {
     }}
     onPointerMove={event => {
       if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-        resize(widthAt(event.clientX));
+        pendingWidth.current = widthAt(event.clientX);
+        if (!dragFrame.current) dragFrame.current = requestAnimationFrame(() => {
+          dragFrame.current = 0;
+          resize(pendingWidth.current);
+        });
       }
     }}
     onPointerUp={event => {

@@ -2,6 +2,7 @@ import { errorMessage, requireValue } from '../../lib/json.ts';
 import { parseTokenFile } from '../../lib/parse-token-file.ts';
 import { compileResolver, isResolverFile } from '../../lib/resolver.ts';
 import type { TokenFile } from '../../lib/token-types.ts';
+import { openWorkspaceInWorker } from './workspace-review.ts';
 import { openWorkspace, workspaceChanges } from '../../lib/workspace.ts';
 import type { Workspace } from '../../lib/workspace.ts';
 
@@ -66,7 +67,9 @@ export async function openLocalFolder(folder: WritableDirectory) {
     const text = await readFile(requireValue(handles.get(path), path), path);
     return { path, text };
   }));
-  const workspace = openWorkspace(folder.name, folderTokenSources(sources));
+  const selected = folderTokenSources(sources);
+  const workspace = selected.reduce((sum, file) => sum + file.text.length, 0) >= 64_000 ?
+    await openWorkspaceInWorker(folder.name, selected) : openWorkspace(folder.name, selected);
 
   const reserved = new Map<string, string>();
   async function parentHandle(path: string, create: boolean) {

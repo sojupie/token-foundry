@@ -39,7 +39,9 @@ function focusType(select: HTMLSelectElement | null) {
   select?.focus({ preventScroll: true });
 }
 
-function RawValueForm({ id, initialType, draft, authored, apply, close }: {
+function RawValueForm({ id, initialType, draft, authored, apply, close, graph, file }: {
+  graph: DocumentGraph;
+  file: string;
   id: string;
   initialType: string | undefined;
   draft: Draft;
@@ -48,31 +50,48 @@ function RawValueForm({ id, initialType, draft, authored, apply, close }: {
   close: () => void;
 }) {
   const [type, setType] = useState(initialType ?? '');
+  const [literal, setLiteral] = useState<JsonValue>();
   const [text, setText] = useState('');
+  const [showJson, setShowJson] = useState(false);
+  const typed = canEditType(type);
+  const value = literal ?? (typed ? defaultValue(type) : undefined);
+  const edit = { graph, file, source: draft.create ? '' : draft.path, busy: false };
   const [error, setError] = useState('');
   return <form id={id} className="grid self-start gap-4" onSubmit={event => {
     event.preventDefault();
     event.stopPropagation();
     setError('');
     try {
-      const value = readInput(text, type, draft.original);
-      if (referenceLabel(value)) throw new Error('Enter a raw value or switch back to Find a reference.');
-      validateInputValue(type, value);
-      if (apply({ ...draft, type, value: text }) !== false) close();
+      const next = showJson || !typed ? readInput(text, type, draft.original) : value;
+      if (referenceLabel(next)) throw new Error('Enter a raw value or switch back to Find a reference.');
+      validateInputValue(type, next);
+      if (apply({ ...draft, type, value: JSON.stringify(next) ?? '' }) !== false) close();
     } catch (failure) {
       setError(errorMessage(failure));
     }
   }}>
-    <TokenTypeField value={type} {...{ authored }} onChange={setType} selectRef={focusType} required />
-    <ValueInput value={text} setValue={setText} format={inputFormat(type)} required />
+    <TokenTypeField value={type} {...{ authored }} onChange={next => {
+      setType(next); setLiteral(undefined); setText(''); setShowJson(false); setError('');
+    }} selectRef={focusType} required />
+    {typed && <Button type="button" size="xsmall" variant="text" className="justify-self-end" onClick={() => {
+      if (!showJson) { setText(JSON.stringify(value, null, 2)); setShowJson(true); }
+      else {
+        try { setLiteral(parseJson(text)); setShowJson(false); setError(''); }
+        catch (failure) { setError(errorMessage(failure)); }
+      }
+    }}>{showJson ? 'Use typed editor' : 'Raw JSON'}</Button>}
+    {typed && !showJson ? <Suspense fallback={<p className="text-xs">Loading value editor…</p>}>
+      <TypedEditorPanel key={type} {...{ edit, type, value }} resolved={undefined} original={false} write={setLiteral} />
+    </Suspense> : <ValueInput value={text} setValue={setText} format={showJson ? 'json' : inputFormat(type)} required />}
     {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
   </form>;
 }
 
-export function TokenReferenceDialog({ draft, graph, type, seed, choose, applyRawValue, close, error, referenceFile }: Pick<Props, 'graph'> & {
+export function TokenReferenceDialog({ draft, graph, type, seed, choose, applyRawValue, close, error, referenceFile, initialRaw }: Pick<Props, 'graph'> & {
   draft: Draft;
   type: string | undefined;
   seed: string;
+  initialRaw?: boolean;
   choose: (value: string) => boolean | void;
   applyRawValue: (draft: Draft) => boolean | void;
   referenceFile?: string | undefined;
@@ -98,8 +117,9 @@ export function TokenReferenceDialog({ draft, graph, type, seed, choose, applyRa
   const flexible = draft.create || draft.mode === 'inspector' || draft.column === 'type' ?
     !draft.type : !graph.tokens.get(draft.path)?.node.$type;
   return <ReferenceDialog graph={graph} source={draft.create ? '' : draft.path} {...{ type, seed, target, flexible, close }} choose={applyReference}
-    error={error ?? ''} renderRawForm={(id, closeRaw) => <RawValueForm {...{ id, draft }}
+    initialRaw={initialRaw ?? false} error={error ?? ''} renderRawForm={(id, closeRaw) => <RawValueForm {...{ id, draft }}
       initialType={type} authored={graph.tokens.get(draft.path)?.node.$type}
+      graph={graph} file={referenceFile ?? (draft.create ? draft.file : graph.tokens.get(draft.path)?.file ?? '')}
       apply={applyRawValue} close={closeRaw} />} />;
 }
 
@@ -129,6 +149,7 @@ function ValueField({ draft, graph, setDraft, busy, type, referenceFile }: Pick<
 }) {
   const inspector = !draft.create && draft.mode === 'inspector';
   const [referenceSeed, setReferenceSeed] = useState<string | null>(null);
+  const [enterLiteral, setEnterLiteral] = useState(false);
   const [raw, setRaw] = useState(false);
   const entry = graph.tokens.get(draft.path);
   const originalType = entry?.type;
@@ -169,11 +190,14 @@ function ValueField({ draft, graph, setDraft, busy, type, referenceFile }: Pick<
   return <div className="grid min-w-0 gap-2">
     <div className="flex flex-wrap items-center justify-between gap-1">
       <span className="text-xs font-medium">Value</span>
-      <div className="flex items-center gap-1">
+      <div className="flex flex-wrap items-center gap-1">
+        {referenceLabel(value) && <Button type="button" size="xsmall" variant="text" disabled={busy} onClick={() => {
+          setEnterLiteral(true); setReferenceSeed('');
+        }}>Enter a value</Button>}
         <Button type="button" size="xsmall" variant={raw ? 'tonal' : 'text'} pressed={raw} disabled={busy}
           onClick={() => { setRaw(!raw); if (!raw) setRawEdit(undefined); }}>Raw JSON</Button>
         <Button type="button" size="xsmall" variant="text" disabled={busy} aria-haspopup="dialog"
-          onClick={() => setReferenceSeed('')}>
+          onClick={() => { setEnterLiteral(false); setReferenceSeed(''); }}>
           <Link2 aria-hidden="true" /> Link token
         </Button>
       </div>
@@ -192,7 +216,7 @@ function ValueField({ draft, graph, setDraft, busy, type, referenceFile }: Pick<
         {issues.map(problem => <li key={problem}>{problem}</li>)}
       </ul>}
     </div> : panel}
-    {referenceSeed !== null && <TokenReferenceDialog {...{ draft, graph, type, referenceFile }} seed={referenceSeed}
+    {referenceSeed !== null && <TokenReferenceDialog {...{ draft, graph, type, referenceFile }} seed={referenceSeed} initialRaw={enterLiteral}
       choose={next => setDraft({ ...draft, value: next })}
       applyRawValue={setDraft} close={() => setReferenceSeed(null)} />}
     {inspector && valueIsOriginal && <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">

@@ -1,3 +1,4 @@
+import { tokenDisplayName } from './lib/value-shape.ts';
 import { useId, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import { Cell, Column, ColumnResizer, ResizableTableContainer, Row, Table, TableBody, TableHeader } from 'react-aria-components';
@@ -11,7 +12,8 @@ import { dtcgTypes } from '../lib/token-types.ts';
 import { inputFormat } from './lib/token-input.ts';
 import { TokenEditForm, TokenReferenceDialog } from './token-edit-form.tsx';
 import { TokenValue } from './token-value.tsx';
-import { CommandMenu } from './command-bar.tsx';
+import { RowCommandMenu } from './command-bar.tsx';
+import type { RowMenuHandle } from './command-bar.tsx';
 
 const columns = ['name', 'value', 'resolved', 'type', 'description'] as const;
 const editableColumns = ['name', 'value', 'type', 'description'] as const;
@@ -29,7 +31,7 @@ interface Props {
   selected: string;
   activeColumn: GridColumn;
   checked: ReadonlySet<string>;
-  setChecked: (update: (current: ReadonlySet<string>) => Set<string>) => void;
+  setChecked: (update: (current: Set<string>) => Set<string>) => void;
   select: (path: string, column?: GridColumn) => void;
   edit: (path: string, column: EditableColumn, link?: boolean) => void;
   inspect: (path: string) => void;
@@ -52,12 +54,9 @@ function focusInlineField(field: HTMLInputElement | HTMLSelectElement | null) {
   if (field instanceof HTMLInputElement) field.select();
 }
 
-function openRowMenu(cell: HTMLElement) {
-  const trigger = cell.closest('tr')?.querySelector<HTMLButtonElement>('.token-row-actions');
-  if (!trigger || trigger.disabled) return false;
-  trigger.focus({ preventScroll: true });
-  trigger.click();
-  return true;
+function focusGridControl(control: HTMLElement | null | undefined) {
+  control?.closest<HTMLElement>('td, th')?.focus({ preventScroll: true });
+  control?.focus();
 }
 
 function InlineCell({ draft: initialDraft, entry, setDraft, commit, cancel, after, error }: {
@@ -126,6 +125,28 @@ export function TokenGrid({ narrow, variant, rows, graph, group, selected, activ
   inspect, metadata, move, duplicate, copy, remove, restoreInherited, busy, error }: Props) {
   const anchor = useRef<HTMLTableCellElement>(null);
   const rowAnchor = useRef<string | undefined>(undefined);
+  const pointerCell = useRef<HTMLButtonElement | null>(null);
+  const rowMenu = useRef<RowMenuHandle>(null);
+  function openRowMenu(cell: HTMLElement, path: string) {
+    const button = cell.closest('tr')?.querySelector<HTMLButtonElement>('.token-row-actions');
+    const entry = graph.tokens.get(path);
+    if (!button || button.disabled || !entry || !rowMenu.current) return false;
+    rowMenu.current.open(button, {
+      label: 'Token actions for ' + path,
+      heading: tokenDisplayName(path),
+      restore: () => { if (cell.isConnected) focusGridControl(cell); },
+      sections: [[{ label: 'Edit token', icon: <SquarePen aria-hidden="true" />, run: () => inspect(path) },
+        { label: 'References', icon: <Link2 aria-hidden="true" />, run: () => inspect(path) },
+        { label: 'Edit token metadata', icon: <Settings2 aria-hidden="true" />, run: () => metadata(path) },
+        { label: 'Move token', icon: <ArrowRightLeft aria-hidden="true" />, disabled: !!entry.inheritedFrom, run: () => move(path) },
+        { label: 'Copy token', icon: <Copy aria-hidden="true" />, run: () => copy(path) },
+        { label: 'Duplicate token', icon: <Copy aria-hidden="true" />, run: () => duplicate(path) },
+        entry.overrides && !entry.inheritedFrom
+          ? { label: 'Use inherited value', icon: <Undo2 aria-hidden="true" />, run: () => restoreInherited(path) }
+          : { label: 'Delete token', icon: <Trash2 aria-hidden="true" />, disabled: !!entry.inheritedFrom, run: () => remove(path), destructive: true }]],
+    });
+    return true;
+  }
   const keyboardHelp = useId();
   const editing = draft && !draft.create && draft.mode !== 'inspector' ? draft : null;
   const popover = editing?.mode === 'details' ? editing : null;
@@ -158,6 +179,7 @@ export function TokenGrid({ narrow, variant, rows, graph, group, selected, activ
   function selectRow(path: string, toggle: boolean) {
     rowAnchor.current = path;
     setChecked(previous => {
+      if (!toggle && previous.size === 1 && previous.has(path)) return previous;
       const next = toggle ? new Set(previous) : new Set<string>();
       if (toggle && next.has(path)) next.delete(path);
       else next.add(path);
@@ -165,8 +187,9 @@ export function TokenGrid({ narrow, variant, rows, graph, group, selected, activ
     });
   }
 
-  function extendByKeyboard(event: KeyboardEvent<HTMLDivElement>) {
-    if (variant || draft || busy || !event.shiftKey || !(event.target instanceof HTMLElement)) return;
+  function navigateCells(event: KeyboardEvent<HTMLDivElement>) {
+    pointerCell.current = null;
+    if (draft || busy || !(event.target instanceof HTMLElement) || event.altKey || event.ctrlKey || event.metaKey) return;
     const vertical = event.key === 'ArrowUp' || event.key === 'ArrowDown';
     const horizontal = event.key === 'ArrowLeft' || event.key === 'ArrowRight';
     if (!vertical && !horizontal) return;
@@ -182,22 +205,22 @@ export function TokenGrid({ narrow, variant, rows, graph, group, selected, activ
     if (horizontal) {
       const index = visibleColumns.findIndex(field => field === column);
       const next = index + (event.key === 'ArrowRight' ? 1 : -1);
-      if (visibleColumns[next]) row.querySelector<HTMLElement>('[data-edit-column="' + visibleColumns[next] + '"]')?.focus();
-      else if (next === -1) row.querySelector<HTMLInputElement>('input[type="checkbox"]')?.focus();
+      if (visibleColumns[next]) focusGridControl(row.querySelector<HTMLElement>('[data-edit-column="' + visibleColumns[next] + '"]'));
+      else if (next === -1 && !variant) focusGridControl(row.querySelector<HTMLInputElement>('input[type="checkbox"]'));
       return;
     }
     const index = rows.findIndex(([path]) => path === from);
     const to = rows[index + (event.key === 'ArrowUp' ? -1 : 1)]?.[0];
     if (!to) return;
-    selectRange(from, to);
+    if (event.shiftKey && !variant) selectRange(from, to);
     const control = column ? '[data-edit-column="' + column + '"]' : 'input[type="checkbox"]';
-    event.currentTarget.querySelector<HTMLElement>('[data-token-row="' + CSS.escape(to) + '"] ' + control)?.focus();
+    focusGridControl(event.currentTarget.querySelector<HTMLElement>('[data-token-row="' + CSS.escape(to) + '"] ' + control));
   }
 
   return <>
     <p className="sr-only" id={keyboardHelp}>Use arrow keys to navigate. {variant ? 'Enter or F2 opens the token editor.' :
       'Space toggles the row. Shift with Up or Down extends the row selection. Enter or F2 edits one cell. Shift+F10 opens token actions. Escape cancels an edit or clears selection.'}</p>
-    <div className="contents" onKeyDownCapture={extendByKeyboard}>
+    <div className="contents" onKeyDownCapture={navigateCells}>
     <ResizableTableContainer data-slot="table-container" className="h-full w-full overflow-auto">
       <Table aria-label="Tokens" aria-describedby={keyboardHelp} selectionMode={variant ? 'none' : 'multiple'} selectionBehavior="toggle" selectedKeys={checked}
         escapeKeyBehavior="none" className="foundry-table w-full md:min-w-[640px] table-fixed text-sm [&_th:not(:last-child)]:border-e [&_td:not(:last-child)]:border-e"
@@ -224,7 +247,7 @@ export function TokenGrid({ narrow, variant, rows, graph, group, selected, activ
         <TableBody renderEmptyState={() => <p className="p-8 text-center text-muted-foreground">No matching tokens.</p>}>
         {rows.map(([path, entry], index) => {
           const { node, type, value } = entry;
-          const name = group ? path.slice(group.length + 1) : path;
+          const name = tokenDisplayName(group ? path.slice(group.length + 1) : path);
           const issue = graph.issues.get(path);
           const invalid = graph.validation.get(path)?.join('\n');
           const origin = node.$type ? 'Declared on token' : entry.referenceType ? 'Inferred from reference' :
@@ -256,9 +279,17 @@ export function TokenGrid({ narrow, variant, rows, graph, group, selected, activ
                     after={(key, backward) => afterEdit(index, currentEdit.column, key, backward)} /> :
                     <button type="button"
                       data-edit-column={field} data-active-cell={active && field === activeColumn ? '' : undefined} aria-label={labels[field] + ' for ' + path}
-                      className={'grid-cell-button' + (showLink || showActions ? ' pe-8' : '')}
-                      onFocus={() => { if (!editing) select(path, field); }}
-                      onPointerDown={event => event.stopPropagation()}
+                      className={'grid-cell-button' + (!variant && (field === 'value' || field === 'name') ? ' pe-8' : '')}
+                      onFocus={event => {
+                        if (pointerCell.current !== event.currentTarget && !editing) select(path, field);
+                      }}
+                      onPointerDown={event => {
+                        event.stopPropagation();
+                        if (event.isPrimary && event.button === 0) pointerCell.current = event.currentTarget;
+                      }}
+                      onPointerUp={() => { pointerCell.current = null; }}
+                      onPointerCancel={() => { pointerCell.current = null; }}
+                      onPointerLeave={() => { pointerCell.current = null; }}
                       onClick={event => {
                         event.stopPropagation();
                         if (draft || busy) return;
@@ -271,7 +302,7 @@ export function TokenGrid({ narrow, variant, rows, graph, group, selected, activ
                       }}
                       onDoubleClick={event => { if (field !== 'resolved' && !event.shiftKey && !event.ctrlKey && !event.metaKey) edit(path, field); }}
                       onContextMenu={event => {
-                        if (openRowMenu(event.currentTarget)) event.preventDefault();
+                        if (openRowMenu(event.currentTarget, path)) event.preventDefault();
                       }}
                       onKeyDown={event => {
                         if (!variant && !draft && !busy && event.key === ' ') {
@@ -280,7 +311,7 @@ export function TokenGrid({ narrow, variant, rows, graph, group, selected, activ
                           selectRow(path, true);
                           return;
                         }
-                        if ((event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) && openRowMenu(event.currentTarget)) {
+                        if ((event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) && openRowMenu(event.currentTarget, path)) {
                           event.preventDefault();
                           event.stopPropagation();
                         }
@@ -294,17 +325,18 @@ export function TokenGrid({ narrow, variant, rows, graph, group, selected, activ
                     onClick={() => edit(path, 'value', true)} className="cell-action end-0.5 top-1/2 -translate-y-1/2">
                     <Link2 aria-hidden="true" />
                   </IconButton>}
-                  {showActions && <CommandMenu label={'Token actions for ' + path} heading={path}
-                    icon={<Ellipsis aria-hidden="true" />} triggerClassName="cell-action token-row-actions end-0.5 top-1/2 -translate-y-1/2"
-                    sections={[[{ label: 'Edit token', icon: <SquarePen aria-hidden="true" />, run: () => inspect(path) },
-                      { label: 'References', icon: <Link2 aria-hidden="true" />, run: () => inspect(path) },
-                      { label: 'Edit token metadata', icon: <Settings2 aria-hidden="true" />, run: () => metadata(path) },
-                      { label: 'Move token', icon: <ArrowRightLeft aria-hidden="true" />, disabled: !!entry.inheritedFrom, run: () => move(path) },
-                      { label: 'Copy token', icon: <Copy aria-hidden="true" />, run: () => copy(path) },
-                      { label: 'Duplicate token', icon: <Copy aria-hidden="true" />, run: () => duplicate(path) },
-                      entry.overrides && !entry.inheritedFrom
-                        ? { label: 'Use inherited value', icon: <Undo2 aria-hidden="true" />, run: () => restoreInherited(path) }
-                        : { label: 'Delete token', icon: <Trash2 aria-hidden="true" />, disabled: !!entry.inheritedFrom, run: () => remove(path), destructive: true }]]} />}
+                  {showActions && <IconButton size="xsmall" label={'Token actions for ' + path}
+                    aria-haspopup="menu" aria-expanded="false"
+                    className="cell-action token-row-actions end-0.5 top-1/2 -translate-y-1/2"
+                    onKeyDown={event => {
+                      if (event.key !== 'Enter' && event.key !== ' ' && event.key !== 'ArrowDown') return;
+                      event.preventDefault(); event.stopPropagation();
+                      openRowMenu(event.currentTarget, path);
+                    }}
+                    onPointerDown={event => event.stopPropagation()} onClick={event => {
+                      event.stopPropagation();
+                      openRowMenu(event.currentTarget, path);
+                    }}><Ellipsis aria-hidden="true" /></IconButton>}
                 </div>
               </Cell>;
             })}
@@ -314,6 +346,7 @@ export function TokenGrid({ narrow, variant, rows, graph, group, selected, activ
       </Table>
     </ResizableTableContainer>
     </div>
+    <RowCommandMenu ref={rowMenu} />
     {linking && <TokenReferenceDialog draft={linking} graph={graph} type={graph.tokens.get(linking.path)?.type}
       seed={linking.value.startsWith('{') && !linking.value.endsWith('}') ? linking.value.slice(1) : ''}
       choose={value => commit({ ...linking, value })} applyRawValue={commit} close={() => cancel()} error={error} />}

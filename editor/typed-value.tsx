@@ -182,6 +182,7 @@ function LiteralField(props: FieldProps & { action?: ReactNode }) {
     case 'fontWeight': return <TextField label={label} value={displayField(value)} disabled={edit.busy} trailing={action} data-primary-editor
       onChange={event => write(numericValue(event.target.value))} />;
     case 'fontName':
+    case 'string':
     case 'hex': return <TextField label={label} value={displayField(value)} disabled={edit.busy} trailing={action} data-primary-editor
       onChange={event => write(event.target.value)} />;
     case 'boolean': return <div className="flex items-center justify-between gap-2"><label className="flex min-h-8 items-center gap-2 text-sm">

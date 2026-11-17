@@ -2,7 +2,7 @@ import { createTwoFilesPatch } from 'diff';
 import { applyEdits, findNodeAtLocation, modify, parseTree } from 'jsonc-parser';
 import { compareContexts, compileResolver, equivalentResolverChoices, isResolverFile, newResolverDocument, resolveResolver, resolverInputs } from './resolver.ts';
 import { diagnosticKey } from './document-diagnostics.ts';
-import { changeDocument, inspectDocuments, nodeAt, parentPath, referenceProblems } from './document.ts';
+import { changeDocument, inspectDocuments, nodeAt, parentPath, referenceLabel, referenceProblems } from './document.ts';
 import { serializeTokenPointer, tokenPointer } from './token-path.ts';
 import { errorMessage, isJsonObject, parseJson, requireObject, requireValue } from './json.ts';
 import type { JsonObject, JsonValue } from './json.ts';
@@ -19,7 +19,10 @@ interface WorkspaceFile extends TokenFile {
   parseIssue?: { message: string; offset: number };
 }
 
-function inspectFiles(files: readonly WorkspaceFile[]): Workspace['graph'] {
+function inspectFiles(files: readonly WorkspaceFile[], authoredSource?: string): Workspace['graph'] {
+  if (authoredSource) {
+    return inspectDocuments(files.filter(file => !file.parseIssue && !isResolverFile(file)), authoredSource);
+  }
   const ready = files.filter(file => !file.parseIssue);
   const manifests = ready.filter(isResolverFile);
   const contextual = new Set<string>();
@@ -65,6 +68,12 @@ export interface Workspace {
   baseline: readonly Source[];
   files: readonly WorkspaceFile[];
   graph: ReturnType<typeof inspectDocuments>;
+  authoredSource?: string | undefined;
+}
+
+export function scopeWorkspace(workspace: Workspace, authoredSource?: string): Workspace {
+  return workspace.authoredSource === authoredSource ? workspace :
+    { ...workspace, authoredSource, graph: inspectFiles(workspace.files, authoredSource) };
 }
 
 export interface FileChange {
@@ -165,7 +174,7 @@ export function reviewEdit(workspace: Workspace, file: string, change: TokenChan
 
 export type MetadataChange = Partial<Record<'$description' | '$type' | '$extensions' | '$deprecated' | '$extends' | '$ref', JsonValue | undefined>>;
 
-export function reviewMetadata(workspace: Workspace, file: string, path: string, changes: MetadataChange): Review {
+function updateMetadataFile(workspace: Workspace, file: string, path: string, changes: MetadataChange) {
   const source = requireValue(workspace.files.find(entry => entry.path === file), 'source file');
   const token = workspace.graph.tokens.get(path);
   const group = workspace.graph.groups.get(path)?.definitions.get(file);
@@ -178,8 +187,27 @@ export function reviewMetadata(workspace: Workspace, file: string, path: string,
   for (const [key, value] of Object.entries(changes)) {
     text = applyEdits(text, modify(text, [...location, key], value, options));
   }
+  return { text, token, group };
+}
+
+export function reviewMetadata(workspace: Workspace, file: string, path: string, changes: MetadataChange): Review {
+  const { text, token, group } = updateMetadataFile(workspace, file, path, changes);
   const review = reviewSource(workspace, file, text, !!group && Object.hasOwn(changes, '$type'));
   return token ? { ...review, path } : review;
+}
+
+export function reviewMetadataChanges(workspace: Workspace, path: string, changes: ReadonlyMap<string, MetadataChange>): Review {
+  if (changes.size === 1) {
+    const entry = requireValue(changes.entries().next().value, 'metadata changes');
+    return reviewMetadata(workspace, entry[0], path, entry[1]);
+  }
+  const files = workspace.files.map(file => {
+    const patch = changes.get(file.path);
+    if (!patch) return file;
+    const { text } = updateMetadataFile(workspace, file.path, path, patch);
+    return { ...file, text, tree: parseTokenFile(text, file.path) };
+  });
+  return reviewAffectedResolvers(workspace, reviewFiles(workspace, files, new Set(), path, { rejectNewInvalid: true, previewValidation: true }));
 }
 
 function rebaseReferences(value: JsonValue, from: string, to: string): JsonValue {
@@ -388,7 +416,7 @@ export function reviewResolverValue(workspace: Workspace, file: string, parts: r
 }
 
 export type BulkEdit =
-  | { kind: 'value'; value: JsonValue; pointer?: string; referenceFile?: string }
+  | { kind: 'value'; value: JsonValue; pointer?: string; referenceFile?: string; replaceLinks?: boolean }
   | { kind: 'description'; value: string }
   | { kind: 'type'; value: string; replacement?: JsonValue; referenceFile?: string };
 
@@ -399,16 +427,25 @@ export function needsBulkReplacement(graph: Workspace['graph'], path: string, ty
     validateTokenValue(type, token.value, true) || validateTokenValue(type, resolved));
 }
 
-function replaceValueField(value: JsonValue, parts: readonly string[], replacement: JsonValue): { previous: JsonValue; value: JsonValue } {
+export function optionalValueFields(type: string | undefined): readonly string[] {
+  return type === 'color' ? ['alpha', 'hex'] : type === 'shadow' || type === 'shadowLayer' ? ['inset'] : [];
+}
+
+function replaceValueField(value: JsonValue, parts: readonly string[], replacement: JsonValue, type: string | undefined): { previous: JsonValue | undefined; value: JsonValue } {
   const [part, ...rest] = parts;
   if (part === undefined) return { previous: value, value: replacement };
+  const childType = tokenFieldType(type, [part]);
   if (Array.isArray(value) && /^(0|[1-9][0-9]*)$/u.test(part) && Number(part) < value.length) {
     const index = Number(part);
-    const next = replaceValueField(requireValue(value[index], part), rest, replacement);
+    const next = replaceValueField(requireValue(value[index], part), rest, replacement, childType);
     return { previous: next.previous, value: value.with(index, next.value) };
   }
-  if (isJsonObject(value) && !Object.hasOwn(value, '$ref') && Object.hasOwn(value, part)) {
-    const next = replaceValueField(requireValue(value[part], part), rest, replacement);
+  if (isJsonObject(value) && !Object.hasOwn(value, '$ref')) {
+    if (!Object.hasOwn(value, part) && !rest.length && optionalValueFields(type).includes(part)) {
+      return { previous: undefined, value: { ...value, [part]: replacement } };
+    }
+    if (!Object.hasOwn(value, part)) throw new Error('The field is missing.');
+    const next = replaceValueField(requireValue(value[part], part), rest, replacement, childType);
     return { previous: next.previous, value: { ...value, [part]: next.value } };
   }
   throw new Error('The field is missing or is inside a reference.');
@@ -447,14 +484,16 @@ export function reviewBulkEdit(workspace: Workspace, selection: readonly string[
           node['$value'] = after;
         }
       } else if (parts.length) {
-        if (!tokenFieldType(token.type, parts) || token.authoredNode['$value'] === undefined) {
+        const linked = referenceLabel(token.value) || token.authoredNode['$value'] === undefined;
+        const literal = edit.replaceLinks && linked ? workspace.graph.resolved.get(path) : token.authoredNode['$value'];
+        if (!tokenFieldType(token.type, parts) || literal === undefined) {
           throw new Error('The field is unavailable for this authored value.');
         }
-        const literal = token.authoredNode['$value'];
-        const usable = token.inheritedFrom ? rebaseReferences(literal, token.inheritedFrom.file, token.file) : literal;
+        const usable = token.inheritedFrom && !(edit.replaceLinks && linked) ?
+          rebaseReferences(literal, token.inheritedFrom.file, token.file) : literal;
         after = edit.referenceFile ? rebaseReferences(edit.value, edit.referenceFile, token.file) : edit.value;
-        const updated = replaceValueField(usable, parts, after);
-        before = replaceValueField(literal, parts, after).previous;
+        const updated = replaceValueField(usable, parts, after, token.type);
+        before = linked ? token.value : replaceValueField(literal, parts, after, token.type).previous;
         node = { $value: updated.value };
       } else {
         before = token.value;
@@ -505,10 +544,11 @@ export function reviewBulkEdit(workspace: Workspace, selection: readonly string[
   if (pointer) {
     const field = '$value' + pointer;
     for (const { path } of records) {
+      const previous = new Set([...workspace.graph.validation.get(path) ?? [], ...workspace.graph.referenceIssues.get(path)?.values() ?? []]);
       const problems = [...review.next.graph.validation.get(path) ?? [], ...review.next.graph.referenceIssues.get(path)?.values() ?? []];
       for (const problem of problems) {
         const location = problem.split(' · ', 1)[0];
-        if (location === field || location?.startsWith(field + '/')) errors.push(path + ' · ' + problem);
+        if (!previous.has(problem) || location === field || location?.startsWith(field + '/')) errors.push(path + ' · ' + problem);
       }
     }
   }
@@ -740,8 +780,13 @@ export function reviewRemoveOverride(workspace: Workspace, path: string): Review
 
 export function reviewDelete(workspace: Workspace, paths: readonly string[]): Review {
   const { graph } = workspace;
-  const unique = [...new Set(paths)].toSorted();
-  const roots = unique.filter((path) => !unique.some((other) => other !== path && path.startsWith(other + '.')));
+  const selection = new Set(paths);
+  const roots = [...selection].toSorted().filter(path => {
+    for (let group = parentPath(path); group; group = parentPath(group)) {
+      if (selection.has(group)) return false;
+    }
+    return true;
+  });
   const deletions = new Map<string, string[]>();
   for (const path of roots) {
     const token = graph.tokens.get(path);
@@ -850,7 +895,8 @@ function reviewFiles(workspace: Workspace, files: readonly WorkspaceFile[], edit
     rejectNewInvalid?: boolean; relocations?: Relocations; knownWorkspace?: Workspace; previewValidation?: boolean;
     sourceMove?: { from: string; to: string }; settled?: boolean;
   } = {}): Review {
-  const updated = inspectFiles(files);
+  const authoredSource = sourceMove && sourceMove.from === workspace.authoredSource ? sourceMove.to : workspace.authoredSource;
+  const updated = inspectFiles(files, authoredSource);
   const moves = settled ? settledRelocations(workspace, files, updated) : relocations;
   const validationErrors: string[] = [];
   function reportValidation(message: string) {
@@ -904,7 +950,7 @@ function reviewFiles(workspace: Workspace, files: readonly WorkspaceFile[], edit
       reportValidation(issue.file + ' · ' + issue.path + ' · ' + issue.field + ' · ' + issue.message);
     }
   }
-  const review = describeReview(workspace, { ...workspace, files, graph: updated }, path);
+  const review = describeReview(workspace, { ...workspace, files, authoredSource, graph: updated }, path);
   if (validationErrors.length) review.validationErrors = validationErrors;
   return review;
 }

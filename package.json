@@ -18,7 +18,7 @@
   },
   "dependencies": {
     "@tanstack/react-query": "^5.107.1",
-    "@token-catalog/forge-react": "file:vendor/token-catalog-forge-react-0.3.6.tgz",
+    "@token-catalog/forge-react": "file:vendor/token-catalog-forge-react-0.3.8.tgz",
     "clsx": "^2.1.1",
     "colorjs.io": "0.7.1",
     "diff": "^9.0.0",

@@ -2,7 +2,7 @@ import type { ReactElement, Ref } from 'react';
 import { requireValue } from '../lib/json.ts';
 import type { DocumentGraph } from '../lib/document.ts';
 import { memo, useId, useImperativeHandle, useState } from 'react';
-import { ChevronDown, Folder, FolderOpen, Layers } from 'lucide-react';
+import { ChevronDown, ChevronRight, Folder, FolderOpen, Layers } from 'lucide-react';
 import { IconButton, List, ListItemButton } from '@token-catalog/forge-react';
 import { leafName, parentPath } from '../lib/document.ts';
 
@@ -12,13 +12,19 @@ function revealFolder(button: HTMLButtonElement | null) {
 
 export interface FolderTreeHandle { reveal: (path: string) => void }
 
-export const FolderTree = memo(function FolderTree({ graph, current, select, allowed, rootLabel = 'All tokens', label = 'Token groups', independentExpansion = false, ref }: {
+export const FolderTree = memo(function FolderTree({ graph, current, select, allowed, rootLabel = 'All tokens', label = 'Token groups', independentExpansion = false, initiallyExpanded, ref }: {
   graph: DocumentGraph; current: string; select: (path: string) => void;
-  allowed?: ReadonlySet<string>; rootLabel?: string; label?: string; independentExpansion?: boolean; ref?: Ref<FolderTreeHandle>;
+  allowed?: ReadonlySet<string>; rootLabel?: string; label?: string; independentExpansion?: boolean; initiallyExpanded?: string | undefined; ref?: Ref<FolderTreeHandle>;
 }) {
-  const [open, setOpen] = useState(() => new Map<string, { expanded: boolean; selection?: string }>());
+  const pageSize = 80;
+  const [limits, setLimits] = useState(() => new Map<string, number>());
+  const [revealed, setRevealed] = useState('');
+  const [open, setOpen] = useState(() => new Map<string, { expanded: boolean; selection?: string }>(
+    initiallyExpanded ? [[initiallyExpanded, { expanded: true }]] : [],
+  ));
   useImperativeHandle(ref, () => ({
     reveal(path) {
+      setRevealed(path);
       setOpen(previous => {
         const next = new Map(previous);
         for (let ancestor = parentPath(path); ancestor; ancestor = parentPath(ancestor)) {
@@ -30,6 +36,26 @@ export const FolderTree = memo(function FolderTree({ graph, current, select, all
   }), []);
   const treeId = useId();
   const rootGroups = requireValue(graph.groups.get(''), 'root group').children;
+
+  function items(parent: string, children: readonly string[]) {
+    const visible = allowed ? children.filter(path => allowed.has(path)) : children;
+    const limit = limits.get(parent) ?? pageSize;
+    const relevant = visible.find(path => current === path || current.startsWith(path + '.') || revealed === path || revealed.startsWith(path + '.'));
+    const entries = visible.slice(0, limit);
+    if (relevant && !entries.includes(relevant)) entries.push(relevant);
+    const remaining = visible.length - entries.length;
+    return <>
+      {entries.map(item)}
+      {remaining > 0 && <li><ListItemButton leading={<ChevronRight />} onClick={event => {
+        const list = event.currentTarget.closest('ul');
+        setLimits(previous => new Map(previous).set(parent, limit + pageSize));
+        requestAnimationFrame(() => {
+          const siblings = list?.querySelectorAll<HTMLButtonElement>(':scope > li > button[data-group-path], :scope > li > div > button[data-group-path]');
+          siblings?.[limit]?.focus();
+        });
+      }}>Show {Math.min(pageSize, remaining)} more groups</ListItemButton></li>}
+    </>;
+  }
 
   function item(path: string): ReactElement {
     const { children, definitions, files } = requireValue(graph.groups.get(path), 'group ' + path);
@@ -58,7 +84,7 @@ export const FolderTree = memo(function FolderTree({ graph, current, select, all
         onClick={() => select(path)}>{name}{inherited && <span aria-hidden="true" className="ms-2 text-xs text-muted-foreground">Inherited</span>}</ListItemButton>
       {visible.length > 0 && <List id={childrenId} hidden={!expanded} className="md-list-expand-content"
         data-variant="segmented" data-actions-layout="inline">
-        {expanded && visible.map(item)}
+        {expanded && items(path, visible)}
       </List>}
     </li>;
 
@@ -69,7 +95,7 @@ export const FolderTree = memo(function FolderTree({ graph, current, select, all
       data-actions-layout="inline" data-expand-inset="inset" data-expand-surface="none" data-surface="transparent">
       <li><ListItemButton leading={<Layers />} aria-current={!current ? 'page' : undefined}
         onClick={() => select('')}>{rootLabel}</ListItemButton></li>
-      {rootGroups.filter((path) => !allowed || allowed.has(path)).map(item)}
+      {items('', rootGroups)}
     </List>
   </nav>;
 });

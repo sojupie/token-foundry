@@ -43,9 +43,15 @@ and filters unresolved tokens. Selecting tokens enables Move and Delete there. T
 group. The final review shows the affected files.
 
 Open and export commands live under **File**. Use the sidebar icon to show or hide groups. The hosted editor
-connects to GitHub under **Integrations**. To load the full MD3 benchmark in
-the dev editor, set `MD3_TOKEN_BENCHMARK` to its local file path before
-starting Vite and choose **File → Open Material 3 sample**.
+connects to GitHub under **Integrations**. **File → Open Material 3 sample**
+opens the full Token Catalog tree and six Light/Dark and contrast combinations.
+Use **Preview variant** to switch appearances, or **Workspace → Manage variants**
+to inspect the shared sets and appearance sources.
+
+To refresh the bundled sample from a Catalog publication, pass its DTCG
+export directory (the directory containing `index.json`) to
+`node scripts/build-material-sample.ts /path/to/published/assets/dtcg`.
+The script checks that each appearance reconstructs its original export.
 
 **Unresolved** filters the current group to tokens whose references could not
 be resolved. Select a cell and choose **References** to see the diagnostic.
@@ -53,7 +59,7 @@ be resolved. Select a cell and choose **References** to see the diagnostic.
 Run the browser integration tests with `npx playwright install chromium firefox`
 and `npm run test:browser`. Set `MD3_TOKEN_BENCHMARK` to the path of the
 6,818-token Material 3 export to exercise the same unresolved-reference flow
-at that size.
+at that size. In a dev build, this also enables **File → Open Material 3 benchmark**.
 
 ## Work on the UI
 

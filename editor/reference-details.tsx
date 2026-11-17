@@ -3,6 +3,7 @@ import { List, ListItemButton } from '@token-catalog/forge-react';
 import { referenceConsumers, referenceProblems } from '../lib/document.ts';
 import type { DocumentGraph } from '../lib/document.ts';
 import { TokenValue } from './token-value.tsx';
+import { tokenDisplayName, valueFieldLabel } from './lib/value-shape.ts';
 
 export function ReferenceDetails({ path, graph, jump, disabled }: {
   path: string; graph: DocumentGraph; jump: (path: string) => void; disabled: boolean;
@@ -10,6 +11,8 @@ export function ReferenceDetails({ path, graph, jump, disabled }: {
   const referenceIssue = graph.issues.get(path);
   const problems = referenceIssue ? referenceProblems(graph, path, referenceIssue) : graph.validation.get(path);
   const links = graph.links.get(path);
+  const fieldLabel = (token: string, field: readonly string[]) =>
+    valueFieldLabel(field, graph.resolved.get(token) ?? graph.tokens.get(token)?.value, graph.tokens.get(token)?.type);
   const { direct, downstream } = referenceConsumers(graph, path);
   return <section aria-label="Token references" className="grid gap-4">
     {problems?.length ? <ul className="grid gap-1 text-sm text-destructive">
@@ -23,10 +26,10 @@ export function ReferenceDetails({ path, graph, jump, disabled }: {
             <ListItemButton leading={<Link2 />} disabled={disabled}
               trailing={<span className="md-list-trailing-icon"><ArrowRight aria-hidden="true" /></span>}
               onClick={() => { if (link.target) jump(link.target); }}>
-              <span className="wrap-anywhere">{link.target}</span>
+              <span className="wrap-anywhere">{tokenDisplayName(link.target)}</span>
             </ListItemButton> : null}
           <dl className="grid gap-1 px-2 text-xs">
-            <div className="wrap-anywhere"><dt>Source field</dt><dd><code>{link.field.join(' / ')}</code></dd></div>
+            <div className="wrap-anywhere"><dt>Source field</dt><dd><code>{fieldLabel(path, link.field)}</code></dd></div>
             <div className="wrap-anywhere"><dt>Authored link</dt><dd><code>{link.text}</code></dd></div>
             {link.parts.length > 0 && <div className="wrap-anywhere"><dt>Target location</dt>
               <dd><code>{link.file ? link.file + ' · ' : ''}{link.parts.join(' / ')}</code></dd>
@@ -42,12 +45,12 @@ export function ReferenceDetails({ path, graph, jump, disabled }: {
         {paths.length ? <List aria-label={label} data-variant="segmented" data-surface="transparent">
           {paths.map(item => {
             const fields = label === 'Used by' ? [...(graph.links.get(item)?.values() ?? [])]
-              .filter(link => link.target === path).map(link => link.field.join(' / ')) : [];
+              .filter(link => link.target === path).map(link => fieldLabel(item, link.field)) : [];
             return <li key={item}><ListItemButton leading={<Link2 />} disabled={disabled}
               trailing={<span className="md-list-trailing-icon"><ArrowRight aria-hidden="true" /></span>}
               onClick={() => jump(item)}>
               <span className="grid min-w-0 gap-1">
-                <span className="wrap-anywhere">{item}</span>
+                <span className="wrap-anywhere">{tokenDisplayName(item)}</span>
                 {!!fields.length && <span className="wrap-anywhere text-xs text-muted-foreground">{fields.join(', ')}</span>}
               </span>
             </ListItemButton></li>;

@@ -14,6 +14,7 @@ import { dtcgTypes } from '../lib/token-types.ts';
 import { tokenFieldType, validateTokenValue } from '../lib/validate-token.ts';
 import { FolderTree } from './folder-tree.tsx';
 import { TokenValue } from './token-value.tsx';
+import { tokenDisplayName, valueFieldLabel } from './lib/value-shape.ts';
 
 const limit = 50;
 
@@ -57,7 +58,7 @@ function wholeTypeMatches(expected: string | undefined, type: string | undefined
     expected === 'numberOrNone' && type === 'number' && typeof value === 'number';
 }
 
-function findFields(value: JsonValue | undefined, type: string | undefined, expected?: string): FieldChoice[] {
+function findFields(value: JsonValue | undefined, type: string | undefined): FieldChoice[] {
   const matches: FieldChoice[] = [];
   function visit(node: JsonValue | undefined, parentType: string | undefined, prefix: readonly string[]) {
     if (!isJsonObject(node) && !Array.isArray(node)) return;
@@ -65,12 +66,32 @@ function findFields(value: JsonValue | undefined, type: string | undefined, expe
       const fieldType = tokenFieldType(parentType, [key]);
       if (item === undefined || fieldType === undefined) continue;
       const field = [...prefix, key];
-      if (validField(fieldType, item, expected)) matches.push({ field, value: item, type: fieldType });
+      matches.push({ field, value: item, type: fieldType });
       visit(item, fieldType, field);
     }
   }
   visit(value, type, []);
   return matches;
+}
+
+const fieldIndexes = new WeakMap<DocumentGraph, Map<string, FieldChoice[]>>();
+
+function indexedFields(graph: DocumentGraph, path: string, type: string | undefined, expected: string | undefined) {
+  let index = fieldIndexes.get(graph);
+  if (!index) {
+    index = new Map();
+    fieldIndexes.set(graph, index);
+  }
+  let fields = index.get(path);
+  if (!fields) {
+    fields = findFields(graph.resolved.get(path), type);
+    for (const { field, value } of graph.partialFields.get(path) ?? []) {
+      const fieldType = tokenFieldType(type, field);
+      if (fieldType) fields.push({ field, value, type: fieldType });
+    }
+    index.set(path, fields);
+  }
+  return fields.filter(item => validField(item.type, item.value, expected));
 }
 
 function equalChoice(choice: ReferenceChoice | undefined, path: string, field: readonly string[]): boolean {
@@ -82,12 +103,13 @@ interface ReferenceOptions {
   seed: string; flexible: boolean; sourceField?: readonly string[]; sourcePaths?: readonly string[] | undefined;
 }
 
-export function ReferenceDialog({ choose, close, error, renderRawForm, ...options }: ReferenceOptions & {
+export function ReferenceDialog({ choose, close, error, renderRawForm, initialRaw = false, ...options }: ReferenceOptions & {
   choose: (choice: ReferenceChoice) => boolean | void; close: () => void; error?: string;
+  initialRaw?: boolean;
   renderRawForm?: (id: string, close: () => void) => ReactNode;
 }) {
   const [open, setOpen] = useState(true);
-  const [raw, setRaw] = useState(false);
+  const [raw, setRaw] = useState(initialRaw);
   const rawFormId = useId();
   const [target, setTarget] = useState(options.target);
   function apply() {
@@ -136,7 +158,8 @@ function ReferencePicker({ graph, source, sourceField, sourcePaths, type, target
   const search = useRef<HTMLInputElement>(null);
   const { candidates, allowed, tokenFields, blockedTokens } = useMemo(() => {
     const sources = sourcePaths ?? [source];
-    const excluded = new Set(sources);
+    const sourceSet = new Set(sources);
+    const excluded = new Set(sourceSet);
     for (const path of excluded) {
       for (const consumer of graph.usedBy.get(path) ?? []) excluded.add(consumer);
     }
@@ -145,13 +168,9 @@ function ReferencePicker({ graph, source, sourceField, sourcePaths, type, target
     const groups = new Set(['']);
     const fields = new Map<string, FieldChoice[]>();
     for (const [path, token] of graph.rows) {
-      if (sources.includes(path) && !sourceField?.length) continue;
+      if (sourceSet.has(path) && !sourceField?.length) continue;
       const resolved = graph.resolved.get(path);
-      const matches = findFields(resolved, token.type, filterType);
-      for (const { field, value } of graph.partialFields.get(path) ?? []) {
-        const fieldType = tokenFieldType(token.type, field);
-        if (fieldType && validField(fieldType, value, filterType)) matches.push({ field, value, type: fieldType });
-      }
+      const matches = indexedFields(graph, path, token.type, filterType);
       const eligibleFields = excluded.has(path) ? matches.filter(match => !sources.some(from => fieldDependsOn(graph, path, match.field, from, sourceField))) : matches;
       if (eligibleFields.length) fields.set(path, eligibleFields);
       const blocksToken = excluded.has(path) && (!sourceField?.length || sources.some(from => fieldDependsOn(graph, path, [], from, sourceField)));
@@ -166,7 +185,7 @@ function ReferencePicker({ graph, source, sourceField, sourcePaths, type, target
   const current = allowed.has(group) ? group : '';
   const terms = useMemo(() => query.trim().toLowerCase().split(/\s+/u).filter(Boolean), [query]);
   const matches = useMemo(() => terms.length
-    ? [...candidates].filter((path) => terms.every((term) => path.toLowerCase().includes(term)))
+    ? [...candidates].filter((path) => terms.every(term => (path + ' ' + tokenDisplayName(path)).toLowerCase().includes(term)))
     : [...(graph.groups.get(current)?.members ?? [])].filter((path) => candidates.has(path)),
   [terms, candidates, graph, current]);
   const first = page * limit;
@@ -249,7 +268,7 @@ function ReferencePicker({ graph, source, sourceField, sourcePaths, type, target
               <ListItemButton ref={index === 0 ? focusFirstField : undefined} aria-pressed={equalChoice(target, fieldToken, field)}
                 trailing={<TokenValue value={value} swatch={fieldType === 'color'} wrap />}
                 onClick={() => choose({ path: fieldToken, field })} onKeyDown={navigateResults}>
-                <span className="font-mono text-xs wrap-anywhere">{field.map(part => part.replace(/([a-z])([A-Z])/gu, '$1 $2').replace(/^./u, initial => initial.toUpperCase())).join(' / ')}</span>
+                <span className="font-mono text-xs wrap-anywhere">{valueFieldLabel(field, graph.resolved.get(fieldToken) ?? graph.tokens.get(fieldToken)?.value, graph.tokens.get(fieldToken)?.type)}</span>
               </ListItemButton>
             </li>)}
             {!fields && !terms.length && children.map((path) => <li key={path}>
@@ -263,12 +282,12 @@ function ReferencePicker({ graph, source, sourceField, sourcePaths, type, target
               const fieldControl = whole && tokenFields.has(path) ? <IconButton width="narrow" size="xsmall" label={label}
                 onClick={() => showFields(path)} onKeyDown={navigateResults}><ChevronRight aria-hidden="true" /></IconButton> : undefined;
               return <li key={path}>
-              <ListItemButton title={path} aria-label={whole ? path : label}
+              <ListItemButton title={path} aria-label={whole ? tokenDisplayName(path) : label}
                 aria-pressed={whole ? equalChoice(target, path, []) : undefined} actions={fieldControl}
                 trailing={<TokenValue value={graph.resolved.get(path)} swatch={type === 'color'} wrap />}
                 className="reference-value-choice"
                 onClick={() => whole ? choose({ path, field: [] }) : showFields(path)} onKeyDown={navigateResults}>
-                <span className="font-mono text-xs wrap-anywhere">{terms.length ? path : leafName(path)}</span>
+                <span className="font-mono text-xs wrap-anywhere">{tokenDisplayName(terms.length ? path : leafName(path))}</span>
               </ListItemButton>
               </li>;
             })}
@@ -279,7 +298,7 @@ function ReferencePicker({ graph, source, sourceField, sourcePaths, type, target
       </div>
     </div>
     <div className="flex items-center justify-between gap-2">
-      <p className="text-xs text-muted-foreground" aria-live="polite">{target ? 'Selected · ' + [target.path, ...target.field].join(' / ') : summary}</p>
+      <p className="text-xs text-muted-foreground" aria-live="polite">{target ? 'Selected · ' + [tokenDisplayName(target.path), target.field.length ? valueFieldLabel(target.field, graph.resolved.get(target.path) ?? graph.tokens.get(target.path)?.value, graph.tokens.get(target.path)?.type) : ''].filter(Boolean).join(' / ') : summary}</p>
       {!fields && count > limit && <div className="flex items-center">
         <IconButton size="xsmall" label="Previous references" disabled={page === 0} onClick={() => showPage(page - 1)}>
           <ChevronLeft aria-hidden="true" />
