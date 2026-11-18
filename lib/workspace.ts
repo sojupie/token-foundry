@@ -1,13 +1,14 @@
 import { createTwoFilesPatch } from 'diff';
 import { applyEdits, findNodeAtLocation, modify, parseTree } from 'jsonc-parser';
-import { compareContexts, compileResolver, equivalentResolverChoices, isResolverFile, newResolverDocument, resolveResolver, resolverInputs } from './resolver.ts';
+import { authoredResolverValue, compareContexts, compileResolver, emptyLayerSite, equivalentResolverChoices, isResolverFile, newResolverDocument, resolveResolver, resolverInputs, resolverLayer, resolverValueAt, winningOrigins } from './resolver.ts';
+import type { ResolverLayer, ResolverResolution } from './resolver.ts';
 import { diagnosticKey } from './document-diagnostics.ts';
-import { changeDocument, inspectDocuments, nodeAt, parentPath, referenceLabel, referenceProblems } from './document.ts';
+import { changeDocument, inspectDocuments, leafName, nodeAt, parentPath, referenceLabel, referenceProblems } from './document.ts';
 import { serializeTokenPointer, tokenPointer } from './token-path.ts';
 import { errorMessage, isJsonObject, parseJson, requireObject, requireValue } from './json.ts';
 import type { JsonObject, JsonValue } from './json.ts';
 import { parseTokenFile, TokenFileError } from './parse-token-file.ts';
-import { copyEntries, formatOptions, moveFiles, pasteFiles, rewriteSetPointers, rewriteSourcePointers } from './structure.ts';
+import { copyEntries, formatOptions, moveFiles, pasteFiles, rewriteDefinitionPointers, rewriteSetPointers, rewriteSourcePointers } from './structure.ts';
 import type { ClipboardEntry, Move } from './structure.ts';
 import { dtcgTypes } from './token-types.ts';
 import { tokenFieldType, validateTokenValue } from './validate-token.ts';
@@ -19,10 +20,7 @@ interface WorkspaceFile extends TokenFile {
   parseIssue?: { message: string; offset: number };
 }
 
-function inspectFiles(files: readonly WorkspaceFile[], authoredSource?: string): Workspace['graph'] {
-  if (authoredSource) {
-    return inspectDocuments(files.filter(file => !file.parseIssue && !isResolverFile(file)), authoredSource);
-  }
+function inspectFiles(files: readonly WorkspaceFile[]): Workspace['graph'] {
   const ready = files.filter(file => !file.parseIssue);
   const manifests = ready.filter(isResolverFile);
   const contextual = new Set<string>();
@@ -68,12 +66,6 @@ export interface Workspace {
   baseline: readonly Source[];
   files: readonly WorkspaceFile[];
   graph: ReturnType<typeof inspectDocuments>;
-  authoredSource?: string | undefined;
-}
-
-export function scopeWorkspace(workspace: Workspace, authoredSource?: string): Workspace {
-  return workspace.authoredSource === authoredSource ? workspace :
-    { ...workspace, authoredSource, graph: inspectFiles(workspace.files, authoredSource) };
 }
 
 export interface FileChange {
@@ -94,7 +86,8 @@ export interface Review {
   uninspectedSources: readonly string[];
   inheritanceImpact: { path: string; change: 'Added' | 'Removed' | 'Source changed' }[];
   validationErrors?: readonly string[];
-  contextImpact?: readonly { label: string; changes: ReturnType<typeof compareContexts>; errors: string[]; matching?: string[] }[];
+  contextImpact?: readonly { label: string; changes: ReturnType<typeof compareContexts>; errors: string[]; matching?: string[];
+    sources?: readonly { path: string; before: string; after: string }[] }[];
   typeImpact: { path: string; before: string | undefined; after: string | undefined }[];
   structure?: {
     title: string;
@@ -102,7 +95,23 @@ export interface Review {
     tokens?: number;
     files: number;
     referencesUpdated?: number;
+    destination?: { set: string; group: string; file: string; layer: ResolverLayer };
+    references?: readonly { file: string; before: string; after: string }[];
   };
+}
+
+const reviewChangesByDraft = new WeakMap<Review, () => readonly FileChange[]>();
+
+export function reviewFileChanges(review: Review) {
+  return reviewChangesByDraft.get(review)?.();
+}
+
+export function withReviewDiff(draft: Omit<Review, 'diff'>, changes: () => readonly FileChange[]): Review {
+  let diff: string | undefined;
+  const review = { ...draft, get diff() { return diff ??= changes().map(diffFile).join(''); } };
+  Object.defineProperty(review, 'diff', { enumerable: false });
+  reviewChangesByDraft.set(review, changes);
+  return review;
 }
 
 interface ValueChange { path: string; before: JsonValue; after: JsonValue }
@@ -193,7 +202,8 @@ function updateMetadataFile(workspace: Workspace, file: string, path: string, ch
 export function reviewMetadata(workspace: Workspace, file: string, path: string, changes: MetadataChange): Review {
   const { text, token, group } = updateMetadataFile(workspace, file, path, changes);
   const review = reviewSource(workspace, file, text, !!group && Object.hasOwn(changes, '$type'));
-  return token ? { ...review, path } : review;
+  if (token) review.path = path;
+  return review;
 }
 
 export function reviewMetadataChanges(workspace: Workspace, path: string, changes: ReadonlyMap<string, MetadataChange>): Review {
@@ -334,6 +344,14 @@ function appendResolverImpact(review: Review, previous: ResolverModel, next: Res
     const after = resolveResolver(next, Object.fromEntries(chooseResolverInputs(next, inputs)), inspectComposition);
     const changes = before.errors.length || after.errors.length ? [] : compareContexts(before, after).filter(change =>
       change.kind !== 'Invalid' || change.beforeProblem !== change.afterProblem);
+    const sourceChanges = review.structure?.destination && !before.errors.length && !after.errors.length
+      ? review.structure.paths.flatMap(({ from, to }) => {
+        if (from !== to) return [];
+        const left = winningOrigins(before, from).at(-1);
+        const right = winningOrigins(after, from).at(-1);
+        if (!left || !right || definitionSite(left.file, left.parts) === definitionSite(right.file, right.parts)) return [];
+        return [{ path: from, before: left.set ?? left.context ?? left.file, after: right.set ?? right.context ?? right.file }];
+      }) : [];
     const problems: string[] = [];
     for (const path of new Set([...after.graph.issues.keys(), ...after.graph.validation.keys()])) {
       const existing = graphProblems(before.graph, path);
@@ -347,10 +365,10 @@ function appendResolverImpact(review: Review, previous: ResolverModel, next: Res
         problems.push(issue.path + ' · ' + issue.field + ' · ' + issue.message);
       }
     }
-    if (!showUnchanged && !changes.length && !problems.length) return;
-    const impact = { label, changes, errors: after.errors };
+    if (!showUnchanged && !changes.length && !sourceChanges.length && !problems.length) return;
+    const impact = { label, changes, errors: after.errors, ...(sourceChanges.length ? { sources: sourceChanges } : {}) };
     if (!showUnchanged) {
-      const key = JSON.stringify([changes, after.errors, problems]);
+      const key = JSON.stringify([changes, after.errors, problems, sourceChanges]);
       const existing = matchingImpacts.get(key);
       if (existing) {
         (existing.matching ??= []).push(label);
@@ -394,21 +412,20 @@ export function reviewAffectedResolvers(workspace: Workspace, review: Review, sc
   return review;
 }
 
+function sourceLocation(tree: JsonValue, parts: readonly string[]): (string | number)[] {
+  const location: (string | number)[] = [];
+  let current: JsonValue | undefined = tree;
+  for (const key of parts) {
+    location.push(Array.isArray(current) ? Number(key) : key);
+    current = resolverValueAt(current, [key]);
+  }
+  return location;
+}
+
 export function reviewResolverValue(workspace: Workspace, file: string, parts: readonly string[],
   value: JsonValue, insert = false): Review {
   const source = requireValue(workspace.files.find(entry => entry.path === file), 'source file');
-  const location: (string | number)[] = [];
-  let current: JsonValue | undefined = source.tree;
-  for (const part of parts) {
-    if (Array.isArray(current)) {
-      const index = Number(part);
-      location.push(index);
-      current = current[index];
-    } else {
-      location.push(part);
-      current = isJsonObject(current) && Object.hasOwn(current, part) ? current[part] : undefined;
-    }
-  }
+  const location = sourceLocation(source.tree, parts);
   const text = applyEdits(source.text, modify(source.text, location, value, {
     formattingOptions: formatOptions(source.text), isArrayInsertion: insert,
   }));
@@ -451,7 +468,13 @@ function replaceValueField(value: JsonValue, parts: readonly string[], replaceme
   throw new Error('The field is missing or is inside a reference.');
 }
 
-export function reviewBulkEdit(workspace: Workspace, selection: readonly string[], edit: BulkEdit): Review {
+export interface ResolverBulkScope {
+  resolution: ResolverResolution;
+  review: ResolverEditScope;
+}
+
+export function reviewBulkEdit(workspace: Workspace, selection: readonly string[], edit: BulkEdit, scope?: ResolverBulkScope): Review {
+  const graph = scope?.resolution.graph ?? workspace.graph;
   const paths = [...new Set(selection)];
   const pointer = edit.kind === 'value' ? edit.pointer : undefined;
   if (pointer && (!pointer.startsWith('/') || /~(?![01])/u.test(pointer))) {
@@ -461,12 +484,17 @@ export function reviewBulkEdit(workspace: Workspace, selection: readonly string[
   const parts = pointer?.slice(1).split('/').map(part => part.replaceAll('~1', '/').replaceAll('~0', '~')) ?? [];
   const records: NonNullable<Review['bulk']>['records'][number][] = [];
   const errors: string[] = [];
-  const changes = new Map<string, TokenChange[]>();
+  const changes = new Map<string, Map<string, { change: TokenChange; location: readonly string[] }>>();
+  const sources = new Map(workspace.files.map(file => [file.path, file]));
   const label = edit.kind === 'description' ? 'Description' : edit.kind === 'type' ? 'Token type' : pointer || 'Token value';
 
   for (const path of paths) {
     try {
-      const token = requireValue(workspace.graph.tokens.get(path), 'selected token');
+      const token = requireValue(graph.tokens.get(path), 'selected token');
+      const origin = scope && winningOrigins(scope.resolution, path).at(-1);
+      if (scope && (!origin || token.inheritedFrom)) throw new Error('Open the source definition to edit this token.');
+      const file = origin?.file ?? token.file;
+      const location = origin?.parts ?? path.split('.');
       let before: JsonValue | undefined;
       let node: JsonObject;
       let after: JsonValue | undefined;
@@ -478,14 +506,14 @@ export function reviewBulkEdit(workspace: Workspace, selection: readonly string[
         before = token.type;
         after = edit.value;
         node = { $type: edit.value };
-        if (edit.replacement !== undefined && needsBulkReplacement(workspace.graph, path, edit.value)) {
+        if (edit.replacement !== undefined && needsBulkReplacement(graph, path, edit.value)) {
           before = token.value;
           after = edit.referenceFile ? rebaseReferences(edit.replacement, edit.referenceFile, token.file) : edit.replacement;
           node['$value'] = after;
         }
       } else if (parts.length) {
         const linked = referenceLabel(token.value) || token.authoredNode['$value'] === undefined;
-        const literal = edit.replaceLinks && linked ? workspace.graph.resolved.get(path) : token.authoredNode['$value'];
+        const literal = edit.replaceLinks && linked ? graph.resolved.get(path) : token.authoredNode['$value'];
         if (!tokenFieldType(token.type, parts) || literal === undefined) {
           throw new Error('The field is unavailable for this authored value.');
         }
@@ -501,9 +529,19 @@ export function reviewBulkEdit(workspace: Workspace, selection: readonly string[
         node = { $value: after };
       }
       if (valueKey(before) === valueKey(after) && (edit.kind !== 'type' || token.type === edit.value)) continue;
-      const group = changes.get(token.file) ?? [];
-      group.push({ path, create: false, node });
-      changes.set(token.file, group);
+      if (scope && origin && node['$value'] !== undefined) {
+        const original = resolverValueAt(sources.get(file)?.tree, location);
+        node['$value'] = authoredResolverValue(scope.resolution, scope.review.file, file, node['$value'],
+          token.authoredNode['$value'], isJsonObject(original) ? original['$value'] : undefined);
+      }
+      const group = changes.get(file) ?? new Map<string, { change: TokenChange; location: readonly string[] }>();
+      const key = scope ? JSON.stringify(location) : path;
+      const existing = group.get(key);
+      if (existing && valueKey(existing.change.node) !== valueKey(node)) {
+        throw new Error('These tokens share a source definition and require different edits. Edit the definition directly.');
+      }
+      if (!existing) group.set(key, { change: { path, create: false, node }, location });
+      changes.set(file, group);
       records.push({ path, before, after });
     } catch (failure) {
       errors.push(path + ' · ' + errorMessage(failure));
@@ -516,11 +554,16 @@ export function reviewBulkEdit(workspace: Workspace, selection: readonly string[
     if (!updates) return file;
     const ast = requireValue(parseTree(file.text), 'source document');
     const formattingOptions = formatOptions(file.text);
-    const edits = updates.flatMap(change => {
-      if (workspace.graph.tokens.get(change.path)?.inheritedFrom) return [];
-      const location = requireValue(findNodeAtLocation(ast, change.path.split('.')), change.path);
-      const original = file.text.slice(location.offset, location.offset + location.length);
-      const indent = lineIndent(file.text, location.offset);
+    const edits = [...updates.values()].flatMap(({ change, location }) => {
+      if (graph.tokens.get(change.path)?.inheritedFrom) return [];
+      const sourcePath: (string | number)[] = [];
+      for (const key of location) {
+        const parent = findNodeAtLocation(ast, sourcePath);
+        sourcePath.push(parent?.type === 'array' ? Number(key) : key);
+      }
+      const node = requireValue(findNodeAtLocation(ast, sourcePath), change.path);
+      const original = file.text.slice(node.offset, node.offset + node.length);
+      const indent = lineIndent(file.text, node.offset);
       const sourceLines = original.split(/(?<=\n)/u);
       let text = sourceLines.map((line, index) => index && line.startsWith(indent) ? line.slice(indent.length) : line).join('');
       for (const [key, value] of Object.entries(change.node)) {
@@ -529,19 +572,20 @@ export function reviewBulkEdit(workspace: Workspace, selection: readonly string[
       if (Object.hasOwn(change.node, '$value')) {
         text = applyEdits(text, modify(text, ['$ref'], undefined, { formattingOptions }));
       }
-      return [{ offset: location.offset, length: location.length, content: text.replaceAll('\n', '\n' + indent) }];
+      return [{ offset: node.offset, length: node.length, content: text.replaceAll('\n', '\n' + indent) }];
     });
     const text = applyEdits(file.text, edits);
     let source = { ...file, text, tree: parseTokenFile(text, file.path) };
-    for (const change of updates) {
-      const token = workspace.graph.tokens.get(change.path);
+    for (const { change } of updates.values()) {
+      const token = graph.tokens.get(change.path);
       if (token?.inheritedFrom) source = overrideToken(source, token, change);
     }
     return source;
   });
   const strictValues = edit.kind === 'description' || pointer ? [] : records.map(record => record.path);
-  const review = reviewFiles(workspace, files, new Set(strictValues), '', { previewValidation: true });
-  if (pointer) {
+  const review = reviewFiles(workspace, files, new Set(scope ? [] : strictValues), '', { previewValidation: true });
+  if (scope) reviewAffectedResolvers(workspace, review, scope.review);
+  if (pointer && !scope) {
     const field = '$value' + pointer;
     for (const { path } of records) {
       const previous = new Set([...workspace.graph.validation.get(path) ?? [], ...workspace.graph.referenceIssues.get(path)?.values() ?? []]);
@@ -576,7 +620,8 @@ export function reviewProposal(workspace: Workspace, text: string): Review {
     sources.set(token.file, token.inheritedFrom ? overrideToken(source, token, change) : editFile(source, change));
   }
   const review = reviewFiles(workspace, [...sources.values()], new Set(changes.map(({ path }) => path)), '');
-  return { ...review, importedValues: changes };
+  review.importedValues = changes;
+  return review;
 }
 
 export function reviewCreateSource(workspace: Workspace, path: string, text: string): Review {
@@ -608,11 +653,12 @@ export function reviewSourcePath(workspace: Workspace, from: string, to?: string
     reviewFiles(workspace, updated, new Set(), '', { previewValidation: true, ...(to ? { sourceMove: { from, to } } : {}) }),
     undefined, to ? { from, to } : undefined);
   const action = !to ? 'Remove' : from.slice(0, from.lastIndexOf('/') + 1) === to.slice(0, to.lastIndexOf('/') + 1) ? 'Rename' : 'Move';
-  return { ...review, structure: {
+  review.structure = {
     title: action + ' source file', paths: [to ? { from, to } : { from }],
     files: updated.filter(file => !workspace.files.includes(file)).length + (to ? 0 : 1),
     referencesUpdated,
-  } };
+  };
+  return review;
 }
 
 function lineIndent(text: string, offset: number) {
@@ -670,12 +716,13 @@ export function reviewSetPath(workspace: Workspace, resolver: string, from: stri
     from: resolver + ' · ' + from,
     to: targetFile + ' · ' + to,
   }] : [to ? { from, to } : { from }];
-  return { ...review, structure: {
+  review.structure = {
     title: move ? 'Review set move' : to ? 'Review set rename' : 'Review set removal',
     paths,
     files: workspaceChanges({ baseline: workspace.files, files }).length,
     referencesUpdated,
-  } };
+  };
+  return review;
 }
 
 function reviewSavedFiles(original: Workspace, files: readonly WorkspaceFile[]) {
@@ -746,13 +793,15 @@ export function reviewPaste(workspace: Workspace, entries: readonly ClipboardEnt
   const review = reviewFiles(workspace, files, new Set(), single?.to ?? '', { rejectNewInvalid: true, previewValidation: true });
   const first = requireValue(moves[0], 'paste destination').to;
   const group = single && review.next.graph.groups.has(single.to) ? single.to : parentPath(first);
-  return { ...review, pasteGroup: group, structure: {
+  review.pasteGroup = group;
+  review.structure = {
     title: 'Review paste',
     paths: moves.map(({ path, to }) => ({ from: path, to })),
     tokens: review.next.graph.tokens.size - workspace.graph.tokens.size,
     files: files.filter((file, index) => file !== workspace.files[index]).length,
     referencesUpdated,
-  } };
+  };
+  return review;
 }
 
 function reviewStructure(workspace: Workspace, files: readonly WorkspaceFile[], action: string,
@@ -764,18 +813,242 @@ function reviewStructure(workspace: Workspace, files: readonly WorkspaceFile[], 
     return total + (workspace.graph.tokens.has(from) ? 1 : group ? group.end - group.start : 0);
   }, 0);
   const subject = single ? (workspace.graph.tokens.has(single.from) ? 'token' : 'group') : `${paths.length} tokens`;
-  return { ...review, structure: {
+  review.structure = {
     title: action + ' ' + subject,
     paths, tokens, files: files.filter((file, index) => file !== workspace.files[index]).length,
     ...(referencesUpdated === undefined ? {} : { referencesUpdated }),
-  } };
+  };
+  return review;
 }
 
 export function reviewRemoveOverride(workspace: Workspace, path: string): Review {
   const token = workspace.graph.tokens.get(path);
   if (!token?.overrides || token.inheritedFrom) throw new Error('Choose a local token override.');
   const review = reviewDelete(workspace, [path]);
-  return { ...review, path, ...(review.structure ? { structure: { ...review.structure, title: 'Use inherited value' } } : {}) };
+  review.path = path;
+  if (review.structure) review.structure.title = 'Use inherited value';
+  return review;
+}
+
+export interface MoveDestination {
+  layer: ResolverLayer;
+  source: { file: string; parts: readonly string[] };
+  group: string;
+}
+
+interface DefinitionMove {
+  file: string;
+  destinationFile: string;
+  path: string;
+  logical: string;
+  from: readonly string[];
+  to: readonly string[];
+}
+
+function definitionSite(file: string, parts: readonly string[]) {
+  return JSON.stringify([file, parts]);
+}
+
+function definitionAliases(workspace: Workspace, moves: readonly DefinitionMove[]) {
+  const moved = new Map(moves.map(move => [definitionSite(move.file, move.from), move]));
+  const paths = new Set(moves.flatMap(move => move.path === move.logical ? [] :
+    [move.path, move.path.endsWith('.$root') ? parentPath(move.path) : move.path]));
+  if (!paths.size) return new Map<string, { parts: string[]; text: string; replacement: string }[]>();
+  const sources = new Map(workspace.files.map(file => [file.path, file]));
+  const aliases = new Map<string, { file: string; parts: string[]; text: string; replacement?: string }>();
+  const ready = workspace.files.filter(file => !file.parseIssue);
+  for (const manifest of ready.filter(isResolverFile)) {
+    const model = compileResolver(manifest, ready);
+    if (!moves.some(move => model.sourceFiles.has(move.file))) continue;
+    for (const inputs of activeContextCombinations(model, model, chooseResolverInputs(model, {}))) {
+      const result = resolveResolver(model, Object.fromEntries(inputs));
+      for (const [owner, links] of result.graph.links) {
+        const ownerOrigin = winningOrigins(result, owner).at(-1);
+        if (!ownerOrigin) continue;
+        for (const link of links.values()) {
+          if (!link.text.startsWith('{') || !paths.has(link.text.slice(1, -1))) continue;
+          const parts = [...ownerOrigin.parts, ...link.field];
+          if (resolverValueAt(sources.get(ownerOrigin.file)?.tree, parts) !== link.text) continue;
+          const target = link.target && winningOrigins(result, link.target).at(-1);
+          const targetMove = target ? moved.get(definitionSite(target.file, target.parts)) : undefined;
+          const existingDestination = targetMove && result.graph.tokens.has(targetMove.logical);
+          const replacement = targetMove && !existingDestination ? '{' + targetMove.logical + '}' : undefined;
+          const key = definitionSite(ownerOrigin.file, parts);
+          const previous = aliases.get(key);
+          if (previous) {
+            if (previous.replacement !== replacement) delete previous.replacement;
+          } else {
+            const relocated = moved.get(definitionSite(ownerOrigin.file, ownerOrigin.parts));
+            aliases.set(key, { file: relocated?.destinationFile ?? ownerOrigin.file, parts: relocated ? [...relocated.to, ...link.field] : parts,
+              text: link.text, ...(replacement ? { replacement } : {}) });
+          }
+        }
+      }
+    }
+  }
+  const byFile = new Map<string, { parts: string[]; text: string; replacement: string }[]>();
+  for (const { file, parts, text, replacement } of aliases.values()) {
+    if (!replacement) continue;
+    const entries = byFile.get(file) ?? [];
+    entries.push({ parts, text, replacement });
+    byFile.set(file, entries);
+  }
+  return byFile;
+}
+
+function relocateDefinitionLinks(node: JsonObject, owner: { file: string; parts: readonly string[] },
+  destination: { file: string; parts: readonly string[] }) {
+  const references: { before: string; after: string }[] = [];
+  function visit(value: JsonValue): JsonValue {
+    if (Array.isArray(value)) return value.map(visit);
+    if (!isJsonObject(value)) return value;
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => {
+      if (typeof item === 'string' && key === '$ref' && item.includes('#')) {
+        try {
+          const target = tokenPointer(item, owner.file);
+          const withinOwner = owner.parts.every((segment, index) => segment === target.parts[index]);
+          if (item.startsWith('#') && !withinOwner) return [key, item];
+          const qualified = !item.startsWith('#') || destination.file !== owner.file ||
+            !destination.parts.every((segment, index) => segment === target.parts[index]);
+          const pointer = serializeTokenPointer(destination.file, target.file, target.parts);
+          const next = qualified && destination.file === target.file
+            ? encodeURIComponent(target.file.split('/').at(-1) ?? '') + pointer : pointer;
+          if (next !== item) references.push({ before: item, after: next });
+          return [key, next];
+        } catch {
+          return [key, item];
+        }
+      }
+      return [key, item === undefined || key === '$extensions' ? item : visit(item)];
+    }));
+  }
+  return { node: requireObject(visit(node), 'token definition'), references };
+}
+
+export function reviewResolverStructure(workspace: Workspace, scope: ResolverBulkScope,
+  operation: 'rename' | 'move' | 'duplicate' | 'delete', changes: readonly { path: string; to?: string }[], target?: MoveDestination): Review {
+  if (!changes.length) throw new Error('Choose a different destination.');
+  const { graph } = scope.resolution;
+  const sources = new Map(workspace.files.map(file => [file.path, file]));
+  const removals = new Map<string, (readonly string[])[]>();
+  const additions = new Map<string, { path: readonly string[]; node: JsonObject }[]>();
+  const pointers: DefinitionMove[] = [];
+  const references: NonNullable<NonNullable<Review['structure']>['references']>[number][] = [];
+  let targetGraph: ResolverResolution | undefined;
+  if (target) {
+    if (operation !== 'move') throw new Error('Choose a destination set when moving tokens.');
+    const manifest = requireValue(sources.get(scope.review.file), 'variant configuration');
+    const model = compileResolver(manifest, workspace.files.filter(file => !file.parseIssue));
+    const layer = resolverLayer(model, target.layer);
+    targetGraph = resolveResolver(requireValue(layer, 'destination set'), {});
+    const empty = target.group === '' ? emptyLayerSite(model, target.layer, workspace.files) : undefined;
+    const sites = empty ? [empty] : targetGraph.origins.get(target.group) ?? [];
+    if (!sites.some(origin => definitionSite(origin.file, origin.parts) === definitionSite(target.source.file, target.source.parts))) {
+      throw new Error('Choose an authored group in the destination set.');
+    }
+  }
+  const destinations = new Set<string>();
+  const sourceKeys = new Set<string>();
+  for (const { path, to } of changes) {
+    const token = requireValue(graph.tokens.get(path), 'token ' + path);
+    const origin = winningOrigins(scope.resolution, path).at(-1);
+    if (!origin || token.inheritedFrom) throw new Error('Open the authored definition of ' + path + '.');
+    const source = requireValue(sources.get(origin.file), 'source file');
+    const key = JSON.stringify([origin.file, origin.parts]);
+    if (sourceKeys.has(key)) throw new Error('Select each source definition once.');
+    sourceKeys.add(key);
+    const node = { ...requireObject(resolverValueAt(source.tree, origin.parts), path) };
+    const depth = path.split('.').length;
+    const root = origin.parts.slice(0, origin.parts.length - depth);
+    if (operation !== 'duplicate') {
+      const list = removals.get(origin.file) ?? [];
+      list.push(origin.parts);
+      removals.set(origin.file, list);
+    }
+    if (operation === 'delete') continue;
+
+    const logical = requireValue(to, 'destination path');
+    const parts = logical.split('.');
+    const file = target?.source.file ?? origin.file;
+    if (target && parentPath(logical) !== target.group) throw new Error('Choose a group in the destination set.');
+    if ((!target && logical === path) || parts.some((part, index) => !part.trim() || /[{}]/u.test(part) ||
+      (part.startsWith('$') && !(part === '$root' && index === parts.length - 1)))) {
+      throw new Error('Choose a new token path without braces or reserved names.');
+    }
+    const option = target?.layer.option;
+    const sameLayer = option ? option.modifier === origin.modifier && option.context === origin.context :
+      target?.layer.set === origin.set && !origin.modifier;
+    if (target && !sameLayer && target.source.file === origin.file && target.source.parts.length >= root.length &&
+      root.every((segment, index) => segment === target.source.parts[index])) {
+      throw new Error('These sets share this source. Choose a destination source unique to the destination set.');
+    }
+    const destination = target ? [...target.source.parts, leafName(logical)] : [...root, ...parts];
+    const destinationKey = definitionSite(file, destination);
+    const destinationGraph = targetGraph?.graph ?? graph;
+    const destinationSource = requireValue(sources.get(file), 'destination source');
+    if (destinations.has(destinationKey) || destinationGraph.tokens.has(logical) || destinationGraph.groups.has(logical) ||
+      resolverValueAt(destinationSource.tree, destination) !== undefined) throw new Error('The destination already exists: ' + logical);
+    if (!target) for (let index = root.length + 1; index < destination.length; index++) {
+      const parent = resolverValueAt(source.tree, destination.slice(0, index));
+      if (parent !== undefined && (!isJsonObject(parent) || Object.hasOwn(parent, '$value') || Object.hasOwn(parent, '$ref'))) {
+        throw new Error('Choose a destination group: ' + logical);
+      }
+    }
+    if (token.type && !token.referenceType && node['$type'] === undefined && (target || parentPath(path) !== parentPath(logical))) node['$type'] = token.type;
+    const relocated = target ? relocateDefinitionLinks(node, { file: origin.file, parts: root },
+      { file, parts: target.source.parts.slice(0, target.source.parts.length - target.group.split('.').filter(Boolean).length) }) : undefined;
+    references.push(...(relocated?.references ?? []).map(({ before, after }) => ({ file, before, after })));
+    destinations.add(destinationKey);
+    const list = additions.get(file) ?? [];
+    list.push({ path: destination, node: relocated?.node ?? node });
+    additions.set(file, list);
+    if (operation !== 'duplicate') pointers.push({ file: origin.file, destinationFile: file, path, logical, from: origin.parts, to: destination });
+  }
+
+  const aliases = pointers.length ? definitionAliases(workspace, pointers) : new Map<string, never[]>();
+  let referencesUpdated = references.length;
+  const files = workspace.files.map(source => {
+    if (source.parseIssue) return source;
+    const formattingOptions = formatOptions(source.text);
+    let text = source.text;
+    for (const from of removals.get(source.path) ?? []) {
+      text = applyEdits(text, modify(text, sourceLocation(source.tree, from), undefined, { formattingOptions }));
+    }
+    for (const addition of additions.get(source.path) ?? []) {
+      text = applyEdits(text, modify(text, sourceLocation(source.tree, addition.path), addition.node, { formattingOptions }));
+    }
+    const localAliases = aliases.get(source.path);
+    if (localAliases?.length) {
+      const tree = text === source.text ? source.tree : parseTokenFile(text, source.path);
+      const ast = requireValue(parseTree(text), 'source document');
+      const edits = localAliases.flatMap(({ parts, text: original, replacement }) => {
+        const location = findNodeAtLocation(ast, sourceLocation(tree, parts));
+        if (!location || location.value !== original) return [];
+        references.push({ file: source.path, before: original, after: replacement });
+        return [{ offset: location.offset, length: location.length, content: JSON.stringify(replacement) }];
+      });
+      text = applyEdits(text, edits);
+      referencesUpdated += edits.length;
+    }
+    const changed = text === source.text ? source : { ...source, text, tree: parseTokenFile(text, source.path) };
+    if (!pointers.length) return changed;
+    const rewritten = rewriteDefinitionPointers(changed, pointers);
+    referencesUpdated += rewritten.count;
+    references.push(...rewritten.references.map(reference => ({ file: source.path, ...reference })));
+    return rewritten.text === changed.text ? changed : { ...changed, text: rewritten.text, tree: parseTokenFile(rewritten.text, source.path) };
+  });
+  const action = operation[0]?.toUpperCase() + operation.slice(1);
+  const paths = changes.map(({ path, to }) => ({ from: path, ...(to ? { to } : {}) }));
+  const review = reviewStructure(workspace, files, action, paths, referencesUpdated);
+  if (review.structure) {
+    review.structure.tokens = changes.length;
+    if (references.length) review.structure.references = references;
+    const option = target?.layer.option;
+    const name = target?.layer.set ?? (option ? option.modifier + ' / ' + option.context : undefined);
+    if (name && target) review.structure.destination = { set: name, group: target.group, file: target.source.file, layer: target.layer };
+    review.structure.title = action + (changes.length === 1 ? ' token' : ' selected tokens');
+  }
+  return reviewAffectedResolvers(workspace, review, scope.review);
 }
 
 export function reviewDelete(workspace: Workspace, paths: readonly string[]): Review {
@@ -895,8 +1168,7 @@ function reviewFiles(workspace: Workspace, files: readonly WorkspaceFile[], edit
     rejectNewInvalid?: boolean; relocations?: Relocations; knownWorkspace?: Workspace; previewValidation?: boolean;
     sourceMove?: { from: string; to: string }; settled?: boolean;
   } = {}): Review {
-  const authoredSource = sourceMove && sourceMove.from === workspace.authoredSource ? sourceMove.to : workspace.authoredSource;
-  const updated = inspectFiles(files, authoredSource);
+  const updated = inspectFiles(files);
   const moves = settled ? settledRelocations(workspace, files, updated) : relocations;
   const validationErrors: string[] = [];
   function reportValidation(message: string) {
@@ -950,7 +1222,7 @@ function reviewFiles(workspace: Workspace, files: readonly WorkspaceFile[], edit
       reportValidation(issue.file + ' · ' + issue.path + ' · ' + issue.field + ' · ' + issue.message);
     }
   }
-  const review = describeReview(workspace, { ...workspace, files, authoredSource, graph: updated }, path);
+  const review = describeReview(workspace, { ...workspace, files, graph: updated }, path);
   if (validationErrors.length) review.validationErrors = validationErrors;
   return review;
 }
@@ -982,10 +1254,8 @@ function describeReview(before: Workspace, next: Workspace, path: string): Revie
     }
   }
   const uninspectedSources = next.files.filter(file => file.parseIssue).map(file => file.path);
-  let diff: string | undefined;
-  return { file: changes.map((change) => change.path).join(', '), path,
-    get diff() { return diff ??= changes.map(diffFile).join(''); },
-    impact, next, uninspectedSources, typeImpact, inheritanceImpact };
+  return withReviewDiff({ file: changes.map((change) => change.path).join(', '), path,
+    impact, next, uninspectedSources, typeImpact, inheritanceImpact }, () => changes);
 }
 
 export function workspaceChanges({ baseline, files }: Pick<Workspace, 'baseline' | 'files'>): FileChange[] {

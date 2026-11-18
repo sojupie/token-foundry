@@ -14,7 +14,7 @@ interface ObjectSite { value: JsonObject; site: Site; fields: Map<string, Site> 
 export interface ResolverIssue extends Site { message: string; severity: 'error' | 'warning' }
 export interface ResolverOrigin extends Site { set?: string; modifier?: string; context?: string }
 interface Contribution { tree: JsonObject; origin: ResolverOrigin; fields: ReadonlyMap<string, Site> }
-interface ResolverSet { kind: 'set'; name: string; sources: Contribution[] }
+interface ResolverSet { kind: 'set'; name: string; sources: Contribution[]; sourceSite?: Site }
 interface ResolverModifier { kind: 'modifier'; name: string; contexts: Map<string, Contribution[]>; contextSites: Map<string, Site>; defaultContext?: string }
 type ResolverEntry = ResolverSet | ResolverModifier;
 
@@ -22,8 +22,32 @@ export interface ResolverModel {
   file: string;
   issues: ResolverIssue[];
   order: ResolverEntry[];
+  sets: Map<string, ResolverSet>;
   modifiers: Map<string, ResolverModifier>;
   sourceFiles: ReadonlySet<string>;
+}
+
+export interface ResolverLayer {
+  set?: string;
+  option?: { modifier: string; context: string };
+}
+
+export function resolverLayer(model: ResolverModel, layer: ResolverLayer): ResolverModel | undefined {
+  const set = layer.set === undefined ? undefined : model.sets.get(layer.set);
+  if (set) return { ...model, order: [set], modifiers: new Map() };
+  const option = layer.option;
+  const modifier = option && model.modifiers.get(option.modifier);
+  if (!option || !modifier?.contexts.has(option.context)) return undefined;
+  return { ...model, order: [modifier], modifiers: new Map([[modifier.name, { ...modifier, defaultContext: option.context }]]) };
+}
+
+export function emptyLayerSite(model: ResolverModel, layer: ResolverLayer, files: readonly TokenFile[]) {
+  const option = layer.option;
+  const site = layer.set !== undefined ? model.sets.get(layer.set)?.sourceSite :
+    option ? model.modifiers.get(option.modifier)?.contextSites.get(option.context) : undefined;
+  if (!site) return undefined;
+  const value = resolverValueAt(files.find(file => file.path === site.file)?.tree, site.parts);
+  return Array.isArray(value) && !value.length ? { ...site, parts: [...site.parts, '0'] } : undefined;
 }
 
 export function isResolverFile(file: TokenFile): boolean {
@@ -61,6 +85,7 @@ export function compileResolver(file: TokenFile, files: readonly TokenFile[]): R
   const issues = new Map<string, ResolverIssue>();
   const sourceFiles = new Set([file.path]);
   const order: ResolverEntry[] = [];
+  const sets = new Map<string, ResolverSet>();
   const modifiers = new Map<string, ResolverModifier>();
 
   function report(site: Site, message: string, severity: ResolverIssue['severity'] = 'error') {
@@ -137,7 +162,7 @@ export function compileResolver(file: TokenFile, files: readonly TokenFile[]): R
     }
     if (kind === 'set') {
       const located = locatedField(node, 'sources');
-      return { kind, name, sources: expand(located, { set: name }, new Set([siteKey(located.site)])) };
+      return { kind, name, sources: expand(located, { set: name }, new Set([siteKey(located.site)])), sourceSite: located.site };
     }
     const located = locatedField(node, 'contexts');
     const contexts = new Map<string, Contribution[]>();
@@ -174,6 +199,7 @@ export function compileResolver(file: TokenFile, files: readonly TokenFile[]): R
       if (!node) continue;
       const parsed = entry(name, kind, node);
       if (parsed.kind === 'modifier') modifiers.set(name, parsed);
+      else sets.set(name, parsed);
     }
   }
   if (!Array.isArray(tree['resolutionOrder'])) {
@@ -200,9 +226,10 @@ export function compileResolver(file: TokenFile, files: readonly TokenFile[]): R
       const parsed = entry(name, kind, node);
       order.push(parsed);
       if (parsed.kind === 'modifier') modifiers.set(name, parsed);
+      else sets.set(name, parsed);
     }
   }
-  return { file: file.path, issues: [...issues.values()], order, modifiers, sourceFiles };
+  return { file: file.path, issues: [...issues.values()], order, sets, modifiers, sourceFiles };
 }
 
 export function resolverInputs(model: ResolverModel, provided: Readonly<Record<string, JsonValue | undefined>>) {
@@ -256,12 +283,21 @@ function canonicalValue(value: JsonValue | undefined): string | undefined {
   return JSON.stringify(value);
 }
 
+export function planResolver(model: ResolverModel, provided: Readonly<Record<string, JsonValue | undefined>>) {
+  const { contexts, errors } = resolverInputs(model, provided);
+  const contributions = errors.length ? [] : model.order.flatMap(entry => entry.kind === 'set' ? entry.sources :
+    entry.contexts.get(contexts.get(entry.name) ?? '') ?? []);
+  return { file: model.file, contexts, errors, contributions };
+}
+
 export function resolveResolver(model: ResolverModel, provided: Readonly<Record<string, JsonValue | undefined>>,
   inspect = inspectDocuments) {
-  const { contexts, errors } = resolverInputs(model, provided);
+  return resolveResolverPlan(planResolver(model, provided), inspect);
+}
+
+export function resolveResolverPlan({ file, contexts, errors, contributions }: ReturnType<typeof planResolver>,
+  inspect = inspectDocuments) {
   const origins = new Map<string, ResolverOrigin[]>();
-  const contributions = model.order.flatMap(entry => entry.kind === 'set' ? entry.sources :
-    entry.contexts.get(contexts.get(entry.name) ?? '') ?? []);
   const roots = new Map<string, Site[]>();
   for (const { origin } of contributions) {
     const candidates = roots.get(origin.file) ?? [];
@@ -270,22 +306,42 @@ export function resolveResolver(model: ResolverModel, provided: Readonly<Record<
   }
 
   function link(value: JsonValue | undefined, site: Site, root: Site): JsonValue | undefined {
-    if (Array.isArray(value)) return value.map((item, index) => link(item, child(site, String(index)), root) ?? null);
+    if (Array.isArray(value)) {
+      let next: JsonValue[] | undefined;
+      for (const [index, item] of value.entries()) {
+        if (typeof item !== 'object' || item === null) continue;
+        const substituted = link(item, child(site, String(index)), root) ?? null;
+        if (substituted !== item) {
+          next ??= value.slice();
+          next[index] = substituted;
+        }
+      }
+      return next ?? value;
+    }
     if (!isJsonObject(value)) return value;
-    return Object.fromEntries(Object.entries(value).map(([field, item]) => {
+    let next: JsonObject | undefined;
+    for (const field of Object.keys(value)) {
+      const item = value[field];
+      let substituted = item;
       if ((field === '$ref' || field === '$extends') && typeof item === 'string' && item.includes('#')) {
         try {
           const target = tokenPointer(item, site.file);
-          if (item.startsWith('#') && !isWithin(root, target)) return [field, item];
+          if (item.startsWith('#') && !isWithin(root, target)) continue;
           const mounted = roots.get(target.file)?.filter(candidate => isWithin(candidate, target))
             .toSorted((left, right) => right.parts.length - left.parts.length)[0];
-          if (mounted) return [field, serializeTokenPointer(model.file, model.file, target.parts.slice(mounted.parts.length))];
+          if (mounted) substituted = serializeTokenPointer(file, file, target.parts.slice(mounted.parts.length));
         } catch {
           // Keep malformed pointers intact for token diagnostics.
         }
+      } else if (field !== '$extensions' && typeof item === 'object' && item !== null) {
+        substituted = link(item, child(site, field), root);
       }
-      return [field, field === '$extensions' ? item : link(item, child(site, field), root)];
-    }));
+      if (substituted !== item) {
+        next ??= { ...value };
+        Object.defineProperty(next, field, { value: substituted, enumerable: true, configurable: true, writable: true });
+      }
+    }
+    return next ?? value;
   }
 
   function tokenShape(value: JsonObject, site: Site, seen = new Set<string>()): boolean {
@@ -315,7 +371,7 @@ export function resolveResolver(model: ResolverModel, provided: Readonly<Record<
     history.push(origin);
     origins.set(path, history);
     if (!isJsonObject(after) || tokenShape(after, origin)) return link(after, origin, root) ?? null;
-    const next: JsonObject = isJsonObject(before) && mergedGroups.has(before) ? { ...before } : {};
+    const next: JsonObject = isJsonObject(before) && mergedGroups.has(before) ? before : {};
     for (const [name, value] of Object.entries(after)) {
       if (value === undefined || !path && name === '$schema') continue;
       const tokenPath = path ? path + '.' + name : name;
@@ -332,7 +388,7 @@ export function resolveResolver(model: ResolverModel, provided: Readonly<Record<
   let result: JsonValue = {};
   if (!errors.length) for (const { tree, origin, fields } of contributions) result = merge(result, tree, '', origin, origin, fields);
   const tree = isJsonObject(result) ? result : {};
-  const graph = inspect([{ path: model.file, tree }]);
+  const graph = inspect([{ path: file, tree }]);
   return { contexts, errors, graph, tree, origins };
 }
 
@@ -343,7 +399,35 @@ export function winningOrigins(resolution: ResolverResolution, path: string): re
   return resolution.origins.get(inherited?.path ?? path) ?? [];
 }
 
-export function compareContexts(before: ResolverResolution, after: ResolverResolution) {
+// The composed graph rewrites pointers to the Resolver document. Persist new
+// pointers relative to the actual definition and retain untouched authored fields.
+export function authoredResolverValue(resolution: ResolverResolution, resolverFile: string, file: string,
+  value: JsonValue, previous?: JsonValue, authored?: JsonValue): JsonValue {
+  if (authored !== undefined && canonicalValue(value) === canonicalValue(previous)) return authored;
+  if (Array.isArray(value)) return value.map((part, index) => authoredResolverValue(
+    resolution, resolverFile, file, part, Array.isArray(previous) ? previous[index] : undefined,
+    Array.isArray(authored) ? authored[index] : undefined));
+  if (!isJsonObject(value)) return value;
+  if (typeof value['$ref'] === 'string' && value['$ref'].startsWith('#')) {
+    const { parts } = tokenPointer(value['$ref'], resolverFile);
+    const boundary = parts.indexOf('$value');
+    const tokenParts = parts.slice(0, boundary < 0 ? parts.length : boundary);
+    const target = winningOrigins(resolution, tokenParts.join('.')).at(-1);
+    if (!target) throw new Error('Choose an available token field.');
+    const pointer = serializeTokenPointer(file, target.file, [...target.parts, ...parts.slice(tokenParts.length)]);
+    return { ...value, $ref: file === target.file ? encodeURIComponent(target.file.split('/').at(-1) ?? '') + pointer : pointer };
+  }
+  return Object.fromEntries(Object.entries(value).map(([key, part]) => [key,
+    part === undefined ? undefined : authoredResolverValue(resolution, resolverFile, file, part,
+      isJsonObject(previous) ? previous[key] : undefined, isJsonObject(authored) ? authored[key] : undefined)]));
+}
+
+type ComparisonGraph = Pick<ResolverResolution['graph'], 'resolved' | 'issues' | 'validation'> & {
+  tokens: ReadonlyMap<string, { type: string | undefined }>;
+};
+export interface ComparableContext { graph: ComparisonGraph }
+
+export function compareContexts(before: ComparableContext, after: ComparableContext) {
   const paths = new Set([...before.graph.tokens.keys(), ...after.graph.tokens.keys()]);
   return [...paths].toSorted().flatMap(path => {
     const previous = before.graph.tokens.get(path);
@@ -353,7 +437,8 @@ export function compareContexts(before: ResolverResolution, after: ResolverResol
     const beforeProblem = before.graph.issues.get(path) ?? before.graph.validation.get(path)?.join('\n');
     const afterProblem = after.graph.issues.get(path) ?? after.graph.validation.get(path)?.join('\n');
     const kind = beforeProblem || afterProblem ? 'Invalid' : !previous ? 'Added' : !next ? 'Removed' : 'Changed';
-    if (kind === 'Changed' && previous?.type === next?.type && canonicalValue(beforeValue) === canonicalValue(afterValue)) return [];
+    if (kind === 'Changed' && previous?.type === next?.type &&
+      (beforeValue === afterValue || canonicalValue(beforeValue) === canonicalValue(afterValue))) return [];
     return [{ path, kind, before: beforeValue, after: afterValue, beforeProblem, afterProblem }];
   });
 }

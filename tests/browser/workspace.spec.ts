@@ -6,6 +6,7 @@ import { baseChanged, isProposal } from '../../integrations/github/contract.ts';
 import { parseJson } from '../../lib/json.ts';
 import type { JsonValue } from '../../lib/json.ts';
 import type { PullRequestProposal } from '../../integrations/github/contract.ts';
+import { chooseOption, selectPopup } from './select-field.ts';
 
 const sources = await Promise.all(['reference.tokens.json', 'system.tokens.json'].map(async (path) => ({
   path, text: await readFile(new URL('../../examples/' + path, import.meta.url), 'utf8'),
@@ -14,9 +15,10 @@ const referenceChange = { schemaVersion: 1, changes: [
   { path: 'reference.space.small', before: { value: 8, unit: 'px' }, after: { value: 12, unit: 'px' } },
 ] };
 
-async function command(page: Page, menu: 'File' | 'Edit' | 'View' | 'Variants' | 'Integrations', item: string | RegExp) {
+async function command(page: Page, menu: 'File' | 'Edit' | 'View' | 'Variants' | 'Integrations' | 'Help', item: string | RegExp) {
   if (menu === 'Integrations') await page.getByRole('navigation', { name: 'Foundry' }).getByRole('button', { name: 'Workspace', exact: true }).click();
-  await page.getByRole('button', { name: menu, exact: true }).click();
+  const surface = menu === 'Integrations' ? page.getByRole('main', { name: 'Workspace management' }) : page.getByRole('banner');
+  await surface.getByRole('button', { name: menu === 'Integrations' ? 'Manage integrations' : menu, exact: true }).click();
   await page.getByRole('menuitem', { name: item, exact: true }).click();
 }
 
@@ -70,7 +72,7 @@ test('reviews a linked proposal and cross-file move again if the pinned GitHub r
   expect(requests).toEqual([]);
   await command(page, 'Integrations', 'Open GitHub repository…');
   await expect(page.getByText('Connected as @designer', { exact: true })).toBeVisible();
-  await expect(page.getByLabel('Repository', { exact: true })).toHaveValue(repository);
+  await expect(page.getByRole('combobox', { name: 'Repository', exact: true })).toHaveAttribute('data-select-value', repository);
   await page.getByRole('button', { name: 'Open repository' }).click();
   await expect(page.locator('[data-workspace-name]')).toHaveText(repository);
   await page.getByRole('button', { name: 'Review linked changes' }).click();
@@ -128,6 +130,29 @@ test('reviews a linked proposal and cross-file move again if the pinned GitHub r
   expect(proposal?.changes.find(({ path }) => path === 'system.tokens.json')?.after).toContain('{system.reference-space.small}');
 });
 
+test('opens nested DTCG JSON by content and distinguishes Android unit warnings', async ({ page }, info) => {
+  const folder = info.outputPath('plain-json');
+  await mkdir(folder + '/tailwind', { recursive: true });
+  await mkdir(folder + '/node_modules', { recursive: true });
+  await Promise.all([
+    writeFile(folder + '/tailwind/default.json', JSON.stringify({ gap: { $type: 'dimension', $value: { value: 8, unit: 'dp' } } })),
+    writeFile(folder + '/theme.json', JSON.stringify({ applied: { $type: 'dimension', $value: '{gap}' } })),
+    writeFile(folder + '/package.json', JSON.stringify({ name: 'fixture', scripts: { test: 'node --test' } })),
+    writeFile(folder + '/node_modules/ignored.tokens.json', JSON.stringify({ ignored: { $type: 'number', $value: 1 } })),
+  ]);
+  await page.addInitScript(() => { Object.defineProperty(window, 'showDirectoryPicker', { value: undefined, configurable: true }); });
+  await page.goto('/');
+  const chooser = page.waitForEvent('filechooser');
+  await command(page, 'File', 'Open token folder…');
+  await (await chooser).setFiles(folder);
+  await expect(page.getByText('2 tokens', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Resolved value for applied', exact: true })).toHaveText('8 dp');
+  await command(page, 'View', 'Workspace issues');
+  const diagnostics = page.getByRole('dialog', { name: 'Workspace issues' });
+  await expect(diagnostics.getByText(/Warning.*tailwind\/default.json.*dp is an Android unit.*px or rem/u)).toBeVisible();
+  await expect(diagnostics.getByText(/package.json|ignored.tokens.json/u)).toHaveCount(0);
+});
+
 test('checks referenced files before writing a reviewed folder edit', async ({ page, browserName }) => {
   test.skip(browserName !== 'chromium', 'Native folder access is exercised in Chromium.');
   await page.addInitScript((files) => {
@@ -142,7 +167,7 @@ test('checks referenced files before writing a reviewed folder edit', async ({ p
       }));
       return Object.assign(directory, { requestPermission: () => Promise.resolve('granted' as const) });
     };
-  }, sources);
+  }, sources.map(file => ({ ...file, path: file.path.replace('.tokens', '') })));
   await page.goto('/');
   await command(page, 'File', 'Open token folder…');
   await expect(page.locator('[data-workspace-name]')).toHaveText('fixture');
@@ -151,7 +176,7 @@ test('checks referenced files before writing a reviewed folder edit', async ({ p
   const save = page.getByRole('button', { name: 'Save to folder' });
   const writeSystem = (text: string) => page.evaluate(async (value) => {
     const directory = await (await navigator.storage.getDirectory()).getDirectoryHandle('fixture');
-    const stream = await (await directory.getFileHandle('system.tokens.json')).createWritable();
+    const stream = await (await directory.getFileHandle('system.json')).createWritable();
     await stream.write(value);
     await stream.close();
   }, text);
@@ -159,10 +184,10 @@ test('checks referenced files before writing a reviewed folder edit', async ({ p
   if (!system) throw new Error('Missing system fixture.');
   await writeSystem(system + '\n');
   await save.click();
-  await expect(page.getByText(/system\.tokens\.json changed on disk/u)).toBeVisible();
+  await expect(page.getByText(/system\.json changed on disk/u)).toBeVisible();
   const readReference = () => page.evaluate(async () => {
     const directory = await (await navigator.storage.getDirectory()).getDirectoryHandle('fixture');
-    return (await (await directory.getFileHandle('reference.tokens.json')).getFile()).text();
+    return (await (await directory.getFileHandle('reference.json')).getFile()).text();
   });
   expect(await readReference()).toBe(sources.find(({ path }) => path === 'reference.tokens.json')?.text);
   await writeSystem(system);
@@ -189,10 +214,119 @@ test('exports an applicable patch from a read-only folder', async ({ page, brows
   execFileSync('git', ['apply', '--check', await (await download).path()], { cwd: directory });
 });
 
+test('styled chips and select fields keep keyboard navigation and return focus', async ({ page }) => {
+  await page.goto('/');
+  await command(page, 'File', 'Open Material 3 sample');
+  await expect(page.getByRole('menu', { name: 'File' })).toBeHidden();
+  const editingSet = page.getByRole('combobox', { name: 'Editing set' });
+  const setPopup = await selectPopup(editingSet);
+  await editingSet.press('ArrowDown');
+  await expect(setPopup).toBeVisible();
+  await expect(editingSet).toBeFocused();
+  const first = setPopup.getByRole('option', { name: 'All tokens', exact: true });
+  await expect(first).toHaveAttribute('data-active', 'true');
+  await page.keyboard.press('End');
+  await expect(setPopup.getByRole('option').last()).toHaveAttribute('data-active', 'true');
+  await page.keyboard.press('Escape');
+  await expect(setPopup).toBeHidden();
+  await expect(editingSet).toBeFocused();
+  await expect(editingSet).toHaveAttribute('data-select-value', '');
+  await editingSet.press('Space');
+  await expect(setPopup).toBeVisible();
+  await page.keyboard.press('Tab');
+  await expect(setPopup).toBeHidden();
+  await expect(page.getByRole('combobox', { name: 'Appearance', exact: true })).toBeFocused();
+  await editingSet.press('ArrowDown');
+  await page.keyboard.press('l');
+  await expect(setPopup.getByRole('option', { name: 'Light', exact: true })).toHaveAttribute('data-active', 'true');
+  await page.keyboard.press('Enter');
+  await expect(setPopup).toBeHidden();
+  await expect(page.getByRole('columnheader', { name: 'Resolved in Light' })).toBeVisible();
+  await expect(editingSet).toBeFocused();
+
+  await page.getByRole('button', { name: 'New token', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'New token', exact: true });
+  const type = dialog.getByRole('combobox', { name: 'Token type' });
+  const typePopup = await selectPopup(type);
+  await type.press('ArrowDown');
+  await expect(typePopup).toBeVisible();
+  await page.keyboard.press('d');
+  await expect(typePopup.getByRole('option', { name: 'dimension', exact: true })).toHaveAttribute('data-active', 'true');
+  await page.keyboard.press('Enter');
+  await expect(typePopup).toBeHidden();
+  await expect(dialog).toBeVisible();
+  await expect(type).toBeFocused();
+  await expect(type).toHaveAttribute('data-select-value', 'dimension');
+});
+
+test.describe('touch select', () => {
+  test.use({ hasTouch: true });
+
+  test('closes a tapped choice without sending a click through to the dialog', async ({ page }) => {
+    await page.setViewportSize({ width: 430, height: 850 });
+    await page.goto('/');
+    await page.getByRole('button', { name: 'New token', exact: true }).tap();
+    const dialog = page.getByRole('dialog', { name: 'New token', exact: true });
+    const type = dialog.getByRole('combobox', { name: 'Token type' });
+    const popup = await selectPopup(type);
+    await type.tap();
+    await popup.getByRole('option', { name: 'dimension', exact: true }).tap();
+    await expect(popup).toBeHidden();
+    await expect(dialog).toBeVisible();
+    await expect(type).toHaveAttribute('data-select-value', 'dimension');
+    await expect(type).toBeFocused();
+  });
+});
+
+test('inline Type uses the Forge popup and returns to its grid cell', async ({ page }) => {
+  await page.goto('/');
+  const cell = page.getByRole('button', { name: 'Type for reference.space.small', exact: true });
+  const field = page.getByRole('combobox', { name: 'Token type' });
+  const rowHeight = () => cell.evaluate(element => element.closest('tr')?.offsetHeight ?? 0);
+  const expectFieldToFillCell = async (initialRowHeight: number) => {
+    const { row, cellHeight, editor, select } = await field.evaluate(element => ({
+      row: element.closest('tr')?.offsetHeight,
+      cellHeight: element.closest('td')?.clientHeight,
+      editor: element.closest('.grid-inline-editor')?.clientHeight,
+      select: element.parentElement?.clientHeight,
+    }));
+    expect(row).toBe(initialRowHeight);
+    expect(cellHeight).toBeGreaterThan(0);
+    expect(editor).toBe(cellHeight);
+    expect(select).toBe(cellHeight);
+  };
+  const initialRowHeight = await rowHeight();
+  await cell.press('F2');
+  const popup = await selectPopup(field);
+  await expect(field).toBeFocused();
+  await expectFieldToFillCell(initialRowHeight);
+  await field.press('ArrowDown');
+  await expect(popup).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(popup).toBeHidden();
+  await expect(field).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(cell).toBeFocused();
+
+  await page.getByRole('button', { name: 'Name for reference.space.small', exact: true })
+    .evaluate(element => { element.style.minBlockSize = '80px'; });
+  const tallerRowHeight = await rowHeight();
+  expect(tallerRowHeight).toBeGreaterThan(initialRowHeight);
+  await cell.press('F2');
+  await expectFieldToFillCell(tallerRowHeight);
+  await field.press('ArrowDown');
+  await page.keyboard.press('d');
+  await expect((await selectPopup(field)).getByRole('option', { name: 'dimension' })).toHaveAttribute('data-active', 'true');
+  await page.keyboard.press('Enter');
+  await expect(cell).toBeFocused();
+  await expect(cell).toHaveText('dimension');
+});
+
 test('opens the full Material 3 sample and switches Catalog appearances', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/');
   await command(page, 'File', 'Open Material 3 sample');
+  await expect(page.getByRole('menu', { name: 'File' })).toBeHidden();
   await expect(page.locator('[data-workspace-name]')).toHaveText('Material 3');
   await expect(page.getByText('6,814 tokens', { exact: true })).toBeVisible();
   const groups = page.getByRole('complementary', { name: 'Groups', exact: true });
@@ -200,23 +334,57 @@ test('opens the full Material 3 sample and switches Catalog appearances', async 
     expect(groups.getByRole('button', { name: branch, exact: true })).toBeVisible()));
 
   const appearance = page.getByRole('combobox', { name: 'Appearance', exact: true });
-  await expect(appearance.locator('option')).toHaveText([
+  await appearance.click();
+  await expect((await selectPopup(appearance)).getByRole('option')).toHaveText([
     'Choose…', 'Light', 'Light · medium contrast', 'Light · high contrast',
     'Dark', 'Dark · medium contrast', 'Dark · high contrast',
   ]);
+  await page.keyboard.press('Escape');
   const search = page.getByRole('searchbox', { name: 'Search tokens in group' });
   await search.fill('md.comp.assist-chip.label-text.weight');
   await expect(page.getByRole('button', { name: 'Value for md.comp.assist-chip.label-text.weight', exact: true }))
     .toHaveText('{md.sys.typescale.label-large.weight.$root}');
   await expect(page.getByRole('button', { name: 'Resolved value for md.comp.assist-chip.label-text.weight', exact: true }))
     .toHaveText('500');
+  const issues = page.getByRole('button', { name: /^Issues \(/u });
+  const baselineIssues = await issues.allTextContents();
+  const editedSet = page.getByRole('combobox', { name: 'Editing set', exact: true });
+  await chooseOption(editedSet, { label: 'Light' });
+  await expect(page.getByRole('columnheader', { name: 'Resolved in Light' })).toBeVisible();
+  const linkedPath = 'md.comp.app-bar.trailing-icon.color';
+  await search.fill(linkedPath);
+  await page.getByRole('button', { name: 'Name for ' + linkedPath, exact: true }).click();
+  const inspector = page.getByRole('complementary', { name: 'Token details' });
+  await expect(inspector).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Name for ' + linkedPath, exact: true })).toBeFocused();
+  await page.getByRole('button', { name: 'Edit token', exact: true }).click();
+  await expect(inspector.getByText('Editing Light', { exact: true })).toBeVisible();
+  await inspector.getByText('Where this value comes from', { exact: true }).click();
+  const origin = inspector.getByRole('button', { name: /^Open source for Current value/u });
+  await expect(origin).toBeVisible();
+  expect(await origin.evaluate(button => {
+    const sheet = button.closest('aside');
+    const label = button.parentElement?.querySelector('.wrap-anywhere');
+    return sheet && label ? {
+      buttonOverflow: Math.max(0, button.getBoundingClientRect().right - sheet.getBoundingClientRect().right),
+      labelOverflow: label.scrollWidth - label.clientWidth,
+    } : null;
+  })).toEqual({ buttonOverflow: 0, labelOverflow: 0 });
+  await expect(inspector.getByRole('region', { name: 'Token references' })).not.toContainText('Reference target is missing');
+  await expect(page.getByRole('button', { name: 'Resolved value for ' + linkedPath, exact: true })).toContainText('#49454F');
+  expect(await issues.allTextContents()).toEqual(baselineIssues);
+  await Promise.all(['Rename', 'Move', 'Duplicate', 'Delete'].map(action =>
+    expect(page.getByRole('button', { name: action, exact: true })).toBeEnabled()));
+  await inspector.getByRole('button', { name: 'Close inspector' }).click();
+  await chooseOption(editedSet, { label: 'All tokens' });
   await search.fill('md.sys.color.primary');
   const value = page.getByRole('button', { name: 'Value for md.sys.color.primary', exact: true });
   await expect(value).toHaveText('{md.ref.palette.primary40}');
-  await appearance.selectOption('Dark');
+  await chooseOption(appearance, 'Dark');
   await expect(value).toHaveText('{md.ref.palette.primary80}');
   await expect(search).toHaveValue('md.sys.color.primary');
-  await page.getByRole('button', { name: 'Compare variants', exact: true }).click();
+  await command(page, 'Variants', 'Compare variants');
+  await page.getByRole('searchbox', { name: 'Search compared tokens' }).fill('md.sys.color.primary');
   const comparison = page.getByRole('table', { name: 'Variant comparison' });
   await expect(comparison.getByRole('button', { name: 'md.sys.color.primary', exact: true })).toBeVisible();
 });
@@ -285,7 +453,7 @@ test('finds unresolved tokens and shows why the alias fails', async ({ page }) =
     page.getByRole('columnheader', { name: /^Name(?: |$)/u }).boundingBox(),
   ]);
   const initial = await layout();
-  await table.locator('thead .selection-checkbox').click();
+  await table.getByRole('checkbox', { name: 'Select all visible tokens' }).click();
   await expect(toolbar.getByRole('button', { name: 'Move', exact: true })).toBeEnabled();
   await expect(toolbar.getByRole('button', { name: 'New token' })).toBeVisible();
   expect((await layout())[1]?.y).toBe(initial[1]?.y);
@@ -360,16 +528,16 @@ test('reflects sign-in in the editor and shows only the returned repositories', 
   });
   await expect(page.getByText('Connected as @designer', { exact: true })).toBeVisible();
   await expect(page.getByRole('link', { name: 'Sign in to GitHub', exact: true })).toHaveCount(0);
-  await page.getByLabel('Repository', { exact: true }).selectOption('other/design-system');
-  await expect(page.getByLabel('Repository', { exact: true })).toHaveValue('other/design-system');
+  await chooseOption(page.getByRole('combobox', { name: 'Repository', exact: true }), 'other/design-system');
+  await expect(page.getByRole('combobox', { name: 'Repository', exact: true })).toHaveAttribute('data-select-value', 'other/design-system');
   repositories = ['example/tokens'];
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-  await expect(page.getByLabel('Repository', { exact: true })).toHaveValue('example/tokens');
+  await expect(page.getByRole('combobox', { name: 'Repository', exact: true })).toHaveAttribute('data-select-value', 'example/tokens');
   await expect(page.getByRole('option', { name: 'other/design-system', exact: true })).toHaveCount(0);
   session = 'forbidden';
   await page.reload();
   await page.getByRole('navigation', { name: 'Foundry' }).getByRole('button', { name: 'Workspace', exact: true }).click();
-  await page.getByRole('button', { name: 'Integrations', exact: true }).click();
+  await page.getByRole('button', { name: 'Manage integrations', exact: true }).click();
   await expect(page.getByRole('menuitem', { name: 'Open GitHub repository…', exact: true })).toBeDisabled();
   await page.keyboard.press('Escape');
   await page.getByRole('button', { name: 'File', exact: true }).click();
@@ -429,7 +597,7 @@ test('edits cells, rewrites references, and reviews bulk move and group delete',
 
   const typeCell = page.getByRole('button', { name: 'Type for reference.extra', exact: true });
   await typeCell.dblclick();
-  await page.getByLabel('Token type', { exact: true }).selectOption('dimension');
+  await chooseOption(page.getByRole('combobox', { name: 'Token type', exact: true }), 'dimension');
   await expect(typeCell).toBeFocused();
   await expect(page.getByRole('dialog')).toHaveCount(0);
 
@@ -444,7 +612,7 @@ test('edits cells, rewrites references, and reviews bulk move and group delete',
   await expect(linkValue).toBeFocused();
 
   await page.getByRole('button', { name: 'Type for reference.spare', exact: true }).dblclick();
-  await page.getByLabel('Token type', { exact: true }).selectOption('number');
+  await chooseOption(page.getByRole('combobox', { name: 'Token type', exact: true }), 'number');
   await value.fill('4');
   await value.press('Enter');
   await expect(page.getByRole('button', { name: 'Type for reference.spare', exact: true })).toHaveText('number');
@@ -505,8 +673,26 @@ test('replaces a reference with a raw value of a different type', async ({ page 
   const raw = page.getByRole('dialog', { name: 'Enter a value' });
   const type = raw.getByRole('combobox', { name: 'Token type' });
   await expect(type).toBeFocused();
-  await expect(type).toHaveValue('color');
-  await type.selectOption('fontFamily');
+  await expect(type).toHaveAttribute('data-select-value', 'color');
+  const fields = raw.getByRole('region', { name: 'Value', exact: true });
+  const hex = fields.getByRole('textbox', { name: 'Token value', exact: true });
+  const swatch = fields.getByLabel('Color preview', { exact: true });
+  const blue = fields.getByRole('checkbox', { name: 'Include blue channel' });
+  await hex.fill('#125E94');
+  const swatchBounds = await swatch.boundingBox();
+  await blue.uncheck();
+  await expect(hex).toBeDisabled();
+  await expect(swatch).toBeVisible();
+  expect(await swatch.boundingBox()).toEqual(swatchBounds);
+  await blue.check();
+  await expect(hex).toHaveValue('#125E94');
+  const opacity = fields.getByRole('checkbox', { name: 'Include opacity' });
+  await expect(opacity).not.toBeChecked();
+  await opacity.check();
+  await expect(fields.getByRole('textbox', { name: 'Opacity', exact: true })).toBeEnabled();
+  await expect(fields.getByRole('button', { name: 'Add sRGB fallback' })).toHaveCount(0);
+  await expect(fields.getByText('Uncheck a channel', { exact: false })).toHaveCount(0);
+  await chooseOption(type, 'fontFamily');
   await raw.getByRole('textbox', { name: 'Token value' }).fill('Noto Sans');
   await raw.getByRole('button', { name: 'Use value' }).click();
   await expect(raw).toBeHidden();
@@ -619,7 +805,7 @@ test('keeps a Forge edit draft when dismissing review and applies it only on con
   await expect(editor.locator('.md-outlined-text-field').getByRole('textbox', { name: 'Group name' })).toHaveCount(1);
   await expect(groupName).toBeFocused();
   await groupName.fill('pilot-group');
-  await editor.getByLabel('Source file').selectOption('reference.tokens.json');
+  await chooseOption(editor.getByRole('combobox', { name: 'Source file', exact: true }), 'reference.tokens.json');
   const review = page.getByRole('dialog', { name: 'Review changes' });
   const nativeReview = page.locator('dialog.review-dialog[open]');
   const created = page.getByRole('navigation', { name: 'Token groups' }).getByRole('button', { name: 'pilot-group', exact: true });
@@ -666,7 +852,7 @@ test('keeps group navigation and selection usable in a narrow dark workspace', a
 
   const table = page.getByRole('grid', { name: 'Tokens' });
   const all = table.getByRole('checkbox', { name: 'Select all visible tokens' });
-  await table.locator('[data-token-row="reference.color.ink"] .selection-checkbox').click();
+  await table.locator('[data-token-row="reference.color.ink"]').getByRole('checkbox').click();
   await expect(all).toHaveJSProperty('indeterminate', true);
   const actions = page.getByRole('region', { name: 'Token commands' });
   const move = actions.getByRole('button', { name: 'Move', exact: true });
@@ -687,7 +873,7 @@ test('keeps workspace branch expansion independent of folder selection', async (
   const tree = page.getByRole('navigation', { name: 'Token groups' });
   const reference = tree.getByRole('button', { name: 'reference', exact: true });
   const system = tree.getByRole('button', { name: 'system', exact: true });
-  const context = page.getByRole('region', { name: 'Group context' });
+  const context = page.getByRole('region', { name: 'Token controls' });
   const groupActions = page.getByRole('complementary', { name: 'Groups' });
   const referenceToggle = tree.getByRole('button', { name: /^(Expand|Collapse) reference$/u });
   const systemToggle = tree.getByRole('button', { name: /^(Expand|Collapse) system$/u });
@@ -766,17 +952,65 @@ test('resizes both panes and keeps the empty inspector open', async ({ page }) =
   await expect(page.getByRole('dialog', { name: 'New token' })).toBeVisible();
 });
 
+test('aligns selection commands to the start and keeps token actions together at the end', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/');
+  const toolbar = page.getByRole('region', { name: 'Token commands' });
+  const alignment = toolbar.locator('.workspace-command-row');
+  const checkAlignment = () => alignment.evaluate(row => {
+    const selection = row.querySelector('fieldset')?.firstElementChild?.firstElementChild?.getBoundingClientRect();
+    const edit = row.querySelector('[data-key-tip="D"]')?.getBoundingClientRect();
+    const create = row.querySelector('[data-key-tip="N"]')?.getBoundingClientRect();
+    const bounds = row.getBoundingClientRect();
+    const style = getComputedStyle(row);
+    return !!(selection && edit && create &&
+      Math.abs(selection.left - bounds.left - Number.parseFloat(style.paddingLeft)) < 1 &&
+      Math.abs(bounds.right - create.right - Number.parseFloat(style.paddingRight)) < 1 &&
+      edit.top === create.top && edit.right < create.left);
+  });
+
+  await expect.poll(checkAlignment).toBe(true);
+  await expect(alignment.locator('.workspace-command-set').last()).toHaveCSS('border-inline-end-width', '1px');
+  await page.setViewportSize({ width: 430, height: 850 });
+  await expect.poll(checkAlignment).toBe(true);
+});
+
 test('keeps workspace navigation and the token inspector usable at phone width', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 850 });
   await page.goto('/');
+  const header = page.getByRole('banner');
+  await expect(header.getByRole('button', { name: 'Review changes', exact: true })).toHaveText('Review changes');
+  expect(await header.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
   const navigation = page.getByRole('navigation', { name: 'Foundry' });
   await navigation.getByRole('button', { name: 'Workspace', exact: true }).click();
-  await expect(page.getByRole('region', { name: 'Workspace management' })).toBeVisible();
+  await expect(page.getByRole('main', { name: 'Workspace management' })).toBeVisible();
   await navigation.getByRole('button', { name: 'Tokens', exact: true }).click();
   const search = page.getByRole('searchbox', { name: 'Search tokens in group' });
-  await expect(search.locator('..')).toHaveCSS('border-radius', '17px');
+  const bar = search.locator('..');
+  const emptyHeight = await bar.evaluate(element => element.getBoundingClientRect().height);
+  await expect(bar.locator('.md-search-leading-slot')).toHaveCSS('width', '24px');
+  await expect(page.getByRole('button', { name: 'Clear token search' })).toHaveCount(0);
   await search.fill('ink');
-  await page.getByRole('button', { name: 'Clear token search' }).click();
+  const clear = page.getByRole('button', { name: 'Clear token search' });
+  await clear.hover();
+  await expect(search).toBeFocused();
+  expect(await bar.evaluate(element => element.getBoundingClientRect().height)).toBe(emptyHeight);
+  const enlargedHeight = await search.evaluate(input => {
+    const previous = input.style.lineHeight;
+    input.style.lineHeight = '48px';
+    const height = input.parentElement?.getBoundingClientRect().height;
+    input.style.lineHeight = previous;
+    return height;
+  });
+  expect(enlargedHeight).toBeGreaterThan(emptyHeight);
+  await expect.poll(() => clear.evaluate(button => {
+    const bounds = button.closest('.md-search-bar')?.getBoundingClientRect();
+    const slot = button.parentElement?.getBoundingClientRect();
+    const rect = button.getBoundingClientRect();
+    return bounds && slot && rect.width === slot.width && rect.height === slot.height &&
+      rect.top >= bounds.top && rect.bottom <= bounds.bottom && rect.right <= bounds.right;
+  })).toBe(true);
+  await clear.click();
   await expect(search).toHaveValue('');
   await page.getByRole('button', { name: 'Token actions for reference.color.ink', exact: true }).press('Enter');
   await page.getByRole('menuitem', { name: 'References', exact: true }).click();
@@ -796,21 +1030,82 @@ test('keeps workspace navigation and the token inspector usable at phone width',
   await expect(link).toBeFocused();
   await expect(inspector.getByRole('textbox', { name: 'Token value' })).toHaveValue('{reference.color.paper}');
   await inspector.getByRole('textbox', { name: 'Token name' }).fill('dark-ink');
-  await inspector.getByRole('combobox', { name: 'Token type' }).selectOption('color');
+  await chooseOption(inspector.getByRole('combobox', { name: 'Token type' }), 'color');
   await inspector.getByRole('textbox', { name: 'Token value' }).fill('#123456');
-  await inspector.getByRole('textbox', { name: 'Description' }).fill('Ink for text');
+  await inspector.getByRole('textbox', { name: 'Token description' }).fill('Ink for text');
   await inspector.getByRole('button', { name: 'Apply to workspace', exact: true }).click();
   const review = page.getByRole('dialog', { name: 'Rename token' });
   await expect(review).toContainText('1 reference updated');
   await review.getByRole('button', { name: 'Apply to workspace' }).click();
   await expect(inspector.getByRole('textbox', { name: 'Token name' })).toHaveValue('dark-ink');
   await expect(inspector.getByRole('textbox', { name: 'Token value' })).toHaveValue('#123456');
-  await expect(inspector.getByRole('combobox', { name: 'Token type' })).toHaveValue('color');
-  await expect(inspector.getByRole('textbox', { name: 'Description' })).toHaveValue('Ink for text');
+  await expect(inspector.getByRole('combobox', { name: 'Token type' })).toHaveAttribute('data-select-value', 'color');
+  await expect(inspector.getByRole('textbox', { name: 'Token description' })).toHaveValue('Ink for text');
   await inspector.getByRole('button', { name: 'Close inspector', exact: true }).click();
   await expect(inspector).toBeHidden();
   await expect(page.getByRole('button', { name: 'Value for reference.color.dark-ink', exact: true })).toHaveText('#123456');
   await expect(page.getByRole('button', { name: 'Value for system.color.text', exact: true })).toContainText('{reference.color.dark-ink}');
+});
+
+test('skip links enter the token grid and reach the open sheets', async ({ page }) => {
+  await page.goto('/');
+  const skip = page.getByRole('navigation', { name: 'Skip links' });
+  const grid = page.getByRole('grid', { name: 'Tokens' });
+  await page.keyboard.press('Tab');
+  const gridLink = skip.getByRole('link', { name: 'Skip to token grid' });
+  await expect(gridLink).toBeFocused();
+  const menu = page.getByRole('banner').getByRole('button', { name: 'File', exact: true });
+  const skipBounds = await skip.boundingBox();
+  const menuBounds = await menu.boundingBox();
+  expect(skipBounds && menuBounds && skipBounds.y + skipBounds.height <= menuBounds.y).toBe(true);
+  await page.keyboard.press('Tab');
+  await expect(skip.getByRole('link', { name: 'Skip to groups' })).toBeFocused();
+  await page.keyboard.press('Shift+Tab');
+  await expect(gridLink).toBeFocused();
+  await page.keyboard.press('Enter');
+  const name = grid.getByRole('button', { name: 'Name for reference.color.ink' });
+  await expect(name).toBeFocused();
+  await page.keyboard.press('ArrowRight');
+  const value = grid.getByRole('button', { name: 'Value for reference.color.ink', exact: true });
+  await expect(value).toBeFocused();
+
+  await skip.getByRole('link', { name: 'Skip to groups' }).press('Enter');
+  await expect(page.getByRole('complementary', { name: 'Groups', exact: true })).toBeFocused();
+  await gridLink.press('Enter');
+  await expect(value).toBeFocused();
+
+  await value.press('Shift+F10');
+  await page.getByRole('menuitem', { name: 'Edit token', exact: true }).click();
+  const sheet = page.getByRole('complementary', { name: 'Token details' });
+  await expect(sheet.getByRole('button', { name: 'Close inspector' })).toBeFocused();
+  await skip.getByRole('link', { name: 'Skip to token details' }).press('Enter');
+  await expect(sheet).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(sheet).toBeHidden();
+  await expect(value).toBeFocused();
+});
+
+test('a single tap on a narrow grid selects the row and keeps arrow navigation', async ({ page }) => {
+  await page.setViewportSize({ width: 430, height: 850 });
+  await page.goto('/');
+  const grid = page.getByRole('grid', { name: 'Tokens' });
+  const name = grid.getByRole('button', { name: 'Name for reference.color.ink' });
+  const sheet = page.getByRole('complementary', { name: 'Token details' });
+  await name.click();
+  await expect(name).toBeFocused();
+  await expect(grid.getByRole('row', { selected: true })).toHaveCount(1);
+  await expect(sheet).toBeHidden();
+  await page.keyboard.press('ArrowDown');
+  const paper = grid.getByRole('button', { name: 'Name for reference.color.paper' });
+  await expect(paper).toBeFocused();
+  const toolbarEdit = page.getByRole('button', { name: 'Edit token', exact: true });
+  await toolbarEdit.click();
+  await expect(sheet.getByRole('textbox', { name: 'Token name' })).toHaveValue('paper');
+  await sheet.getByRole('button', { name: 'Close inspector' }).click();
+  await expect(toolbarEdit).toBeFocused();
+  await paper.click();
+  await expect(paper).toBeFocused();
+  await expect(sheet).toBeHidden();
 });
 
 test('keeps the menu surface rounded on click and shows keyboard row focus', async ({ page }) => {
@@ -833,8 +1128,8 @@ test('keeps the menu surface rounded on click and shows keyboard row focus', asy
 test('highlights menu items on hover without flashing on outside dismissal', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('navigation', { name: 'Foundry' }).getByRole('button', { name: 'Workspace', exact: true }).click();
-  await page.getByRole('button', { name: 'Integrations', exact: true }).click();
-  const menu = page.getByRole('menu', { name: 'Integrations' });
+  await page.getByRole('button', { name: 'Manage integrations', exact: true }).click();
+  const menu = page.getByRole('menu', { name: 'Manage integrations' });
   const item = menu.getByRole('menuitem', { name: 'Open GitHub repository…' });
 
   await item.hover();
@@ -852,12 +1147,602 @@ test('highlights menu items on hover without flashing on outside dismissal', asy
   await expect(menu).toBeHidden();
 });
 
+test('Alt key tips jump between panes and activate existing commands', async ({ page }) => {
+  await page.goto('/');
+  const grid = page.getByRole('grid', { name: 'Tokens' });
+  const cell = grid.getByRole('button', { name: 'Value for reference.color.paper', exact: true });
+  const tips = page.locator('.workspace-key-tips');
+  const status = page.getByRole('status').filter({ hasText: /^Key tips/u });
+  await cell.focus();
+
+  await page.keyboard.press('Alt');
+  await expect(tips.getByText('G', { exact: true })).toBeVisible();
+  await expect(status).toContainText('T for Tokens');
+  await page.keyboard.press('g');
+  await expect(page.getByRole('complementary', { name: 'Groups' }).getByRole('button', { name: 'All tokens' })).toBeFocused();
+  await page.keyboard.press('Alt');
+  await page.keyboard.press('t');
+  await expect(cell).toBeFocused();
+
+  await page.keyboard.press('Alt');
+  await page.keyboard.press('f');
+  await expect(page.getByRole('menu', { name: 'File' })).toBeVisible();
+  await expect(status).toContainText('O for Open token files');
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('menu', { name: 'File' })).toBeHidden();
+  await expect(status).toContainText('F for File');
+  await page.keyboard.press('Escape');
+  await expect(cell).toBeFocused();
+
+  await page.keyboard.press('Alt');
+  await expect(status).toContainText('N for New token');
+  await expect(status).not.toContainText('Move, duplicate or delete');
+  await page.keyboard.press('n');
+  await expect(page.getByRole('dialog', { name: 'New token' })).toBeVisible();
+  await page.keyboard.press('Alt');
+  await expect(tips).toBeHidden();
+  await page.keyboard.press('Escape');
+
+  await command(page, 'Help', 'Show key tips');
+  await expect(tips.getByText('I', { exact: true })).toBeVisible();
+  await page.keyboard.press('k');
+  const help = page.getByRole('menu', { name: 'Help' });
+  await expect(help).toBeVisible();
+  await expect(status).toContainText('for Keyboard shortcuts');
+  const shortcut = (await status.textContent())?.match(/([A-Z0-9]) for Keyboard shortcuts/u)?.[1];
+  if (!shortcut) throw new Error('Keyboard shortcuts has no key tip');
+  await page.keyboard.press(shortcut.toLowerCase());
+  const gridHelp = page.getByRole('dialog', { name: 'Keyboard shortcuts' });
+  await expect(gridHelp).toBeVisible();
+  await expect(tips).toBeHidden();
+  await page.keyboard.press('Escape');
+  await expect(gridHelp).toBeHidden();
+
+  await page.keyboard.press('Alt');
+  await expect(tips.getByText('D', { exact: true })).toBeVisible();
+  await page.keyboard.press('d');
+  const details = page.getByRole('complementary', { name: 'Token details' });
+  await expect(details.getByRole('button', { name: 'Close inspector' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Alt');
+  await page.keyboard.press('w');
+  await expect(page.getByRole('main', { name: 'Workspace management' })).toBeFocused();
+  await page.keyboard.press('Alt');
+  await expect(status).toContainText('N for New source file');
+  await page.keyboard.press('n');
+  const source = page.getByRole('dialog', { name: 'New source file' });
+  await expect(source).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(source).toBeHidden();
+  await page.keyboard.press('Alt');
+  await page.keyboard.press('v');
+  await expect(page.getByRole('main', { name: 'Variants' }).getByRole('heading', { name: 'Variants', exact: true })).toBeFocused();
+  await page.keyboard.press('Alt');
+  await page.keyboard.press('t');
+  await expect(cell).toBeFocused();
+});
+
+test('separates toolbar key tips and cancels tips on ordinary navigation', async ({ page }) => {
+  await page.goto('/');
+  const grid = page.getByRole('grid', { name: 'Tokens' });
+  const cell = grid.getByRole('button', { name: 'Name for reference.color.ink', exact: true });
+  const next = grid.getByRole('button', { name: 'Name for reference.color.paper', exact: true });
+  const tips = page.locator('.workspace-key-tips');
+  const status = page.getByRole('status').filter({ hasText: /^Key tips/u });
+  await cell.click();
+  await page.keyboard.press('Alt');
+  await expect(status).toContainText('D for Edit token');
+  await expect(status).toContainText('N for New token');
+  await expect(status).toContainText('B for Bulk edit');
+  await expect(tips.getByText('G', { exact: true })).toBeVisible();
+  const groupBounds = await page.getByRole('heading', { name: 'Groups', exact: true }).getByText('Groups', { exact: true }).boundingBox();
+  const groupTipBounds = await tips.getByText('G', { exact: true }).boundingBox();
+  expect(groupBounds && groupTipBounds && Math.abs(groupTipBounds.x - groupBounds.x - groupBounds.width) < 12).toBe(true);
+
+  const groupBadges = await Promise.all(([
+    ['B', 'Edit selected token fields'],
+    ['M', 'Move, duplicate or delete selected tokens'],
+  ] as const).map(([letter, label]) => Promise.all([
+    page.getByRole('toolbar', { name: label, exact: true }).boundingBox(),
+    tips.getByText(letter, { exact: true }).boundingBox(),
+  ])));
+  for (const [group, tip] of groupBadges) {
+    if (!group || !tip) throw new Error('Missing toolbar group or key tip');
+    expect(Math.abs(tip.x + tip.width / 2 - group.x - group.width / 2)).toBeLessThan(2);
+    expect(Math.abs(tip.y + tip.height / 2 - (group.y - 6))).toBeLessThan(2);
+  }
+
+  await page.keyboard.press('b');
+  await expect(status).toContainText('R for Rename');
+  await expect(status).not.toContainText(/Edit token|New token|Move/u);
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('m');
+  await expect(status).toContainText('M for Move');
+  await expect(status).not.toContainText(/Rename|Edit token|New token/u);
+  await page.keyboard.press('ArrowDown');
+  await expect(tips).toBeHidden();
+  await expect(next).toBeFocused();
+
+  await page.keyboard.press('Alt');
+  await page.keyboard.press('h');
+  await expect(page.getByRole('menu', { name: 'Group actions' })).toBeVisible();
+  await expect(status).toContainText('N for New group');
+  await page.keyboard.press('ArrowDown');
+  await expect(tips).toBeHidden();
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Alt');
+  await page.keyboard.press('t');
+  await expect(next).toBeFocused();
+
+  await page.keyboard.press('Alt+ArrowDown');
+  await expect(page.getByRole('menu', { name: 'Token actions for reference.color.paper' })).toBeVisible();
+  await expect(status).toContainText('E for Edit token');
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('menu', { name: 'Token actions for reference.color.paper' })).toBeHidden();
+  await expect(next).toBeFocused();
+});
+
+test('Tokens starts in the grid and menus only show their own key tips', async ({ page }) => {
+  await page.goto('/');
+  const controls = page.getByRole('region', { name: 'Token controls' });
+  const grid = page.getByRole('grid', { name: 'Tokens' });
+  const lastCell = grid.getByRole('button', { name: 'Value for reference.color.paper', exact: true });
+  const skip = page.getByRole('navigation', { name: 'Skip links' });
+  const toolbar = page.getByRole('toolbar', { name: 'Workspace commands' });
+  const rail = page.getByRole('navigation', { name: 'Foundry' });
+
+  await expect(grid).toBeVisible();
+  await page.keyboard.press('ArrowRight');
+  await expect(grid.getByRole('button', { name: 'Name for reference.color.ink', exact: true })).toBeFocused();
+  await lastCell.focus();
+  await page.keyboard.press('Alt');
+  await page.keyboard.press('c');
+  await expect(controls).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(controls.getByRole('button', { name: 'Hide groups sidebar', exact: true })).toBeFocused();
+
+  await rail.getByRole('button', { name: 'Variants', exact: true }).click();
+  await page.keyboard.press('Alt');
+  await page.keyboard.press('t');
+  await expect(lastCell).toBeFocused();
+  await rail.getByRole('button', { name: 'Tokens', exact: true }).click();
+  await expect(lastCell).toBeFocused();
+  await rail.getByRole('button', { name: 'Workspace', exact: true }).click();
+  await skip.getByRole('link', { name: 'Skip to token grid' }).press('Enter');
+  await expect(lastCell).toBeFocused();
+
+  await toolbar.getByRole('button', { name: 'View', exact: true }).click();
+  await expect(page.getByRole('menu', { name: 'View' }).getByRole('menuitem', { name: /go to token/u })).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await toolbar.getByRole('button', { name: 'File', exact: true }).click();
+  const fileMenu = page.getByRole('menu', { name: 'File' });
+  const status = page.getByRole('status').filter({ hasText: /^Key tips/u });
+  await expect(fileMenu).toBeVisible();
+  await expect(status).toContainText('O for Open token files');
+  await expect(status).not.toContainText(/for (Tokens|Token grid|Focus grid)/u);
+  await expect(page.locator('.workspace-key-tips kbd')).toHaveCount(0);
+  await page.keyboard.press('Alt');
+  await page.keyboard.press('j');
+  await expect(fileMenu).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(fileMenu).toBeHidden();
+});
+
+test('row and group menus show shortcut letters and can be skipped', async ({ page }) => {
+  await page.goto('/');
+  const cell = page.getByRole('button', { name: 'Name for reference.color.paper', exact: true });
+  const menu = page.getByRole('menu', { name: 'Token actions for reference.color.paper' });
+  await cell.click();
+  await cell.press('Alt+ArrowDown');
+  await expect(menu.getByRole('menuitem', { name: 'Edit token', exact: true })).toBeFocused();
+  await expect(menu.getByRole('menuitem', { name: 'Edit token', exact: true })).toHaveAttribute('aria-keyshortcuts', 'E');
+  expect(await menu.getByRole('menuitem', { name: 'Edit token', exact: true }).evaluate(item =>
+    getComputedStyle(item, '::after').content)).toContain('"E"');
+  await page.keyboard.press('ArrowDown');
+  await expect(menu.getByRole('menuitem', { name: 'References', exact: true })).toBeFocused();
+  await expect(menu.getByRole('menuitem', { name: 'References', exact: true })).toHaveAttribute('aria-keyshortcuts', 'R');
+  await page.keyboard.press('Shift+Tab');
+  await expect(menu).toBeHidden();
+  await expect(page.getByRole('toolbar', { name: 'Token actions', exact: true }).getByRole('button', { name: 'Edit token', exact: true })).toBeFocused();
+
+  await cell.press('Alt+ArrowDown');
+  await page.keyboard.press('Tab');
+  await expect(menu).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Clear selection' })).toBeFocused();
+
+  await cell.click({ button: 'right' });
+  await expect(menu.getByRole('menuitem', { name: 'Edit token', exact: true })).toBeFocused();
+  await page.keyboard.press('e');
+  await expect(page.getByRole('button', { name: 'Close inspector' })).toBeFocused();
+
+  const groups = page.getByRole('complementary', { name: 'Groups' });
+  await groups.getByRole('button', { name: 'Group actions' }).press('ArrowDown');
+  await expect(page.getByRole('menu', { name: 'Group actions' }).getByRole('menuitem', { name: 'New group', exact: true })).toHaveAttribute('aria-keyshortcuts', 'N');
+  await page.keyboard.press('Tab');
+  await expect(page.getByRole('menu', { name: 'Group actions' })).toBeHidden();
+  await expect(groups.getByRole('button', { name: 'All tokens' })).toBeFocused();
+});
+
+test('tabs between rail and toolbar groups and skips the grid column handles', async ({ page }) => {
+  await page.goto('/');
+  const rail = page.getByRole('navigation', { name: 'Foundry' });
+  const tokens = rail.getByRole('button', { name: 'Tokens', exact: true });
+  const workspace = rail.getByRole('button', { name: 'Workspace', exact: true });
+  await tokens.focus();
+  await page.keyboard.press('ArrowDown');
+  await expect(rail.getByRole('button', { name: 'Variants', exact: true })).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await expect(workspace).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(rail.getByRole('button', { name: /Switch to .* mode/u })).toBeFocused();
+
+  const grid = page.getByRole('grid', { name: 'Tokens' });
+  const cell = grid.getByRole('button', { name: 'Name for reference.color.ink', exact: true });
+  await cell.click();
+  const fieldActions = page.getByRole('toolbar', { name: 'Edit selected token fields' });
+  const structureActions = page.getByRole('toolbar', { name: 'Move, duplicate or delete selected tokens' });
+  const tokenActions = page.getByRole('toolbar', { name: 'Token actions', exact: true });
+  const rename = fieldActions.getByRole('button', { name: 'Rename', exact: true });
+  const move = structureActions.getByRole('button', { name: 'Move', exact: true });
+  const edit = tokenActions.getByRole('button', { name: 'Edit token', exact: true });
+  await rename.focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(fieldActions.getByRole('button', { name: 'Change value', exact: true })).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(move).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(edit).toBeFocused();
+  await page.keyboard.press('ArrowRight');
+  await expect(tokenActions.getByRole('button', { name: 'New token', exact: true })).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(cell).toBeFocused();
+
+  const nameColumn = grid.getByRole('columnheader', { name: 'Name', exact: true });
+  const initial = await nameColumn.boundingBox();
+  await page.keyboard.press('Alt+Shift+ArrowRight');
+  await expect(cell).toBeFocused();
+  expect((await nameColumn.boundingBox())?.width ?? 0).toBeGreaterThan(initial?.width ?? 0);
+});
+
+test('the grid has one Tab stop and blank clicks preserve the active cell and checked rows', async ({ page }) => {
+  await page.goto('/');
+  const grid = page.getByRole('grid', { name: 'Tokens' });
+  const container = page.locator('[data-slot="table-container"]').filter({ has: grid });
+  const first = grid.getByRole('button', { name: 'Name for reference.color.ink', exact: true });
+  const remembered = grid.getByRole('button', { name: 'Value for reference.color.paper', exact: true });
+  const checked = grid.getByRole('row', { selected: true });
+  const names = () => checked.evaluateAll(rows => rows.map(row => row.getAttribute('data-token-row')));
+  const tokenActions = page.getByRole('toolbar', { name: 'Token actions', exact: true });
+  const edit = tokenActions.getByRole('button', { name: 'Edit token', exact: true });
+  const clear = page.getByRole('button', { name: 'Clear selection' });
+
+  await first.press('Space');
+  await remembered.press('Space');
+  const expected = ['reference.color.ink', 'reference.color.paper'];
+  expect(await names()).toEqual(expected);
+
+  const tableBox = await grid.boundingBox();
+  const containerBox = await container.boundingBox();
+  if (!tableBox || !containerBox || tableBox.y + tableBox.height + 12 >= containerBox.y + containerBox.height) {
+    throw new Error('The grid needs visible blank space under its rows');
+  }
+  await page.mouse.click(containerBox.x + 24, tableBox.y + tableBox.height + 12);
+  await expect(remembered).toBeFocused();
+  await page.locator('.workspace-footer').getByText(/^10 tokens$/u).click();
+  await expect(remembered).toBeFocused();
+
+  await page.keyboard.press('Tab');
+  await expect(clear).toBeFocused();
+  await page.keyboard.press('Shift+Tab');
+  await expect(remembered).toBeFocused();
+  await page.keyboard.press('Shift+Tab');
+  await expect(edit).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(remembered).toBeFocused();
+  const group = page.getByRole('complementary', { name: 'Groups' });
+  const groupActions = group.getByRole('button', { name: 'Group actions' });
+  await groupActions.press('ArrowDown');
+  const groupMenu = page.getByRole('menu', { name: 'Group actions' });
+  await expect(groupMenu).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(groupMenu).toBeHidden();
+  await expect(groupActions).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(remembered).toBeFocused();
+  await edit.press('Escape');
+  await expect(remembered).toBeFocused();
+  await expect(grid.locator('[tabindex="0"]')).toHaveCount(1);
+  expect(await names()).toEqual(expected);
+
+  await first.press('ArrowLeft');
+  await page.keyboard.press('ArrowUp');
+  const selectAll = grid.getByRole('checkbox', { name: 'Select all visible tokens' });
+  await expect(selectAll).toBeFocused();
+  await page.keyboard.press('Shift+Tab');
+  await expect(edit).toBeFocused();
+  expect(await names()).toEqual(expected);
+});
+
+test('key tip menus support native keyboard navigation and dismissal', async ({ page }) => {
+  await page.goto('/');
+  const cell = page.getByRole('button', { name: 'Name for reference.color.ink', exact: true });
+  const menu = page.getByRole('menu', { name: 'View', exact: true });
+  const help = page.getByRole('dialog', { name: 'Keyboard shortcuts' });
+  const toolbar = page.getByRole('toolbar', { name: 'Workspace commands' });
+  const file = toolbar.getByRole('button', { name: 'File', exact: true });
+  const helpTrigger = toolbar.getByRole('button', { name: 'Help', exact: true });
+  await file.focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(toolbar.getByRole('button', { name: 'Edit', exact: true })).toBeFocused();
+  await page.keyboard.press('End');
+  await expect(helpTrigger).toBeFocused();
+  await page.keyboard.press('Tab');
+  const tokens = page.getByRole('navigation', { name: 'Foundry' }).getByRole('button', { name: 'Tokens' });
+  await expect(tokens).toBeFocused();
+  await page.keyboard.press('Shift+Tab');
+  await expect(helpTrigger).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  const helpMenu = page.getByRole('menu', { name: 'Help' });
+  await expect(helpMenu.getByRole('menuitem', { name: 'Keyboard shortcuts' })).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await expect(helpMenu.getByRole('menuitem', { name: 'Show key tips' })).toBeFocused();
+  await page.keyboard.press('Home');
+  await page.keyboard.press('Enter');
+  await expect(help).toBeVisible();
+  await expect(help.getByRole('heading', { name: 'Workspace', exact: true })).toBeVisible();
+  await expect(help.getByRole('heading', { name: 'Menus and toolbars' })).toBeVisible();
+  await expect(help.getByRole('heading', { name: 'Token grid', exact: true })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(help).toBeHidden();
+  const items = menu.locator('[role="menuitem"]:not([aria-disabled="true"])');
+
+  await cell.focus();
+  await page.keyboard.press('Alt');
+  await page.keyboard.press('i');
+  await expect(items.first()).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(menu).toBeHidden();
+  await expect(page.locator('.workspace-key-tips')).toBeHidden();
+  const banner = page.getByRole('banner');
+  await expect(tokens).toBeFocused();
+
+  await banner.getByRole('button', { name: 'View', exact: true }).press('ArrowDown');
+  await expect(items.first()).toBeFocused();
+  await page.keyboard.press('Shift+Tab');
+  await expect(menu).toBeHidden();
+  await expect(page.getByRole('navigation', { name: 'Skip links' }).getByRole('link', { name: 'Skip to groups' })).toBeFocused();
+
+  await cell.focus();
+  await page.keyboard.press('Alt');
+  await page.keyboard.press('i');
+  await expect(items.first()).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(menu).toBeHidden();
+  await expect(page.locator('.workspace-key-tips')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(cell).toBeFocused();
+});
+
+test('key tips preserve typing and modifier chords in token search', async ({ page }) => {
+  await page.goto('/');
+  const search = page.getByRole('searchbox', { name: 'Search tokens in group' });
+  const tips = page.locator('.workspace-key-tips');
+  await search.focus();
+  await page.keyboard.press('Alt+ArrowDown');
+  await expect(tips).toBeHidden();
+  await page.keyboard.press('Alt');
+  await expect(tips.getByText('S', { exact: true })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(search).toBeFocused();
+  await page.keyboard.type('ink');
+  await expect(search).toHaveValue('ink');
+});
+
+test('grid shortcuts jump to edges, select rows and open token actions', async ({ page }) => {
+  await page.goto('/');
+  const grid = page.getByRole('grid', { name: 'Tokens' });
+  const firstCell = grid.getByRole('button', { name: 'Name for reference.color.ink', exact: true });
+  const firstValue = grid.getByRole('button', { name: 'Value for reference.color.ink', exact: true });
+  const lastValue = grid.getByRole('button', { name: 'Value for system.space.panel-padding', exact: true });
+  const lastCheckbox = grid.locator('[data-token-row="system.space.panel-padding"]').getByRole('checkbox');
+  const menu = page.getByRole('menu', { name: 'Token actions for system.space.panel-padding' });
+
+  await firstValue.focus();
+  await page.keyboard.press('Control+ArrowLeft');
+  await expect(firstCell).toBeFocused();
+  await page.keyboard.press('Control+ArrowRight');
+  await expect(grid.getByRole('button', { name: 'Description for reference.color.ink', exact: true })).toBeFocused();
+  await firstValue.press('Control+Shift+ArrowDown');
+  await expect(lastValue).toBeFocused();
+  await expect(grid.getByRole('row', { selected: true })).toHaveCount(10);
+  await lastCheckbox.press('Shift+Space');
+  await expect(lastCheckbox).toBeChecked();
+  await expect(grid.getByRole('row', { selected: true })).toHaveCount(1);
+
+  await lastCheckbox.press('Shift+F10');
+  await expect(menu).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(lastCheckbox).toBeFocused();
+
+  await grid.getByRole('checkbox', { name: 'Select all visible tokens' }).press('Alt+ArrowDown');
+  await expect(menu).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(lastCheckbox).toBeFocused();
+
+  await lastValue.click({ button: 'right' });
+  await expect(menu).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(lastValue).toBeFocused();
+
+  await command(page, 'Help', 'Keyboard shortcuts');
+  const help = page.getByRole('dialog', { name: 'Keyboard shortcuts' });
+  await expect(help).toContainText('Alt + Down or Shift + F10');
+});
+
+test('extends and shrinks keyboard row ranges while preserving checked rows', async ({ page }) => {
+  await page.goto('/');
+  await page.locator('input[type=file][multiple]').setInputFiles({
+    name: 'five.tokens.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(
+      Object.fromEntries([1, 2, 3, 4, 5].map(n => ['row-' + n, { $type: 'number', $value: n }]))
+    )),
+  });
+  const grid = page.getByRole('grid', { name: 'Tokens' });
+  const cell = (n: number) => grid.getByRole('button', { name: 'Name for row-' + n, exact: true });
+  const checkbox = (n: number) => grid.getByRole('checkbox', { name: 'Select row Name for row-' + n, exact: true });
+  const checked = async (...expected: number[]) => {
+    await expect(grid.getByRole('row', { selected: true })).toHaveCount(expected.length);
+    await Promise.all([1, 2, 3, 4, 5].map(n => expect(checkbox(n)).toBeChecked({ checked: expected.includes(n) })));
+  };
+  async function markFirstAndFocusThird() {
+    await checkbox(1).check();
+    await cell(1).press('ArrowDown');
+    await page.keyboard.press('ArrowDown');
+    await expect(cell(3)).toBeFocused();
+    await checked(1);
+  }
+
+  await markFirstAndFocusThird();
+  await page.keyboard.press('Control+Shift+ArrowDown');
+  await expect(cell(5)).toBeFocused();
+  await checked(1, 3, 4, 5);
+  await page.keyboard.press('Escape');
+
+  await markFirstAndFocusThird();
+  await page.keyboard.press('Control+Space');
+  await checked(1, 3);
+  await page.keyboard.press('Control+Shift+ArrowDown');
+  await checked(1, 3, 4, 5);
+  await page.keyboard.press('Shift+ArrowUp');
+  await checked(1, 3, 4);
+  await page.keyboard.press('Shift+ArrowUp');
+  await checked(1, 3);
+  await page.keyboard.press('Shift+ArrowUp');
+  await checked(1, 2, 3);
+  await page.keyboard.press('Escape');
+
+  await markFirstAndFocusThird();
+  await page.keyboard.press('Control+Space');
+  await page.keyboard.press('Shift+ArrowDown');
+  await checked(1, 3, 4);
+  await page.keyboard.press('Shift+ArrowDown');
+  await checked(1, 3, 4, 5);
+  await page.keyboard.press('Shift+ArrowUp');
+  await checked(1, 3, 4);
+  await page.keyboard.press('Escape');
+
+  await markFirstAndFocusThird();
+  await page.keyboard.press('Shift+ArrowDown');
+  await checked(1, 3, 4);
+  await page.keyboard.press('Shift+ArrowDown');
+  await checked(1, 3, 4, 5);
+  await page.keyboard.press('Shift+ArrowUp');
+  await checked(1, 3, 4);
+  // A plain move ends the range. The next Shift gesture has a new baseline.
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Shift+ArrowUp');
+  await checked(1, 3, 4, 5);
+  await page.keyboard.press('Escape');
+
+  await checkbox(1).check();
+  await checkbox(2).check();
+  await cell(1).focus();
+  await page.keyboard.down('Control');
+  await page.keyboard.down('Shift');
+  await page.keyboard.down('Space');
+  await checked(1, 2);
+  await page.keyboard.press('ArrowDown');
+  await checked(1, 2, 3, 4, 5);
+  await page.keyboard.up('Space');
+  await page.keyboard.down('Space');
+  await page.keyboard.press('ArrowUp');
+  await page.keyboard.up('Space');
+  await page.keyboard.up('Shift');
+  await page.keyboard.up('Control');
+  await expect(cell(1)).toBeFocused();
+  await checked(1, 2);
+});
+
+test('keeps the same range anchor after selecting disjoint rows by mouse or Space', async ({ page }) => {
+  await page.goto('/');
+  const rows = page.getByRole('grid', { name: 'Tokens' }).locator('[data-token-row]');
+  const cell = (row: number) => rows.nth(row - 1).locator('[data-edit-column="name"]');
+  const checked = () => rows.evaluateAll(items => items.flatMap((item, index) =>
+    item.querySelector<HTMLInputElement>('input[type="checkbox"]')?.checked ? [index + 1] : []));
+  await expect(rows).toHaveCount(10);
+
+  async function reverseRange(mark: (row: number) => Promise<void>) {
+    await mark(1);
+    await mark(3);
+    await mark(4);
+    await mark(5);
+    await mark(6);
+    await mark(8);
+    await expect.poll(checked).toEqual([1, 3, 4, 5, 6, 8]);
+    await page.keyboard.press('Control+Shift+ArrowDown');
+    await expect.poll(checked).toEqual([1, 3, 4, 5, 6, 8, 9, 10]);
+    await page.keyboard.press('Control+Shift+ArrowUp');
+    await expect.poll(checked).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    await page.keyboard.press('Escape');
+    await expect.poll(checked).toEqual([]);
+  }
+
+  await reverseRange(row => cell(row).press('Space'));
+  await reverseRange(row => rows.nth(row - 1).getByRole('checkbox').check());
+  await reverseRange(row => cell(row).click({ modifiers: ['Control'] }));
+
+  // Replay the mixed selection shown in the recording.
+  await cell(1).click();
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Shift+ArrowDown');
+  await page.keyboard.press('Shift+ArrowDown');
+  await page.keyboard.press('Shift+ArrowDown');
+  await expect.poll(checked).toEqual([1, 3, 4, 5, 6]);
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Space');
+  await page.keyboard.press('Shift+ArrowDown');
+  await page.keyboard.press('Shift+ArrowDown');
+  await expect(cell(10)).toBeFocused();
+  await expect.poll(checked).toEqual([1, 3, 4, 5, 6, 8, 9, 10]);
+  // Pressing Down at the bottom leaves focus where it is.
+  await page.keyboard.press('ArrowDown');
+  await expect(cell(10)).toBeFocused();
+  await page.keyboard.press('Control+Shift+ArrowUp');
+  await expect(cell(1)).toBeFocused();
+  await expect.poll(checked).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+  await page.keyboard.press('Escape');
+
+  await cell(5).press('Space');
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('ArrowDown');
+  await expect(cell(7)).toBeFocused();
+  await page.keyboard.press('Shift+ArrowDown');
+  await page.keyboard.press('Shift+ArrowDown');
+  await page.keyboard.press('Shift+ArrowDown');
+  await expect.poll(checked).toEqual([5, 7, 8, 9, 10]);
+  await page.keyboard.press('ArrowUp');
+  await page.keyboard.press('ArrowUp');
+  await page.keyboard.press('ArrowUp');
+  await page.keyboard.press('ArrowUp');
+  await page.keyboard.press('ArrowUp');
+  await page.keyboard.press('ArrowUp');
+  await page.keyboard.press('ArrowUp');
+  await expect(cell(3)).toBeFocused();
+  await page.keyboard.press('Shift+ArrowUp');
+  await expect.poll(checked).toEqual([2, 3, 5, 7, 8, 9, 10]);
+  await page.keyboard.press('Control+Shift+ArrowDown');
+  await expect(cell(10)).toBeFocused();
+  await expect.poll(checked).toEqual([3, 4, 5, 6, 7, 8, 9, 10]);
+});
+
 test('keeps keyboard focus in the grid independently of checked rows', async ({ page }) => {
   await page.route('**/git/session', route => route.fulfill({ status: 401, json: {} }));
   await page.goto('/');
   const grid = page.getByRole('grid', { name: 'Tokens' });
   const name = (path: string) => grid.getByRole('button', { name: 'Name for reference.color.' + path, exact: true });
   const check = (path: string) => grid.locator('[data-token-row="reference.color.' + path + '"]').getByRole('checkbox');
+  await expect(grid.getByRole('gridcell').filter({ hasText: /^0$/u })).toHaveCount(0);
   await name('ink').click();
   await expect(check('ink')).toBeChecked();
   await name('ocean').click({ modifiers: ['Shift'] });
@@ -921,12 +1806,12 @@ test('opens and dismisses command menus with the keyboard', async ({ page }) => 
   await page.keyboard.press('Escape');
   await expect(menu).toBeHidden();
   await expect(file).toBeFocused();
-  await page.keyboard.press('Tab');
+  await page.keyboard.press('ArrowRight');
   await expect(page.getByRole('button', { name: 'Edit', exact: true })).toBeFocused();
-  await page.keyboard.press('Tab');
+  await page.keyboard.press('ArrowRight');
   await expect(page.getByRole('button', { name: 'View', exact: true })).toBeFocused();
-  await page.keyboard.press('Tab');
-  const variants = page.getByRole('button', { name: 'Variants', exact: true });
+  await page.keyboard.press('ArrowRight');
+  const variants = page.getByRole('banner').getByRole('button', { name: 'Variants', exact: true });
   await expect(variants).toBeFocused();
   await page.keyboard.press('ArrowDown');
   await expect(page.getByRole('menuitem', { name: 'Set up variants…', exact: true })).toBeFocused();
@@ -950,7 +1835,7 @@ test('reviews group inheritance and restores an overridden token', async ({ page
   await page.getByRole('button', { name: 'derived', exact: true }).click();
   await page.getByRole('button', { name: 'Actions for derived', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Edit group metadata', exact: true }).click();
-  await page.getByLabel('Inherit from group').selectOption({ label: 'base · inheritance.tokens.json' });
+  await chooseOption(page.getByRole('combobox', { name: 'Inherit from group', exact: true }), { label: 'base · inheritance.tokens.json' });
   await page.getByRole('button', { name: 'Review metadata changes', exact: true }).click();
   await page.getByRole('dialog', { name: 'Review changes', exact: true })
     .getByRole('button', { name: 'Apply to workspace', exact: true }).click();
@@ -963,7 +1848,7 @@ test('reviews group inheritance and restores an overridden token', async ({ page
   await metadata.getByText('Advanced metadata', { exact: true }).click();
   await metadata.getByText('Effective vendor extensions', { exact: true }).click();
   await expect(metadata.locator('pre')).toContainText('vendor.spacing');
-  await metadata.getByLabel('Default type').selectOption('color');
+  await chooseOption(metadata.getByRole('combobox', { name: 'Default type', exact: true }), 'color');
   await metadata.getByRole('button', { name: 'Review metadata changes' }).click();
   const invalidReview = page.getByRole('dialog', { name: 'Review changes', exact: true });
   await expect(invalidReview.getByRole('button', { name: 'Apply to workspace', exact: true })).toBeDisabled();
@@ -1036,6 +1921,7 @@ test('links to a compatible field in another source and inspects the authored po
   await expect(page.getByRole('button', { name: 'Resolved value for theme.alias', exact: true })).toHaveText('0.25');
   await command(page, 'View', 'Edit token');
   const inspector = page.getByRole('complementary', { name: 'Token details' });
+  await inspector.getByText('Link details', { exact: true }).click();
   await expect(inspector.getByText('palette.tokens.json#/palette/iris/%24value/components/0', { exact: true })).toBeVisible();
   await expect(inspector.getByText('palette.tokens.json · palette / iris / $value / components / 0', { exact: true })).toBeVisible();
   await inspector.getByRole('button', { name: 'palette.iris', exact: true }).click();
@@ -1123,13 +2009,21 @@ test('edits wide gamut color fields, opacity, missing components and fallback in
   await command(page, 'View', 'Edit token');
   const inspector = page.getByRole('complementary', { name: 'Token details', exact: true });
   await expect(inspector.getByLabel('Color preview')).toBeVisible();
-  await inspector.getByLabel('Color space', { exact: true }).selectOption('oklch');
+  await chooseOption(inspector.getByRole('combobox', { name: 'Color space', exact: true }), 'oklch');
   await inspector.getByRole('textbox', { name: 'Lightness', exact: true }).fill('0.72');
-  await inspector.getByText('Advanced color options', { exact: true }).click();
-  await inspector.getByText('Missing hue', { exact: true }).click();
-  await inspector.getByRole('textbox', { name: 'Alpha', exact: true }).fill('0.4');
-  await inspector.getByRole('textbox', { name: 'Fallback hex', exact: true }).fill('#22AA33');
+  const hue = inspector.getByRole('textbox', { name: 'Hue', exact: true });
+  const includeHue = inspector.getByRole('checkbox', { name: 'Include hue channel' });
+  const previousHue = await hue.inputValue();
+  await includeHue.uncheck();
+  await expect(hue).toBeDisabled();
+  await includeHue.check();
+  await expect(hue).toHaveValue(previousHue);
+  await includeHue.uncheck();
+  await inspector.getByRole('textbox', { name: 'Opacity', exact: true }).fill('0.4');
+  await inspector.getByRole('textbox', { name: 'sRGB fallback', exact: true }).fill('#22AA33');
   await inspector.getByRole('button', { name: 'Apply to workspace', exact: true }).click();
+  await expect(includeHue).not.toBeChecked();
+  await expect(hue).toBeDisabled();
   await inspector.getByRole('button', { name: 'Raw JSON', exact: true }).click();
   const raw = inspector.getByRole('textbox', { name: 'Token value JSON', exact: true });
   const authored = parseJson(await raw.inputValue());
@@ -1149,18 +2043,37 @@ test('creates a typed duration and reopens its authored unit and value', async (
   await page.getByRole('button', { name: 'New token', exact: true }).click();
   const create = page.getByRole('dialog', { name: 'New token', exact: true });
   await create.getByRole('textbox', { name: 'Token name', exact: true }).fill('animation-time');
-  await create.getByLabel('Token type', { exact: true }).selectOption('duration');
+  await chooseOption(create.getByRole('combobox', { name: 'Token type', exact: true }), 'duration');
   const value = create.getByRole('textbox', { name: 'Token value', exact: true });
   await value.fill('');
   await value.pressSequentially('1.25');
-  await create.getByLabel('Unit', { exact: true }).selectOption('s');
+  await chooseOption(create.getByRole('combobox', { name: 'Unit', exact: true }), 's');
   await create.getByRole('button', { name: 'Review changes', exact: true }).click();
   await page.getByRole('dialog', { name: 'Review changes', exact: true }).getByRole('button', { name: 'Apply to workspace', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Value for animation-time', exact: true })).toHaveText('1.25 s');
   await command(page, 'View', 'Edit token');
   const inspector = page.getByRole('complementary', { name: 'Token details', exact: true });
   await expect(inspector.getByRole('textbox', { name: 'Token value', exact: true })).toHaveValue('1.25');
-  await expect(inspector.getByLabel('Unit', { exact: true })).toHaveValue('s');
+  const unit = inspector.getByRole('combobox', { name: 'Unit', exact: true });
+  const fieldSize = (selector: typeof unit) => selector.locator('..').evaluate(element =>
+    ({ width: element.clientWidth, height: element.clientHeight }));
+  const name = inspector.getByRole('textbox', { name: 'Token name', exact: true });
+  const nameSize = await fieldSize(name);
+  await name.focus();
+  expect(await fieldSize(name)).toEqual(nameSize);
+  await expect(unit).toHaveAttribute('data-select-value', 's');
+  const unfocusedSize = await fieldSize(unit);
+  await unit.focus();
+  await expect(unit).toBeFocused();
+  expect(await fieldSize(unit)).toEqual(unfocusedSize);
+  await page.keyboard.press('Tab');
+  await expect(inspector.getByLabel('Token description', { exact: true })).toBeFocused();
+
+  await inspector.getByRole('button', { name: 'Raw JSON', exact: true }).click();
+  const json = inspector.getByRole('textbox', { name: 'Token value JSON', exact: true });
+  const jsonSize = await fieldSize(json);
+  await json.focus();
+  expect(await fieldSize(json)).toEqual(jsonSize);
 });
 
 test('links a composite field, returns it to a literal, and preserves sibling fields', async ({ page }) => {
@@ -1176,6 +2089,32 @@ test('links a composite field, returns it to a literal, and preserves sibling fi
   await page.getByRole('button', { name: 'Name for edge', exact: true }).click();
   await command(page, 'View', 'Edit token');
   const inspector = page.getByRole('complementary', { name: 'Token details', exact: true });
+  const name = inspector.getByRole('textbox', { name: 'Token name', exact: true });
+  const sizes = await name.evaluate(input => {
+    const field = input.closest('.md-outlined-text-field');
+    if (!field) throw new Error('Expected outlined field.');
+    const before = field.getBoundingClientRect().height;
+    input.style.lineHeight = '42px';
+    const after = field.getBoundingClientRect().height;
+    input.style.removeProperty('line-height');
+    return { before, after };
+  });
+  expect(sizes.after).toBeGreaterThan(sizes.before);
+
+  const width = inspector.getByRole('textbox', { name: 'Width value', exact: true });
+  const link = inspector.getByRole('button', { name: 'Link Width value', exact: true });
+  await width.focus();
+  await link.hover();
+  await expect(width).toBeFocused();
+  expect(await link.evaluate(button => {
+    const field = button.closest('.md-outlined-text-field');
+    const control = field?.querySelector('input')?.getBoundingClientRect();
+    if (!field || !control) return false;
+    const bounds = field.getBoundingClientRect();
+    const action = button.getBoundingClientRect();
+    return action.left >= control.right && action.right <= bounds.right &&
+      action.top >= bounds.top && action.bottom <= bounds.bottom;
+  })).toBe(true);
   await inspector.getByRole('button', { name: 'Link Width', exact: true }).click();
   const finder = page.getByRole('dialog', { name: 'Link a token', exact: true });
   await finder.getByRole('button', { name: 'lineWidth', exact: true }).click();
@@ -1186,9 +2125,18 @@ test('links a composite field, returns it to a literal, and preserves sibling fi
   await inspector.getByRole('button', { name: 'Apply to workspace', exact: true }).click();
   await inspector.getByRole('button', { name: 'Raw JSON', exact: true }).click();
   const raw = inspector.getByRole('textbox', { name: 'Token value JSON', exact: true });
-  expect(parseJson(await raw.inputValue())).toEqual({
+  const authored = await raw.inputValue();
+  expect(parseJson(authored)).toEqual({
     width: { value: 4, unit: 'px' }, style: 'solid', color: { colorSpace: 'srgb', components: [0.125, 0.25, 0.5] },
   });
+  if (await raw.evaluate(() => CSS.supports('field-sizing: content'))) {
+    const height = () => raw.evaluate(input => input.getBoundingClientRect().height);
+    const initial = await height();
+    await raw.fill(authored + '\n'.repeat(14) + ' ');
+    expect(await height()).toBeGreaterThan(initial);
+    await raw.fill(authored);
+    expect(await height()).toBe(initial);
+  }
 });
 
 const px = (value: number) => ({ value, unit: 'px' });
@@ -1249,8 +2197,8 @@ test('edits ordered composites and uses their live previews', async ({ page }) =
   expect(parseJson(await raw())).toMatchObject({ fontFamily: ['monospace', 'serif'], fontWeight: 600 });
 
   await page.getByRole('button', { name: 'Name for stroke', exact: true }).click();
-  await inspector.getByLabel('Stroke format', { exact: true }).selectOption('pattern');
-  await inspector.getByLabel('Line cap', { exact: true }).selectOption('round');
+  await chooseOption(inspector.getByRole('combobox', { name: 'Stroke format', exact: true }), 'pattern');
+  await chooseOption(inspector.getByRole('combobox', { name: 'Line cap', exact: true }), 'round');
   await inspector.getByRole('button', { name: 'Add dash length', exact: true }).click();
   await inspector.getByRole('textbox', { name: 'Dash length 2 value', exact: true }).fill('3');
   await apply();
@@ -1267,13 +2215,13 @@ test('restores a draft when switching back from an incompatible type', async ({ 
   await command(page, 'View', 'Edit token');
   const inspector = page.getByRole('complementary', { name: 'Token details', exact: true });
   await inspector.getByRole('textbox', { name: 'Red', exact: true }).fill('0.35');
-  const type = inspector.getByLabel('Token type', { exact: true });
-  await type.selectOption('dimension');
+  const type = inspector.getByRole('combobox', { name: 'Token type', exact: true });
+  await chooseOption(type, 'dimension');
   await inspector.getByRole('textbox', { name: 'Token value', exact: true }).fill('8');
-  await type.selectOption('color');
+  await chooseOption(type, 'color');
   await expect(inspector.getByRole('textbox', { name: 'Red', exact: true })).toHaveValue('0.35');
-  await expect(inspector.getByRole('textbox', { name: 'Alpha', exact: true })).toHaveValue('0.5');
-  await type.selectOption('dimension');
+  await expect(inspector.getByRole('textbox', { name: 'Opacity', exact: true })).toHaveValue('0.5');
+  await chooseOption(type, 'dimension');
   await expect(inspector.getByRole('textbox', { name: 'Token value', exact: true })).toHaveValue('8');
   await inspector.getByRole('button', { name: 'Apply to workspace', exact: true }).click();
   await inspector.getByRole('button', { name: 'Raw JSON', exact: true }).click();
@@ -1303,7 +2251,7 @@ test('creates, reopens, and links every typed value through the editor', async (
     await page.getByRole('button', { name: 'New token', exact: true }).click();
     const create = page.getByRole('dialog', { name: 'New token', exact: true });
     await create.getByRole('textbox', { name: 'Token name', exact: true }).fill(path);
-    await create.getByLabel('Token type', { exact: true }).selectOption(type);
+    await chooseOption(create.getByRole('combobox', { name: 'Token type', exact: true }), type);
     await create.getByRole('button', { name: 'Review changes', exact: true }).press('Enter');
     const review = page.getByRole('dialog', { name: 'Review changes', exact: true });
     await review.getByRole('button', { name: 'Apply to workspace', exact: true }).click();
@@ -1364,9 +2312,35 @@ test('links independent fields in the same value and previews the current draft'
   const green = inspector.getByRole('textbox', { name: 'Green', exact: true });
   const resize = page.getByRole('slider', { name: 'Resize token details' });
   const fieldY = (field: typeof red) => field.evaluate(node => node.getBoundingClientRect().y);
+  await resize.press('Home');
   await expect.poll(() => fieldY(green)).toBeGreaterThan(await fieldY(red));
   await resize.press('End');
   await expect.poll(() => fieldY(green)).toBe(await fieldY(red));
+  const includeBlue = inspector.getByRole('checkbox', { name: 'Include blue channel' });
+  const hex = inspector.getByRole('textbox', { name: 'Token value', exact: true });
+  const swatch = inspector.getByLabel('Color preview', { exact: true });
+  const previewStyle = swatch.locator('[style]');
+  const hexRow = () => hex.evaluate(input => input.closest('fieldset')?.offsetTop ?? 0);
+  const hexTop = await hexRow();
+  await includeBlue.uncheck();
+  await expect(hex).toBeDisabled();
+  await expect(swatch).toBeVisible();
+  await expect(previewStyle).toHaveAttribute('style', /0\.1 0\.3 0(?: |[)])/u);
+  expect(await hexRow()).toBe(hexTop);
+  await expect(inspector.getByRole('button', { name: 'Add sRGB fallback' })).toHaveCount(0);
+  await includeBlue.check();
+  await expect(hex).toBeEnabled();
+
+  const includeOpacity = inspector.getByRole('checkbox', { name: 'Include opacity' });
+  const opacity = inspector.getByRole('textbox', { name: 'Opacity', exact: true });
+  await expect(opacity).toBeDisabled();
+  await includeOpacity.check();
+  await opacity.fill('0.5');
+  await includeOpacity.uncheck();
+  await expect(opacity).toBeDisabled();
+  await includeOpacity.check();
+  await expect(opacity).toHaveValue('0.5');
+  await includeOpacity.uncheck();
   await red.fill('0.8');
   await green.locator('..').locator('[data-slot="trailing-icon"]').getByRole('button', { name: 'Link Green', exact: true }).click();
   const finder = page.getByRole('dialog', { name: 'Link a token', exact: true });
@@ -1395,9 +2369,10 @@ test('opens a Resolver, compares contexts, edits the intended context, and expor
     { name: 'dark.tokens.json', mimeType: 'application/json', buffer: Buffer.from(darkSource) },
   ]);
   const pane = page.getByRole('main', { name: 'Token library', exact: true });
-  await expect(pane.getByRole('group', { name: 'Token view' })).toBeVisible();
-  await pane.getByRole('group', { name: 'Active variant', exact: true }).getByLabel('theme', { exact: true }).selectOption('dark');
+  await expect(page.getByRole('combobox', { name: 'Editing set' })).toBeVisible();
+  await chooseOption(pane.getByRole('group', { name: 'Preview', exact: true }).getByRole('combobox', { name: 'theme', exact: true }), 'dark');
   await pane.getByRole('button', { name: 'Name for gap', exact: true }).click();
+  await pane.getByRole('button', { name: 'Edit token', exact: true }).click();
   const inspector = page.getByRole('complementary', { name: 'Token details' });
   await expect(inspector.getByText('dark override', { exact: true })).toBeVisible();
   await inspector.getByText('Where this value comes from', { exact: true }).click();
@@ -1410,8 +2385,9 @@ test('opens a Resolver, compares contexts, edits the intended context, and expor
   const review = page.getByRole('dialog', { name: 'Review changes' });
   await expect(review.getByText('dark · 2 tokens affected', { exact: true })).toBeVisible();
   await review.getByRole('button', { name: 'Apply to workspace' }).click();
-  await pane.getByRole('button', { name: 'Compare variants', exact: true }).click();
-  const table = pane.getByRole('table', { name: 'Variant comparison' });
+  await command(page, 'Variants', 'Compare variants');
+  const variants = page.getByRole('main', { name: 'Variants', exact: true });
+  const table = variants.getByRole('table', { name: 'Variant comparison' });
   await expect(table.getByRole('row', { name: /padding Changed 20 4/u })).toBeVisible();
   const snapshotWait = page.waitForEvent('download');
   await command(page, 'File', 'Download resolved tokens · dark');
@@ -1428,8 +2404,8 @@ test('opens a Resolver, compares contexts, edits the intended context, and expor
     modifiers: { theme: { contexts: { dark: [{ $ref: 'dark.tokens.json' }] } } },
   });
 
-  await command(page, 'Variants', 'Return to active variant');
-  await pane.getByRole('group', { name: 'Active variant', exact: true }).getByLabel('theme', { exact: true }).selectOption('light');
+  await variants.getByRole('button', { name: 'Back to tokens' }).click();
+  await chooseOption(pane.getByRole('group', { name: 'Preview', exact: true }).getByRole('combobox', { name: 'theme', exact: true }), 'light');
   await pane.getByRole('button', { name: 'Name for gap', exact: true }).click();
   await inspector.getByRole('button', { name: 'Override for light', exact: true }).click();
   await inspector.getByRole('textbox', { name: 'Token value', exact: true }).fill('6');
@@ -1470,13 +2446,13 @@ test('creates a Resolver and authors named sets, modifier contexts and ordered i
   await manager.getByRole('button', { name: 'New token set', exact: true }).click();
   const set = page.getByRole('dialog', { name: 'New token set', exact: true });
   await set.getByRole('textbox', { name: 'Set name' }).fill('Extras');
-  await set.getByRole('combobox', { name: 'Open file or set' }).selectOption({ label: 'base.tokens.json' });
+  await chooseOption(set.getByRole('combobox', { name: 'Open file or set' }), { label: 'base.tokens.json' });
   await set.getByRole('button', { name: 'Add source' }).click();
   await set.getByRole('button', { name: 'Add inline tokens' }).click();
   await set.getByRole('button', { name: 'Add inline token', exact: true }).click();
   const inline = page.getByRole('dialog', { name: 'Add inline token', exact: true });
   await inline.getByRole('textbox', { name: 'Token name' }).fill('accent');
-  await inline.getByRole('combobox', { name: 'Token type' }).selectOption('number');
+  await chooseOption(inline.getByRole('combobox', { name: 'Token type' }), 'number');
   await inline.getByRole('textbox', { name: 'Token value' }).fill('7');
   await inline.getByRole('button', { name: 'Review changes' }).click();
   await expect(inline).toBeHidden();
@@ -1505,13 +2481,13 @@ test('creates a Resolver and authors named sets, modifier contexts and ordered i
   await spacious.getByRole('button', { name: 'Add inline tokens' }).click();
   await spacious.getByText('Inline source JSON', { exact: true }).click();
   await spacious.getByRole('textbox', { name: 'Source 1 · Inline tokens' }).fill('{"gap":{"$type":"number","$value":16}}');
-  await modifier.getByRole('combobox', { name: 'Default option' }).selectOption({ label: 'spacious' });
+  await chooseOption(modifier.getByRole('combobox', { name: 'Default option' }), { label: 'spacious' });
   await modifier.getByRole('button', { name: 'Review changes' }).click();
   await apply();
 
   await manager.getByRole('button', { name: 'Add to override order' }).click();
   const entry = page.getByRole('dialog', { name: 'Add to override order' });
-  await entry.getByLabel('Entry', { exact: true }).selectOption({ label: 'Set · Extras' });
+  await chooseOption(entry.getByRole('combobox', { name: 'Entry', exact: true }), { label: 'Set · Extras' });
   await entry.getByRole('button', { name: 'Review changes' }).click();
   await apply();
   await back();
@@ -1519,7 +2495,7 @@ test('creates a Resolver and authors named sets, modifier contexts and ordered i
 
   await manage();
   await manager.getByRole('button', { name: 'Add to override order' }).click();
-  await entry.getByLabel('Entry', { exact: true }).selectOption({ label: 'Dimension · density' });
+  await chooseOption(entry.getByRole('combobox', { name: 'Entry', exact: true }), { label: 'Dimension · density' });
   await entry.getByRole('button', { name: 'Review changes' }).click();
   await apply();
   await back();
@@ -1539,7 +2515,7 @@ test('creates a Resolver and authors named sets, modifier contexts and ordered i
   await apply();
   await back();
   await expect(table.getByRole('row').filter({ has: page.getByRole('button', { name: 'Name for gap', exact: true }) }).getByText('16', { exact: true })).toBeVisible();
-  await pane.getByRole('group', { name: 'Active variant' }).getByLabel('density', { exact: true }).selectOption('compact');
+  await chooseOption(pane.getByRole('group', { name: 'Preview' }).getByRole('combobox', { name: 'density', exact: true }), 'compact');
   await expect(table.getByRole('row').filter({ has: page.getByRole('button', { name: 'Name for gap', exact: true }) }).getByText('30', { exact: true })).toBeVisible();
 
   await page.getByRole('button', { name: 'Review changes', exact: true }).click();
@@ -1605,11 +2581,11 @@ test('reviews source file moves, blocks broken links, and keeps file history und
     { name: 'consumer.tokens.json', mimeType: 'application/json', buffer: Buffer.from(consumer) },
   ]);
   await page.getByRole('button', { name: 'Workspace', exact: true }).click();
-  const management = page.getByRole('region', { name: 'Workspace management' });
+  const management = page.getByRole('main', { name: 'Workspace management' });
   const newFile = management.getByRole('button', { name: 'New source file' });
   await newFile.click();
   await page.getByRole('textbox', { name: 'File name' }).fill('unused');
-  await page.getByRole('combobox', { name: 'Folder' }).selectOption({ label: 'New folder…' });
+  await chooseOption(page.getByRole('combobox', { name: 'Folder' }), { label: 'New folder…' });
   await page.getByRole('textbox', { name: 'New folder path' }).fill('nested');
   await page.getByRole('button', { name: 'Review file change' }).click();
   await page.getByRole('dialog', { name: 'Review changes' }).getByRole('button', { name: 'Apply to workspace' }).click();
@@ -1738,13 +2714,13 @@ test('reviews and undoes a bulk field edit while keeping the selection and draft
       buffer: Buffer.from('{"consumer":{"$type":"dimension","$value":"{small}"},"other":{"$type":"number","$value":5}}') },
   ]);
   const grid = page.getByRole('grid', { name: 'Tokens' });
-  const checkbox = (path: string) => grid.locator('[data-token-row="' + path + '"] .selection-checkbox');
+  const checkbox = (path: string) => grid.locator('[data-token-row="' + path + '"]').getByRole('checkbox');
   await checkbox('small').click();
   await checkbox('large').click();
   const trigger = page.getByRole('button', { name: 'Change value', exact: true });
   await trigger.click();
   const form = page.getByRole('dialog', { name: 'Change value · 2 tokens', exact: true });
-  await form.getByLabel('Part to change').selectOption({ label: 'Value' });
+  await chooseOption(form.getByRole('combobox', { name: 'Part to change', exact: true }), { label: 'Value' });
   await form.getByText('Mixed values', { exact: true }).click();
   await expect(form.getByRole('region', { name: 'Current values' })).toContainText('12');
   await expect(form.getByRole('textbox', { name: 'Replacement value' })).toHaveValue('0');
@@ -1811,7 +2787,7 @@ test('renames, links, changes type, and duplicates a row selection', async ({ pa
   await page.getByRole('button', { name: 'Type for space-b-copy', exact: true }).click({ modifiers: ['Control'] });
   await page.getByRole('button', { name: 'Change type', exact: true }).click();
   const change = page.getByRole('dialog', { name: 'Change type · 2 tokens' });
-  await change.getByLabel('New token type').selectOption('dimension');
+  await chooseOption(change.getByRole('combobox', { name: 'New token type', exact: true }), 'dimension');
   await expect(change.getByText('2 need a replacement value')).toBeVisible();
   await change.getByRole('textbox', { name: 'Token value', exact: true }).fill('6');
   await change.getByRole('button', { name: 'Review edits' }).click();
@@ -1827,8 +2803,8 @@ test('copies a native token selection and pastes through destination and collisi
     buffer: Buffer.from('{"brand":{"base":{"$type":"number","$value":4},"ref":{"$type":"number","$value":"{brand.base}"}}}'),
   });
   const grid = page.getByRole('grid', { name: 'Tokens' });
-  await grid.locator('[data-token-row="brand.base"] .selection-checkbox').click();
-  await grid.locator('[data-token-row="brand.ref"] .selection-checkbox').click();
+  await grid.locator('[data-token-row="brand.base"]').getByRole('checkbox').click();
+  await grid.locator('[data-token-row="brand.ref"]').getByRole('checkbox').click();
   const nativeCopy = await grid.evaluate(node => {
     const data = new DataTransfer();
     const event = new ClipboardEvent('copy', { bubbles: true, cancelable: true, clipboardData: data });
@@ -1926,7 +2902,7 @@ test('moves a named set between Resolver manifests without changing their resolu
   await expect(manager.getByRole('region', { name: 'Order of overrides' })).toContainText('Set · foundation · shared.resolver.json');
   await expect(manager.getByRole('button', { name: 'Actions for set brand', exact: true })).toHaveCount(0);
 
-  await page.getByRole('combobox', { name: 'Variant configuration' }).selectOption('shared.resolver.json');
+  await chooseOption(page.getByRole('combobox', { name: 'Variant configuration' }), 'shared.resolver.json');
   await expect(manager.getByRole('button', { name: 'Actions for set foundation', exact: true })).toBeVisible();
   await expect(manager.getByRole('region', { name: 'Order of overrides' }).locator('li')).toHaveCount(0);
 
@@ -1959,7 +2935,7 @@ test('validates raw shared source in Resolver contexts and repeats the impact at
   ]);
   await expect(page.getByRole('main', { name: 'Token library' })).toBeVisible();
   await page.getByRole('button', { name: 'Workspace', exact: true }).click();
-  const source = page.getByRole('region', { name: 'Workspace management' });
+  const source = page.getByRole('main', { name: 'Workspace management' });
   await source.getByRole('button', { name: 'base.tokens.json', exact: true }).click();
   const form = page.getByRole('dialog', { name: 'Edit token source' });
   const field = form.getByRole('textbox', { name: 'Token source JSON' });
@@ -2036,23 +3012,233 @@ test('keeps the authored library available when a variant needs a choice', async
     ] }),
     fixtureFile('base.tokens.json', { alias: { $type: 'number', $value: '{shared}' } }),
     fixtureFile('shared.tokens.json', { shared: { $type: 'number', $value: 4 } }),
-    fixtureFile('dark.tokens.json', { shared: { $type: 'number', $value: 8 } }),
+    fixtureFile('dark.tokens.json', { shared: { $type: 'number', $value: 8 }, darkOnly: { $type: 'number', $value: 10 } }),
   ]);
-  await expect(page.getByRole('button', { name: 'Edit library', exact: true })).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.getByRole('button', { name: 'Resolved value for alias', exact: true })).toHaveText('4');
-  await expect(page.getByRole('button', { name: 'New token', exact: true })).toBeEnabled();
-  const modes = page.getByRole('group', { name: 'Token view' });
-  await expect(modes).toHaveClass('md-button-group');
-  await expect(modes).toHaveAttribute('data-control', 'connected');
-  await expect(modes).toHaveAttribute('data-variant', 'filled');
-  await modes.getByRole('button', { name: 'Edit library' }).press('ArrowRight');
-  const preview = modes.getByRole('button', { name: 'Preview variant' });
-  await expect(preview).toBeFocused();
-  await preview.press('Enter');
-  await expect(preview).toHaveAttribute('aria-pressed', 'true');
+  const pane = page.getByRole('main', { name: 'Token library', exact: true });
+  const set = page.getByRole('combobox', { name: 'Editing set', exact: true });
+  const appearance = pane.getByRole('group', { name: 'Preview' }).getByRole('combobox', { name: 'appearance' });
+  const edit = pane.getByRole('button', { name: 'Edit token', exact: true });
+  await expect(set).toHaveAttribute('data-select-value', 'base');
+  await expect(edit).toBeVisible();
+  await expect(pane.getByRole('button', { name: 'Resolved value for alias', exact: true })).toHaveText('4');
+  await expect(pane.getByRole('button', { name: 'New token', exact: true })).toBeEnabled();
   await expect(page.getByRole('button', { name: 'Variant issues', exact: true })).toBeVisible();
-  await page.getByRole('group', { name: 'Active variant' }).getByRole('combobox', { name: 'appearance' }).selectOption('dark');
-  await expect(page.getByRole('button', { name: 'Resolved value for alias', exact: true })).toHaveText('8');
-  await page.getByRole('button', { name: 'Edit library', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Resolved value for alias', exact: true })).toHaveText('4');
+
+  await pane.getByRole('button', { name: 'Value for shared', exact: true }).click();
+  await edit.click();
+  const inspector = page.getByRole('complementary', { name: 'Token details' });
+  const definition = inspector.locator('[aria-label="Editing definition"]');
+  const value = inspector.getByRole('textbox', { name: 'Token value', exact: true });
+  await expect(definition).toContainText('shared.tokens.json');
+  await expect(definition).toContainText('#/shared');
+  await expect(value).toHaveValue('4');
+
+  await chooseOption(appearance, 'dark');
+  await expect(set).toHaveAttribute('data-select-value', 'base');
+  await expect(pane.getByRole('button', { name: 'Resolved value for alias', exact: true })).toHaveText('8');
+  await expect(pane.getByRole('button', { name: 'Name for darkOnly', exact: true })).toHaveCount(0);
+  await expect(definition).toContainText('shared.tokens.json');
+  await expect(value).toHaveValue('4');
+  await value.fill('6');
+  await inspector.getByRole('button', { name: 'Review changes', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Review changes' }).getByRole('button', { name: 'Apply to workspace' }).click();
+  await expect(value).toHaveValue('6');
+  await expect(pane.getByRole('button', { name: 'Resolved value for alias', exact: true })).toHaveText('8');
+
+  await chooseOption(appearance, 'light');
+  await expect(pane.getByRole('button', { name: 'Resolved value for alias', exact: true })).toHaveText('6');
+  await expect(definition).toContainText('shared.tokens.json');
+
+  await chooseOption(appearance, 'dark');
+  await chooseOption(set, '');
+  await expect(pane.getByRole('button', { name: 'Name for darkOnly', exact: true })).toBeVisible();
+  await chooseOption(set, 'base');
+  await expect(appearance).toHaveAttribute('data-select-value', 'dark');
+  await expect(pane.getByRole('button', { name: 'Value for shared', exact: true })).toHaveText('6');
+
+  const nav = page.getByRole('navigation', { name: 'Foundry' });
+  await nav.getByRole('button', { name: 'Workspace', exact: true }).click();
+  const workspace = page.getByRole('main', { name: 'Workspace management' });
+  await expect(workspace.getByRole('heading', { name: 'Changes' })).toBeVisible();
+  await expect(workspace.getByRole('heading', { name: 'Integrations' })).toBeVisible();
+  await expect(workspace.getByRole('heading', { name: 'Variants' })).toHaveCount(0);
+  const variants = nav.getByRole('button', { name: 'Variants', exact: true });
+  await variants.click();
+  await expect(variants).toHaveAttribute('aria-current', 'page');
+  await expect(page.getByRole('main', { name: 'Variants', exact: true })).toBeVisible();
+  await expect(workspace).toBeHidden();
+});
+
+const numberToken = ($value: number) => ({ $type: 'number', $value });
+
+test('previews Light while inspecting, editing, and bulk updating Dark definitions', async ({ page }) => {
+  await page.goto('/');
+  await page.locator('input[type=file][multiple]').setInputFiles([
+    fixtureFile('appearance.resolver.json', {
+      version: '2025.10', sets: { Shared: { sources: [{ $ref: 'shared.tokens.json' }] } },
+      modifiers: { Appearance: { default: 'Light', contexts: {
+        Light: [{ $ref: 'light.tokens.json' }], Dark: [{ $ref: 'dark.tokens.json' }],
+      } } },
+      resolutionOrder: [{ $ref: '#/sets/Shared' }, { $ref: '#/modifiers/Appearance' }],
+    }),
+    fixtureFile('shared.tokens.json', { shared: numberToken(1) }),
+    fixtureFile('light.tokens.json', { gap: numberToken(4) }),
+    fixtureFile('dark.tokens.json', { gap: numberToken(8), accent: numberToken(10) }),
+  ]);
+  const set = page.getByRole('combobox', { name: 'Editing set', exact: true });
+  const preview = page.getByRole('group', { name: 'Preview' }).getByRole('combobox', { name: 'Appearance', exact: true });
+  const grid = page.getByRole('grid', { name: 'Tokens', exact: true });
+  const resolved = (path: string) => page.getByRole('button', { name: 'Resolved value for ' + path, exact: true });
+  await expect(page.getByRole('columnheader', { name: 'Resolved in Light' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Name for gap' })).toContainText('Light');
+  await chooseOption(set, { label: 'Dark' });
+  await expect(preview).toHaveAttribute('data-select-value', 'Light');
+  await expect(resolved('gap')).toContainText('From Light');
+  await expect(resolved('gap')).toContainText('4');
+  await expect(resolved('accent')).toHaveText('Not included in Light');
+
+  await page.getByRole('button', { name: 'Name for gap' }).click();
+  await page.getByRole('button', { name: 'Edit token', exact: true }).click();
+  const sheet = page.getByRole('complementary', { name: 'Token details' });
+  await expect(sheet.getByText('Editing Dark', { exact: true })).toBeVisible();
+  const field = sheet.getByRole('textbox', { name: 'Token value', exact: true });
+  await field.fill('9');
+  await chooseOption(preview, 'Dark');
+  await expect(field).toHaveValue('9');
+  await chooseOption(preview, 'Light');
+  const apply = () => page.getByRole('dialog', { name: 'Review changes' }).getByRole('button', { name: 'Apply to workspace' }).click();
+  await sheet.getByRole('button', { name: 'Review changes', exact: true }).click();
+  await apply();
+  await sheet.getByRole('button', { name: 'Close inspector' }).click();
+  const gap = page.getByRole('button', { name: 'Value for gap', exact: true });
+  await expect(gap).toHaveText('9');
+  await gap.dblclick();
+  const inline = grid.getByRole('textbox', { name: 'Token value', exact: true });
+  await inline.fill('11');
+  await inline.press('Enter');
+  await apply();
+  await expect(gap).toHaveText('11');
+  await expect(resolved('gap')).toContainText('4');
+
+  await page.getByRole('button', { name: 'Name for accent' }).click();
+  await page.getByRole('button', { name: 'Name for gap' }).click({ modifiers: ['Shift'] });
+  await page.getByRole('button', { name: 'Change description', exact: true }).click();
+  const bulk = page.getByRole('dialog', { name: /Change description/ });
+  await expect(bulk.getByText('Editing definitions in Dark.')).toBeVisible();
+  await bulk.getByRole('textbox', { name: 'New description' }).fill('Dark tokens');
+  await bulk.getByRole('button', { name: 'Review edits', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Review selected token edits' }).getByRole('button', { name: 'Apply to workspace' }).click();
+  await expect(page.getByRole('button', { name: 'Description for gap' })).toHaveText('Dark tokens');
+  await expect(page.getByRole('button', { name: 'Description for accent' })).toHaveText('Dark tokens');
+  await chooseOption(set, { label: 'All tokens' });
+  await expect(page.getByRole('button', { name: 'Description for gap' })).toHaveText('');
+  await expect(page.getByRole('button', { name: 'Value for gap', exact: true })).toHaveText('4');
+  await command(page, 'Variants', 'Compare variants');
+  const variants = page.getByRole('main', { name: 'Variants', exact: true });
+  await expect(variants.getByText('Shared sets: Shared')).toBeVisible();
+  await expect(variants.getByText('dark.tokens.json', { exact: true })).toBeVisible();
+  await chooseOption(variants.getByRole('group', { name: 'Compare with' }).getByRole('combobox', { name: 'Appearance', exact: true }), 'Dark');
+  const comparison = variants.getByRole('table', { name: 'Variant comparison' });
+  await expect(comparison.getByRole('row', { name: /gap Changed 4 11/ })).toBeVisible();
+  await expect(comparison.getByRole('row', { name: /accent Added/ })).toBeVisible();
+});
+
+test('renames, moves, duplicates and deletes an edited definition while previewing another variant', async ({ page }) => {
+  await page.goto('/');
+  await page.locator('input[type=file][multiple]').setInputFiles([
+    fixtureFile('appearance.resolver.json', {
+      version: '2025.10',
+      modifiers: { Appearance: { default: 'Light', contexts: {
+        Light: [{ gap: numberToken(4) }],
+        Dark: [{ gap: numberToken(8), group: { marker: numberToken(1) } }],
+      } } },
+      resolutionOrder: [{ $ref: '#/modifiers/Appearance' }],
+    }),
+  ]);
+  const scope = page.getByRole('combobox', { name: 'Editing set', exact: true });
+  await chooseOption(scope, { label: 'Dark' });
+  const tokenName = (path: string) => page.getByRole('button', { name: 'Name for ' + path, exact: true });
+  const menu = (path: string) => page.getByRole('button', { name: 'Token actions for ' + path, exact: true });
+  const apply = (action: string) => page.getByRole('dialog', { name: 'Review ' + action + ' token', exact: true })
+    .getByRole('button', { name: 'Apply to workspace' }).click();
+  await tokenName('gap').press('F2');
+  const rename = page.getByRole('dialog', { name: 'Rename token', exact: true });
+  await rename.getByRole('textbox', { name: 'Token name', exact: true }).fill('spacing');
+  await rename.getByRole('button', { name: 'Review rename' }).click();
+  await apply('rename');
+  await expect(tokenName('spacing')).toBeVisible();
+  await menu('spacing').click();
+  await page.getByRole('menuitem', { name: 'Move token' }).click();
+  const move = page.getByRole('dialog', { name: 'Move token', exact: true });
+  await move.getByRole('button', { name: 'group', exact: true }).click();
+  await move.getByRole('button', { name: 'Review move' }).click();
+  await apply('move');
+  await expect(tokenName('group.spacing')).toBeVisible();
+  await menu('group.spacing').click();
+  await page.getByRole('menuitem', { name: 'Duplicate token' }).click();
+  await page.getByRole('dialog', { name: 'Duplicate token', exact: true }).getByRole('button', { name: 'Review duplicate' }).click();
+  await apply('duplicate');
+  await expect(tokenName('group.spacing-copy')).toBeVisible();
+  await menu('group.spacing-copy').click();
+  await page.getByRole('menuitem', { name: 'Delete token' }).click();
+  await page.getByRole('dialog', { name: 'Delete token', exact: true })
+    .getByRole('button', { name: 'Apply to workspace' }).click();
+  await expect(tokenName('group.spacing-copy')).toHaveCount(0);
+  await expect(tokenName('group.spacing')).toBeVisible();
+  await chooseOption(scope, { label: 'All tokens' });
+  await expect(page.getByRole('button', { name: 'Value for gap', exact: true })).toHaveText('4');
+});
+
+test('moves a token to another set and reviews the reference rewrite before applying', async ({ page }) => {
+  await page.goto('/');
+  await page.locator('input[type=file][multiple]').setInputFiles([
+    fixtureFile('structure.resolver.json', {
+      version: '2025.10', sets: {
+        Base: { sources: [{ $ref: 'base.tokens.json' }] },
+        Components: { sources: [{ $ref: 'components.tokens.json' }] },
+      }, resolutionOrder: [{ $ref: '#/sets/Base' }, { $ref: '#/sets/Components' }],
+    }),
+    fixtureFile('base.tokens.json', { system: { gap: numberToken(4), alias: { $type: 'number', $value: { $ref: '#/system/gap/%24value' } } } }),
+    fixtureFile('components.tokens.json', { system: {} }),
+  ]);
+  const editingSet = page.getByRole('combobox', { name: 'Editing set', exact: true });
+  await chooseOption(editingSet, { label: 'Base' });
+  await page.getByRole('button', { name: 'Token actions for system.gap', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Move token', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Move token', exact: true });
+  await chooseOption(dialog.getByRole('combobox', { name: 'Destination set', exact: true }), { label: 'Components' });
+  await dialog.getByRole('button', { name: 'system', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Review move', exact: true }).click();
+  const review = page.getByRole('dialog', { name: 'Review move token', exact: true });
+  await expect(review.getByText(/Destination: Components \/ system/)).toBeVisible();
+  await review.getByText('References rewritten (1)', { exact: true }).click();
+  await expect(review.getByText('components.tokens.json#/system/gap/%24value', { exact: true })).toBeVisible();
+  await review.getByText('Shared values · 1 token affected', { exact: true }).click();
+  await expect(review.getByText('Source Base → Components', { exact: false })).toBeVisible();
+  await review.getByRole('button', { name: 'Apply to workspace' }).click();
+  await expect(editingSet).toHaveAttribute('data-select-value', 'Components');
+  await expect(page.getByRole('button', { name: 'Value for system.gap', exact: true })).toHaveText('4');
+  await chooseOption(editingSet, { label: 'Base' });
+  await expect(page.getByRole('button', { name: 'Name for system.gap', exact: true })).toHaveCount(0);
+});
+
+test('paginates high-fan-out references without mounting every consumer', async ({ page }) => {
+  await page.goto('/');
+  const consumers = Object.fromEntries(Array.from({ length: 400 }, (_, index) => [
+    'alias-' + String(index).padStart(3, '0'), { $type: 'number', $value: '{base}' },
+  ]));
+  await page.locator('input[type=file][multiple]').setInputFiles([
+    fixtureFile('references.tokens.json', { base: numberToken(4), ...consumers }),
+  ]);
+  await page.getByRole('searchbox', { name: 'Search tokens in group' }).fill('base');
+  await page.getByRole('button', { name: 'Name for base', exact: true }).click();
+  await page.getByRole('button', { name: 'Edit token', exact: true }).click();
+  const sheet = page.getByRole('complementary', { name: 'Token details' });
+  const usedBy = sheet.getByRole('list', { name: 'Used by', exact: true });
+  await expect(usedBy.getByRole('listitem')).toHaveCount(24);
+  await expect(sheet.getByText('1–24 of 400', { exact: true })).toBeVisible();
+  await sheet.getByRole('button', { name: 'Next direct uses', exact: true }).click();
+  await expect(usedBy.getByRole('listitem')).toHaveCount(24);
+  await expect(sheet.getByText('25–48 of 400', { exact: true })).toBeVisible();
+  await expect(usedBy.getByRole('button', { name: /^alias-024\b/u })).toBeVisible();
 });

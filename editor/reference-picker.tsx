@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom';
 import { ActionDialog } from '@/components/ui/dialog';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { ChevronLeft, ChevronRight, Folder, Search } from 'lucide-react';
-import { Button, IconButton, List, ListItemButton, SearchBar } from '@token-catalog/forge-react';
+import { ChipSelect, SelectOption, Button, IconButton, List, ListItemButton, SearchBar } from '@token-catalog/forge-react';
 import { fieldDependsOn, leafName, parentPath } from '../lib/document.ts';
 import type { DocumentGraph } from '../lib/document.ts';
 import type { JsonValue } from '../lib/json.ts';
@@ -128,6 +128,10 @@ export function ReferenceDialog({ choose, close, error, renderRawForm, initialRa
       {renderRawForm && <Button variant="text" className="me-auto" onClick={() => setRaw(!raw)}>
         {raw ? 'Link a token' : 'Enter a value'}
       </Button>}
+      {!raw && target && <span className="min-w-0 self-center break-all copy-small tone-supporting" aria-live="polite">
+        {tokenDisplayName(target.path)}{target.field.length ? ' / ' + valueFieldLabel(target.field, options.graph.resolved.get(target.path) ??
+          options.graph.tokens.get(target.path)?.value, options.graph.tokens.get(target.path)?.type) : ''}
+      </span>}
       <Button variant="text" onClick={() => setOpen(false)}>Cancel</Button>
       {raw ? <Button type="submit" form={rawFormId}>Use value</Button> :
         <Button disabled={!target} onClick={apply}>Link token</Button>}
@@ -231,7 +235,8 @@ function ReferencePicker({ graph, source, sourceField, sourcePaths, type, target
   }
 
   return <section aria-label="Link a reference" className="reference-picker" hidden={hidden}>
-    <SearchBar ref={search} className="workspace-search" label="Search tokens" leading={<Search aria-hidden="true" />}
+    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
+      <SearchBar ref={search} className="workspace-search" label="Search tokens" leading={<Search aria-hidden="true" />}
         placeholder="Search tokens" data-reference-search data-initial-focus value={query}
         onChange={(event) => { setQuery(event.target.value); setFieldToken(undefined); showPage(0); }}
         onKeyDown={(event) => {
@@ -249,16 +254,22 @@ function ReferencePicker({ graph, source, sourceField, sourcePaths, type, target
             }
           }
         }} />
+      {flexible && type && <ChipSelect label="Reference type" selectedLabel={showAllTypes ? 'All types' : 'Compatible types'}
+        value={showAllTypes ? 'all' : 'compatible'} onChange={event => { setShowAllTypes(event.target.value === 'all'); showPage(0); }}>
+        <SelectOption value="compatible">Compatible types</SelectOption>
+        <SelectOption value="all">All types</SelectOption>
+      </ChipSelect>}
+    </div>
     <div className="reference-picker-browser rounded-md border">
-      <div className="reference-picker-groups bg-muted/30">
-        <FolderTree graph={graph} current={current} select={browse} allowed={allowed} label="Reference groups" />
+      <div className="reference-picker-groups muted-surface-subtle">
+        <FolderTree groups={graph.groups} current={current} select={browse} allowed={allowed} label="Reference groups" />
       </div>
       <div className="flex min-h-0 min-w-0 flex-col">
-        <div className="flex min-w-0 items-center gap-1 border-b bg-muted/20 px-2 py-1">
+        <div className="flex min-w-0 items-center gap-1 border-b picker-result-heading px-2 py-1">
           {fields && <IconButton size="xsmall" label="Back to token results" onClick={() => { setFieldToken(undefined); search.current?.focus(); }}>
             <ChevronLeft aria-hidden="true" />
           </IconButton>}
-          <h3 className="m-0 truncate text-xs font-medium" title={fieldToken ?? current}>
+          <h3 className="m-0 truncate copy-small copy-emphasis" title={fieldToken ?? current}>
             {fields ? 'Fields in ' + fieldToken : terms.length ? 'Search results' : current || 'All tokens'}
           </h3>
         </div>
@@ -268,7 +279,7 @@ function ReferencePicker({ graph, source, sourceField, sourcePaths, type, target
               <ListItemButton ref={index === 0 ? focusFirstField : undefined} aria-pressed={equalChoice(target, fieldToken, field)}
                 trailing={<TokenValue value={value} swatch={fieldType === 'color'} wrap />}
                 onClick={() => choose({ path: fieldToken, field })} onKeyDown={navigateResults}>
-                <span className="font-mono text-xs wrap-anywhere">{valueFieldLabel(field, graph.resolved.get(fieldToken) ?? graph.tokens.get(fieldToken)?.value, graph.tokens.get(fieldToken)?.type)}</span>
+                <span className="code-text copy-small wrap-anywhere">{valueFieldLabel(field, graph.resolved.get(fieldToken) ?? graph.tokens.get(fieldToken)?.value, graph.tokens.get(fieldToken)?.type)}</span>
               </ListItemButton>
             </li>)}
             {!fields && !terms.length && children.map((path) => <li key={path}>
@@ -287,18 +298,18 @@ function ReferencePicker({ graph, source, sourceField, sourcePaths, type, target
                 trailing={<TokenValue value={graph.resolved.get(path)} swatch={type === 'color'} wrap />}
                 className="reference-value-choice"
                 onClick={() => whole ? choose({ path, field: [] }) : showFields(path)} onKeyDown={navigateResults}>
-                <span className="font-mono text-xs wrap-anywhere">{tokenDisplayName(terms.length ? path : leafName(path))}</span>
+                <span className="code-text copy-small wrap-anywhere">{tokenDisplayName(terms.length ? path : leafName(path))}</span>
               </ListItemButton>
               </li>;
             })}
           </List>
           {!fields && !visible.length && (terms.length > 0 || !children.length) &&
-            <p className="p-2 text-xs text-muted-foreground">{terms.length ? 'No matching references.' : 'No compatible tokens in this group.'}</p>}
+            <p className="p-2 copy-small tone-supporting">{terms.length ? 'No matching references.' : 'No compatible tokens in this group.'}</p>}
         </div>
       </div>
     </div>
     <div className="flex items-center justify-between gap-2">
-      <p className="text-xs text-muted-foreground" aria-live="polite">{target ? 'Selected · ' + [tokenDisplayName(target.path), target.field.length ? valueFieldLabel(target.field, graph.resolved.get(target.path) ?? graph.tokens.get(target.path)?.value, graph.tokens.get(target.path)?.type) : ''].filter(Boolean).join(' / ') : summary}</p>
+      <p className="copy-small tone-supporting">{summary}</p>
       {!fields && count > limit && <div className="flex items-center">
         <IconButton size="xsmall" label="Previous references" disabled={page === 0} onClick={() => showPage(page - 1)}>
           <ChevronLeft aria-hidden="true" />
@@ -307,8 +318,7 @@ function ReferencePicker({ graph, source, sourceField, sourcePaths, type, target
           <ChevronRight aria-hidden="true" />
         </IconButton>
       </div>}
-      {flexible && type && <Button type="button" variant={showAllTypes ? 'tonal' : 'text'} size="xsmall"
-        aria-pressed={showAllTypes} onClick={() => { setShowAllTypes(!showAllTypes); showPage(0); }}>All types</Button>}
+
     </div>
   </section>;
 }

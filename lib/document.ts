@@ -58,7 +58,7 @@ export function referenceLabel(value: JsonValue | undefined): string | undefined
   if (isObject(value) && typeof value['$ref'] === 'string') return value['$ref'];
   return undefined;
 }
-export const parentPath = (path: string) => path.split('.').slice(0, -1).join('.');
+export const parentPath = (path: string) => path.slice(0, Math.max(0, path.lastIndexOf('.')));
 export const leafName = (path: string) => path.slice(path.lastIndexOf('.') + 1);
 
 export function nodeAt(tree: JsonObject, path: string): JsonValue | undefined {
@@ -75,8 +75,7 @@ export function inspectDocument(tree: JsonObject) {
   return inspectDocuments([{ path: '', tree }]);
 }
 
-export function inspectDocuments(files: readonly TokenFile[], preferredSource?: string) {
-  const trees = new Map(files.map(({ path, tree }) => [path, tree]));
+export function inspectDocuments(files: readonly TokenFile[]) {
   const tokens = new Map<string, TokenEntry>();
   const fileTokens = new Map<string, Map<string, TokenEntry>>();
   const explicitValues = new WeakMap<TokenEntry, JsonValue>();
@@ -97,8 +96,7 @@ export function inspectDocuments(files: readonly TokenFile[], preferredSource?: 
   function collect(entry: EffectiveEntry, path: string, inheritedType: string | undefined, file: string, inheritedDeprecation?: boolean | string, visible = true): boolean {
     const node = entry.value;
     const authored = entry.source.file === file && entry.source.path === path;
-    const tree = trees.get(entry.source.file);
-    const original = tree && nodeAt(tree, entry.source.path);
+    const original = authored ? entry.authoredValue ?? node : undefined;
     const report = (field: string, message: string, target: DocumentDiagnostic['target'], severity: DocumentDiagnostic['severity'] = 'error') => {
       documentDiagnostics.push({ file, path, field, message, target, severity });
     };
@@ -139,7 +137,6 @@ export function inspectDocuments(files: readonly TokenFile[], preferredSource?: 
       fileTokens.set(file, definitions);
       if (visible && (groups.has(path) || tokens.has(path))) {
         const existing = tokens.get(path)?.file ?? groups.get(path)?.files.keys().next().value;
-        if (preferredSource && existing !== file) return false;
         conflicts.add(path);
         report('', 'Conflicting definition also exists in ' + existing + '.', { kind: 'group', path: parentPath(path) });
         return false;
@@ -148,7 +145,7 @@ export function inspectDocuments(files: readonly TokenFile[], preferredSource?: 
       return visible;
     }
     const hiddenGroup = visible && tokens.has(path);
-    if (hiddenGroup && (!preferredSource || tokens.get(path)?.file === file)) {
+    if (hiddenGroup) {
       conflicts.add(path);
       report('', 'Conflicting token definition exists in ' + tokens.get(path)?.file + '.', { kind: 'group', path: parentPath(path) });
     }
@@ -410,9 +407,7 @@ export function inspectDocuments(files: readonly TokenFile[], preferredSource?: 
     }
   }
 
-  const orderedRoots = preferredSource ? roots.toSorted((a, b) =>
-    Number(b.source.file === preferredSource) - Number(a.source.file === preferredSource)) : roots;
-  for (const root of orderedRoots) collect(root, '', undefined, root.source.file);
+  for (const root of roots) collect(root, '', undefined, root.source.file);
   indexGroup('');
   for (const path of tokens.keys()) {
     try { resolve(path); } catch { /* Diagnostics are available for each row. */ }
@@ -420,19 +415,31 @@ export function inspectDocuments(files: readonly TokenFile[], preferredSource?: 
   const validation = new Map<string, readonly string[]>();
   for (const [path, token] of tokens) {
     const value = resolved.get(path);
-    const authoredIssues = tokenValueIssues(token.type, token.value, true, (_candidate, field) => {
-      const sourceField = field === '$value' && !Object.hasOwn(token.authoredNode, '$value') ? '$ref' : field;
-      const edge = links.get(path)?.get(JSON.stringify(sourceField.split('/')));
-      const target = edge?.target !== undefined ? fileTokens.get(edge.file)?.get(edge.target) : undefined;
-      if (!edge || !target) return undefined;
-      const valueIndex = edge.parts.indexOf('$value');
-      if (valueIndex >= 0) return tokenFieldType(target.type, edge.parts.slice(valueIndex + 1));
-      return edge.parts.length === (edge.target?.split('.').length ?? 0) ? target.type : undefined;
+    let platformUnits: Map<string, string> | undefined;
+    const platformUnit = (field: string, unit: string) => { (platformUnits ??= new Map()).set(field, unit); };
+    const authoredIssues = tokenValueIssues(token.type, token.value, true, {
+      platformUnit,
+      referenceType: (_candidate, field) => {
+        const sourceField = field === '$value' && !Object.hasOwn(token.authoredNode, '$value') ? '$ref' : field;
+        const edge = links.get(path)?.get(JSON.stringify(sourceField.split('/')));
+        const target = edge?.target !== undefined ? fileTokens.get(edge.file)?.get(edge.target) : undefined;
+        if (!edge || !target) return undefined;
+        const valueIndex = edge.parts.indexOf('$value');
+        if (valueIndex >= 0) return tokenFieldType(target.type, edge.parts.slice(valueIndex + 1));
+        return edge.parts.length === (edge.target?.split('.').length ?? 0) ? target.type : undefined;
+      },
     });
     const origin = token.overrides ?? token.inheritedFrom;
     const base = origin ? fileTokens.get(origin.file)?.get(origin.path) : undefined;
     const inheritedType = origin && base?.file === origin.file ? base.type : undefined;
-    const ownIssues = [...authoredIssues, ...(value === undefined ? [] : tokenValueIssues(token.type, value))];
+    const resolvedOptions = referenceLabel(token.value) ? {} : { platformUnit };
+    const ownIssues = [...authoredIssues, ...(value === undefined ? [] : tokenValueIssues(token.type, value, false, resolvedOptions))];
+    for (const [field, unit] of platformUnits ?? []) {
+      documentDiagnostics.push({ file: token.file, path, field,
+        sourcePath: [...path.split('.'), ...field.split('/')], severity: 'warning', target: { kind: 'token', path },
+        message: unit + ' is an Android unit. DTCG 2025.10 dimensions use px or rem.',
+      });
+    }
     const inheritedIssues = value !== undefined && inheritedType && inheritedType !== token.type ? [...tokenValueIssues(inheritedType, value)]
       .filter(issue => !ownIssues.includes(issue))
       .map(issue => issue + ' (inherited ' + inheritedType + ' constraint from ' + origin?.path + ')') : [];
@@ -497,35 +504,58 @@ export function fieldDependsOn(graph: DocumentGraph, path: string, field: readon
   return false;
 }
 
-const tokenLocationKey = (file: string, path: string) => JSON.stringify([file, path]);
+interface Consumer {
+  file: string;
+  path: string;
+  edge: ReferenceEdge;
+}
+
+type IncomingLinks = Map<string, Map<string, Consumer[]>>;
+const incomingByGraph = new WeakMap<DocumentGraph['scopedLinks'], IncomingLinks>();
+
+function incomingLinks(scopedLinks: DocumentGraph['scopedLinks']): IncomingLinks {
+  const cached = incomingByGraph.get(scopedLinks);
+  if (cached) return cached;
+  const incoming: IncomingLinks = new Map();
+  for (const [file, owners] of scopedLinks) {
+    for (const [owner, references] of owners) {
+      for (const edge of references.values()) {
+        if (edge.target === undefined) continue;
+        let paths = incoming.get(edge.file);
+        if (!paths) {
+          paths = new Map();
+          incoming.set(edge.file, paths);
+        }
+        const consumers = paths.get(edge.target);
+        const consumer = { file, path: owner, edge };
+        if (consumers) consumers.push(consumer);
+        else paths.set(edge.target, [consumer]);
+      }
+    }
+  }
+  incomingByGraph.set(scopedLinks, incoming);
+  return incoming;
+}
 
 export function referenceConsumers(graph: DocumentGraph, path: string) {
   const start = graph.tokens.get(path);
   const direct = new Set<string>();
   const downstream = new Set<string>();
   if (!start) return { direct, downstream };
-  const incoming = new Map<string, { file: string; path: string; edge: ReferenceEdge }[]>();
-  for (const [file, owners] of graph.scopedLinks) {
-    for (const [owner, references] of owners) {
-      for (const edge of references.values()) {
-        if (edge.target === undefined) continue;
-        const target = tokenLocationKey(edge.file, edge.target);
-        const consumers = incoming.get(target) ?? [];
-        consumers.push({ file, path: owner, edge });
-        incoming.set(target, consumers);
-      }
-    }
-  }
 
+  const incoming = incomingLinks(graph.scopedLinks);
   const queue: { file: string; path: string; field: readonly string[] }[] = [{ file: start.file, path, field: [] }];
   const visited = new Set<string>();
   for (const change of queue) {
-    for (const consumer of incoming.get(tokenLocationKey(change.file, change.path)) ?? []) {
+    const consumers = incoming.get(change.file)?.get(change.path);
+    if (!consumers) continue;
+    const depth = change.path.split('.').length;
+    for (const consumer of consumers) {
       if (consumer.file === start.file && consumer.path === path) continue;
       const visible = graph.tokens.get(consumer.path)?.file === consumer.file;
       if (!change.field.length && visible) direct.add(consumer.path);
       if (consumer.edge.value === undefined) continue;
-      const target = consumer.edge.parts.slice(change.path.split('.').length);
+      const target = consumer.edge.parts.slice(depth);
       const targetField = target.length ? target : ['$value'];
       if (!isPrefix(targetField, change.field) && !isPrefix(change.field, targetField)) continue;
       const source = valueField(consumer.edge.field);

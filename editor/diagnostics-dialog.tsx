@@ -57,7 +57,7 @@ export function DiagnosticsDialog({ graph, close, jump, editSource, sourceFor, r
       else if (target.current) jump(target.current);
     }}
     actions={diagnostics.length > pageSize && <>
-      <span className="me-auto tabular-nums">{start + 1}–{end} of {diagnostics.length}</span>
+      <span className="me-auto numeric-text">{start + 1}–{end} of {diagnostics.length}</span>
       <IconButton size="xsmall" label="Previous diagnostics" disabled={page === 0}
         onClick={() => turn(page - 1)}><ChevronLeft aria-hidden="true" /></IconButton>
       <IconButton size="xsmall" label="Next diagnostics" disabled={end === diagnostics.length}
@@ -86,7 +86,7 @@ export function DiagnosticsDialog({ graph, close, jump, editSource, sourceFor, r
             }}>
               <span className="grid min-w-0 gap-1 text-start">
                 <code className="wrap-anywhere">{tokenDisplayName(issue.path) || (issue.target.kind === 'source' ? issue.file : 'Top level')}</code>
-                <span className="wrap-anywhere text-xs text-muted-foreground">
+                <span className="wrap-anywhere copy-small tone-supporting">
                   {issue.severity === 'error' ? 'Error' : 'Warning'} · {issue.file}{field && ' · ' + field} · {issue.message}
                 </span>
               </span>

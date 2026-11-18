@@ -1,8 +1,10 @@
 # Token Foundry
 
-Open design token files or a folder, edit tokens in the table, and review the file diff. Folder selection imports `tokens.json` and files
-ending in `.tokens.json` or `.tokens`. It preserves their relative paths
-and skips `.git`, `node_modules`, and `dist` within the selected folder.
+Open design token files or a folder, edit tokens in the table, and review the file diff. Folder selection recognizes DTCG tokens and
+Resolver documents by content in plain `.json` files and also opens files named
+`tokens.json`, `*.tokens.json`, `*.tokens`, or `*.resolver.json`. It preserves
+relative paths and skips `.git`, `node_modules`, and `dist` within the
+selected folder.
 The built-in example uses two files.
 
 ```sh
@@ -43,10 +45,13 @@ and filters unresolved tokens. Selecting tokens enables Move and Delete there. T
 group. The final review shows the affected files.
 
 Open and export commands live under **File**. Use the sidebar icon to show or hide groups. The hosted editor
-connects to GitHub under **Integrations**. **File → Open Material 3 sample**
+connects to GitHub under **Workspace → Integrations**. **File → Open Material 3 sample**
 opens the full Token Catalog tree and six Light/Dark and contrast combinations.
-Use **Preview variant** to switch appearances, or **Workspace → Manage variants**
-to inspect the shared sets and appearance sources.
+In **Tokens**, choose **Editing set** to work on a named set and **Active
+variant** to change the resolved values. **Edit token** opens the inspector,
+which shows the source file and location of the definition being edited. Use
+**Variants** in the navigation rail to manage sets, choices, and override order.
+**Workspace** holds pending changes, integrations, and source files.
 
 To refresh the bundled sample from a Catalog publication, pass its DTCG
 export directory (the directory containing `index.json`) to
@@ -69,23 +74,21 @@ Foundry is a React and Vite app for editing DTCG token files. Start in
 The `lib/` directory owns token parsing, references, and reviewed file
 changes. The UI owns focus, drafts, and review state.
 
-Use `@token-catalog/forge-react` for buttons, icon buttons, text fields,
-links styled as buttons, and native dialogs. Import the package stylesheet
-once. Place `data-component-assets` on the workspace root and on any portal
-surface that renders Forge controls outside it. Set both `data-theme` and
+Use `@token-catalog/forge-react` for UI controls. Check Catalog for an existing
+pattern before adding a component. If it exists in Catalog, expose it through
+Forge React. Evaluate new components for reuse in Forge before adding them
+to Foundry. Import the package stylesheet once and place `data-component-assets`
+on the workspace and on portals outside it. Set `data-theme` and
 `data-contrast` on the document element to select a Forge theme.
-The file open in the editor supplies token data for the table. The Forge
-package supplies the theme of the editor itself.
 
-React Aria owns grid navigation, row selection, resizing, command menus, and
-the anchored cell editor. Keep the grid's focused cell independent of the
-checked rows. Use Forge color roles for styles in
-[`editor/components/ui/primitives.css`](editor/components/ui/primitives.css).
-Keep Foundry-specific layout in [`editor/workspace.css`](editor/workspace.css).
+The token grid owns navigation, selection, and resizing. Keep cell focus
+independent of checked rows. Forge owns the appearance and interaction of
+the controls inside the grid and throughout the editor. Keep workspace
+layout in [`editor/workspace.css`](editor/workspace.css) and reserve local
+component overrides for deliberate Foundry-specific departures from the
+shared guidance.
 
-If a change only affects this workspace or token editing, make it here.
-For a shared primitive or a Forge style or behavior change, edit the source in
-the [Forge React package](https://github.com/sojupie/tokens/tree/main/forge/react)
+For shared changes, edit the [Forge React package](https://github.com/sojupie/tokens/tree/main/forge/react)
 and follow its build guide. Then copy the new versioned tarball into
 `vendor/` and install it from the Foundry root. Replace `VERSION` with the tarball version.
 

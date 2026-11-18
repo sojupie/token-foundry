@@ -1,8 +1,7 @@
 import { useId, useMemo, useState } from 'react';
-import { Button, TextField } from '@token-catalog/forge-react';
+import { Button, TextField, Select, SelectOption } from '@token-catalog/forge-react';
 import { ActionDialog } from '@/components/ui/dialog';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 import { leafName } from '../lib/document.ts';
 import { errorMessage } from '../lib/json.ts';
 import type { ClipboardEntry } from '../lib/structure.ts';
@@ -63,20 +62,20 @@ export function PasteDialog({ workspace, entries, group, reviewing, close, revie
       }
     }}>
       <div className="grid gap-1.5">
-        <p className="text-sm font-medium">Destination group</p>
+        <p className="copy-body copy-emphasis">Destination group</p>
         <div className="max-h-[30vh] overflow-auto rounded-md border">
-          <FolderTree {...{ graph, allowed }} current={destination} select={path => {
+          <FolderTree groups={graph.groups} allowed={allowed} current={destination} select={path => {
             setDestination(path); setFile(''); setError('');
           }} label="Paste destination group" rootLabel="Top level" />
         </div>
       </div>
-      {files.length > 1 && <div className="grid gap-1 text-sm">
+      {files.length > 1 && <div className="grid gap-1 copy-body">
         <label htmlFor={id + '-file'}>Destination file</label>
-        <NativeSelect id={id + '-file'} value={file} onChange={event => setFile(event.target.value)}>
-          {files.map(path => <NativeSelectOption key={path} value={path}>{path}</NativeSelectOption>)}
-        </NativeSelect>
+        <Select id={id + '-file'} value={file} onChange={event => setFile(event.target.value)}>
+          {files.map(path => <SelectOption key={path} value={path}>{path}</SelectOption>)}
+        </Select>
         {entries.some(entry => entry.fragments.length > 1 && entry.fragments.every(fragment => files.includes(fragment.file))) &&
-          <p className="text-xs text-muted-foreground">Groups that span these files keep their file boundaries.</p>}
+          <p className="copy-small tone-supporting">Groups that span these files keep their file boundaries.</p>}
       </div>}
       <ul className="grid max-h-[32vh] gap-2 overflow-auto py-1">
         {entries.map((entry, index) => <li key={entry.path}>

@@ -3,9 +3,8 @@ import { useEffect, useRef, useState } from 'react';
 import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { GitPullRequest } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Button, ButtonLink } from '@token-catalog/forge-react';
+import { Button, ButtonLink, Select, SelectOption } from '@token-catalog/forge-react';
 import { ActionDialog } from '@/components/ui/dialog';
-import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 import type { WorkspaceConnection, WorkspaceConnectorProps } from '../../editor/lib/connector.ts';
 import { errorMessage, isRecord, isUnknownArray } from '../../lib/json.ts';
 import { openWorkspace } from '../../lib/workspace.ts';
@@ -125,14 +124,14 @@ function GitHubConnector({ disabled, connect, canReplace }: WorkspaceConnectorPr
   const unavailable = session?.state === 'forbidden' ? 'Your account does not have access to GitHub integration.' :
     connected && !repositories.length ? 'Your account has no repositories available in Token Foundry.' : undefined;
   return <>
-    <CommandMenu label="Integrations" triggerRef={setOpener} status={connected ? 'GitHub connected as @' + connected.login : ''}
+    <CommandMenu label="Manage integrations" triggerRef={setOpener} status={connected ? 'GitHub connected as @' + connected.login : ''}
       sections={[[{ label: 'Open GitHub repository…', icon: <GitPullRequest aria-hidden="true" />, title: unavailable,
         disabled: disabled || Boolean(unavailable), run: () => { resetConnection(); setOpen(true); } }]]} />
     <ActionDialog open={open} busy={busy} opener={opener} onOpenChange={(next) => { if (!busy) setOpen(next); }}
       title="Open GitHub repository" description={connected ? 'Connected as @' + connected.login :
         'Sign in to see the repositories available to you.'}>
       <form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); openRepository(); }}>
-        {isPending && <output className="text-sm text-muted-foreground">Checking GitHub session…</output>}
+        {isPending && <output className="copy-body tone-supporting">Checking GitHub session…</output>}
         {sessionError && <Alert variant="destructive"><AlertDescription>{errorMessage(sessionError)}</AlertDescription></Alert>}
         {!sessionError && session?.state === 'signed-out' && <ButtonLink variant="outlined" className="justify-self-start" href="/git/sign-in" target="_blank" rel="noreferrer" onClick={(event) => {
             const popup = window.open('/git/sign-in', 'token-foundry-sign-in', 'popup,width=620,height=720');
@@ -144,11 +143,11 @@ function GitHubConnector({ disabled, connect, canReplace }: WorkspaceConnectorPr
             }
           }}>{checkingSignIn ? 'Continue in GitHub' : 'Sign in to GitHub'}</ButtonLink>}
         {connected && (repositories.length ? <div className="grid gap-2">
-          <label htmlFor="git-repository" className="text-sm font-medium">Repository</label>
-          <NativeSelect id="git-repository" value={repository} onChange={(event) => setPreferredRepository(event.target.value)} disabled={busy}>
-            {repositories.map((name) => <NativeSelectOption key={name} value={name}>{name}</NativeSelectOption>)}
-          </NativeSelect>
-        </div> : <p className="text-sm text-muted-foreground">No configured repositories are available to this GitHub account.</p>)}
+          <label htmlFor="git-repository" className="copy-body copy-emphasis">Repository</label>
+          <Select id="git-repository" value={repository} onChange={(event) => setPreferredRepository(event.target.value)} disabled={busy}>
+            {repositories.map((name) => <SelectOption key={name} value={name}>{name}</SelectOption>)}
+          </Select>
+        </div> : <p className="copy-body tone-supporting">No configured repositories are available to this GitHub account.</p>)}
         {error && <Alert variant="destructive"><AlertDescription>{errorMessage(error)}</AlertDescription></Alert>}
         {connected && repositories.length > 0 && <div className="flex justify-end">
           <Button type="submit" disabled={busy || !repository}>{busy ? 'Opening…' : 'Open repository'}</Button>

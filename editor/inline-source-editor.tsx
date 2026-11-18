@@ -22,7 +22,7 @@ export function InlineSourceEditor({ text, file, write }: {
     } catch { return null; }
   }, [file, text]);
 
-  if (!parsed) return <p className="text-sm text-muted-foreground">Repair the inline source JSON to edit its tokens here.</p>;
+  if (!parsed) return <p className="copy-body tone-supporting">Repair the inline source JSON to edit its tokens here.</p>;
   const { graph, tree } = parsed;
   const pageSize = 20;
   const last = Math.max(0, Math.ceil(graph.rows.length / pageSize) - 1);
@@ -30,7 +30,7 @@ export function InlineSourceEditor({ text, file, write }: {
   const close = () => setDraft(undefined);
   return <>
     <div className="flex flex-wrap items-center justify-between gap-2">
-      <span className="text-sm">{graph.rows.length} {graph.rows.length === 1 ? 'token' : 'tokens'}</span>
+      <span className="copy-body">{graph.rows.length} {graph.rows.length === 1 ? 'token' : 'tokens'}</span>
       <Button size="xsmall" variant="text" onClick={() => {
         setError('');
         setDraft({ create: true, groupOnly: false, path: '', file, name: '', type: undefined, value: '', description: '' });

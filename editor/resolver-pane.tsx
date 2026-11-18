@@ -1,9 +1,8 @@
-import { useId, useMemo, useRef, useState } from 'react';
-import { Button, IconButton, TextField } from '@token-catalog/forge-react';
-import { ArrowDown, ArrowRightLeft, ArrowUp, MoreHorizontal, Pencil, Plus, Trash2 } from 'lucide-react';
+import { useDeferredValue, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { ChipSelect, Button, IconButton, SearchBar, TextField, Select, SelectOption } from '@token-catalog/forge-react';
+import { ArrowDown, ArrowRightLeft, ArrowUp, MoreHorizontal, Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import { ActionDialog } from '@/components/ui/dialog';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Textarea } from '@/components/ui/textarea';
 import { errorMessage, isJsonObject, parseJson } from '../lib/json.ts';
@@ -19,6 +18,8 @@ import type { SourceLocation } from './source-dialog.tsx';
 import { ResolverSourceFields, sourceValues, useResolverSourceDraft } from './resolver-source-fields.tsx';
 import type { ResolverSourceOption } from './resolver-source-fields.tsx';
 import { TokenValue } from './token-value.tsx';
+import type { RenderData } from './lib/render-data.ts';
+import { compareVariantsInWorker } from './lib/workspace-review.ts';
 
 export type Inputs = Readonly<Record<string, string>>;
 type Authoring = 'set' | 'modifier' | 'entry';
@@ -27,26 +28,30 @@ export function labelOrigin(origin: ResolverOrigin) {
   return [origin.file, origin.set, origin.modifier && origin.modifier + ' / ' + origin.context].filter(Boolean).join(' · ');
 }
 
-export function ContextInputs({ model, label, inputs, update, disabled, showLabel }: {
-  model: ResolverModel; label: string; inputs: Inputs; update: (inputs: Inputs) => void; disabled: boolean; showLabel: boolean;
+export function originName(origin: ResolverOrigin) {
+  return origin.set ?? origin.context ?? origin.file;
+}
+
+export function ContextInputs({ model, label, inputs, update, disabled }: {
+  model: ResolverModel; label: string; inputs: Inputs; update: (inputs: Inputs) => void; disabled: boolean;
 }) {
   const id = useId();
   return <fieldset disabled={disabled} aria-label={label} className="variant-inputs">
-    {showLabel && <span className="text-xs font-medium">{label}</span>}
       {[...model.modifiers].map(([name, modifier], index) => {
         const idValue = id + '-' + index;
         const value = Object.hasOwn(inputs, name) ? inputs[name] ?? '' : modifier.defaultContext ?? '';
         return <div key={name} className="variant-field">
-          <label htmlFor={idValue} className="text-xs">{name}</label>
-          <NativeSelect id={idValue} value={modifier.contexts.has(value) ? value : ''} onChange={event => {
+          <ChipSelect id={idValue} label={name}
+            selectedLabel={(model.modifiers.size === 1 ? label : name) + ' · ' + (modifier.contexts.has(value) ? value : 'Choose…')}
+            disabled={disabled} value={modifier.contexts.has(value) ? value : ''} onChange={event => {
             const next = { ...inputs };
             if (event.target.value) Object.defineProperty(next, name, { value: event.target.value, enumerable: true });
             else delete next[name];
             update(next);
           }}>
-            <NativeSelectOption value="">Choose…</NativeSelectOption>
-            {[...modifier.contexts.keys()].map(context => <NativeSelectOption key={context} value={context}>{context}</NativeSelectOption>)}
-          </NativeSelect>
+            <SelectOption value="">Choose…</SelectOption>
+            {[...modifier.contexts.keys()].map(context => <SelectOption key={context} value={context}>{context}</SelectOption>)}
+          </ChipSelect>
         </div>;
       })}
   </fieldset>;
@@ -144,17 +149,17 @@ function AuthorDialog({ target, tree, file, files, author, close, reviewing, che
     }}>
       {kind !== 'entry' && !originalName && <TextField label={kind === 'set' ? 'Set name' : 'Variant name'} data-initial-focus required value={name}
         onChange={event => setName(event.target.value)} />}
-      {kind === 'entry' && <div className="grid gap-1 text-sm">
+      {kind === 'entry' && <div className="grid gap-1 copy-body">
         <label htmlFor={id + '-entry'}>Entry</label>
-        <NativeSelect id={id + '-entry'} value={reference} onChange={event => setReference(event.target.value)}>
-          <NativeSelectOption value="">Inline entry (advanced)</NativeSelectOption>
+        <Select id={id + '-entry'} value={reference} onChange={event => setReference(event.target.value)}>
+          <SelectOption value="">Inline entry (advanced)</SelectOption>
           {reference && !options.some(option => option.reference === reference) &&
-            <NativeSelectOption value={reference}>{orderEntryLabel({ $ref: reference }, file, target.index ?? 0)}</NativeSelectOption>}
-          {options.map(option => <NativeSelectOption key={option.reference} value={option.reference}>{option.label}</NativeSelectOption>)}
-        </NativeSelect>
+            <SelectOption value={reference}>{orderEntryLabel({ $ref: reference }, file, target.index ?? 0)}</SelectOption>}
+          {options.map(option => <SelectOption key={option.reference} value={option.reference}>{option.label}</SelectOption>)}
+        </Select>
       </div>}
-      {kind === 'entry' && !reference && <label htmlFor={id} className="grid gap-1 text-sm">Inline entry JSON
-        <Textarea id={id} rows={6} value={json} spellCheck={false} className="font-mono text-xs" onChange={event => setJson(event.target.value)} />
+      {kind === 'entry' && !reference && <label htmlFor={id} className="grid gap-1 copy-body">Inline entry JSON
+        <Textarea id={id} rows={6} value={json} spellCheck={false} className="code-editor" onChange={event => setJson(event.target.value)} />
       </label>}
       {kind === 'set' && <ResolverSourceFields {...{ sources, setSources, file }} options={sourceOptions} />}
       {kind === 'modifier' && <>
@@ -169,7 +174,7 @@ function AuthorDialog({ target, tree, file, files, author, close, reviewing, che
                   setContexts(contexts.filter(item => item.id !== context.id));
                 }}><Trash2 aria-hidden="true" /></IconButton>} />
             <details className="grid gap-2">
-              <summary className="cursor-pointer text-sm">{context.sources.length} {context.sources.length === 1 ? 'source' : 'sources'}</summary>
+              <summary className="cursor-pointer copy-body">{context.sources.length} {context.sources.length === 1 ? 'source' : 'sources'}</summary>
               <ResolverSourceFields sources={context.sources} options={sourceOptions} file={file}
                 setSources={next => setContexts(contexts.map(item => item.id === context.id ? { ...item, sources: next } : item))} />
             </details>
@@ -179,14 +184,14 @@ function AuthorDialog({ target, tree, file, files, author, close, reviewing, che
           const contextId = 1 + Math.max(-1, ...contexts.map(context => context.id));
           setContexts([...contexts, { id: contextId, name: '', sources: [] }]);
         }}>Add option</Button>
-        {!!contexts.length && <div className="grid gap-1 text-sm">
+        {!!contexts.length && <div className="grid gap-1 copy-body">
           <label htmlFor={id + '-default'}>Default option</label>
-          <NativeSelect id={id + '-default'} value={String(defaultContext)} onChange={event => setDefault(Number(event.target.value))}>
-            <NativeSelectOption value="-1">No default</NativeSelectOption>
-            {contexts.map((context, index) => <NativeSelectOption key={context.id} value={String(context.id)}>
+          <Select id={id + '-default'} value={String(defaultContext)} onChange={event => setDefault(Number(event.target.value))}>
+            <SelectOption value="-1">No default</SelectOption>
+            {contexts.map((context, index) => <SelectOption key={context.id} value={String(context.id)}>
               {context.name || 'Option ' + (index + 1)}
-            </NativeSelectOption>)}
-          </NativeSelect>
+            </SelectOption>)}
+          </Select>
         </div>}
       </>}
       {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
@@ -226,14 +231,14 @@ function SetPathDialog({ action, destinations, reviewing, checking, close, submi
       try { void submit(removing ? undefined : name, moving ? target : undefined).catch((failure: unknown) => setError(errorMessage(failure))); }
       catch (failure) { setError(errorMessage(failure)); }
     }}>
-      {moving && <div className="grid gap-1 text-sm">
+      {moving && <div className="grid gap-1 copy-body">
         <label htmlFor={id}>Destination Resolver</label>
-        <NativeSelect id={id} required data-initial-focus value={target} onChange={event => {
+        <Select id={id} required data-initial-focus value={target} onChange={event => {
           setTarget(event.target.value); setError('');
         }}>
-          <NativeSelectOption value="">Choose a Resolver…</NativeSelectOption>
-          {destinations.map(file => <NativeSelectOption key={file} value={file}>{file}</NativeSelectOption>)}
-        </NativeSelect>
+          <SelectOption value="">Choose a Resolver…</SelectOption>
+          {destinations.map(file => <SelectOption key={file} value={file}>{file}</SelectOption>)}
+        </Select>
       </div>}
       {!removing && <TextField label="Set name" required data-initial-focus={!moving ? '' : undefined} value={name}
         onChange={event => { setName(event.target.value); setError(''); }} />}
@@ -277,13 +282,18 @@ export function downloadVariant(resolution: ResolverResolution) {
   download('resolved-' + label + '.tokens.json', JSON.stringify(resolvedSnapshot(resolution), null, 2) + '\n', 'application/json');
 }
 
-export function ResolverPane({ workspace, file, model, current, alternative, scope, disabled, prepareReview, review, editSource, reviewing }: {
+export function ResolverPane({ workspace: workspaceData, file, model: modelData, current: currentData, alternative: alternativeData,
+  scope, disabled, prepareReview, review, editSource, reviewing }: {
   prepareReview: (draft: Review, scope: ResolverEditScope) => Promise<Review>;
-  workspace: Workspace; file: string; disabled: boolean; reviewing: boolean;
-  model: ResolverModel; current: ResolverResolution; alternative: ResolverResolution | undefined; scope: ResolverEditScope;
+  workspace: RenderData<Workspace>; file: string; disabled: boolean; reviewing: boolean;
+  model: RenderData<ResolverModel>; current: RenderData<ResolverResolution>; alternative: RenderData<ResolverResolution> | undefined; scope: ResolverEditScope;
   review: (next: Review, onApply?: () => void, focusAfterApply?: HTMLElement | null) => void;
   editSource: (source: SourceLocation) => void;
 }) {
+  const workspace = workspaceData.value;
+  const model = modelData.value;
+  const current = currentData.value;
+  const alternative = alternativeData?.value;
   const authored = workspace.files.find(source => source.path === file);
   const [setPath, setSetPath] = useState<SetPathAction>();
   const destinations = useMemo(() => workspace.files.filter(source => source.path !== file && !source.parseIssue && isResolverFile(source))
@@ -335,10 +345,12 @@ export function ResolverPane({ workspace, file, model, current, alternative, sco
     void author(file, ['resolutionOrder'], entries).catch((failure: unknown) => setError(errorMessage(failure)));
   }
 
+  const sharedSets = model.order.flatMap(entry => entry.kind === 'set' ? [entry.name] : []);
+
   return <div className="resolver-workspace">
     {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
     <div className="flex flex-wrap items-center justify-between gap-2">
-      <p className="wrap-anywhere text-sm font-medium">{typeof tree['name'] === 'string' && tree['name'] ? tree['name'] : file}</p>
+      <p className="wrap-anywhere copy-body copy-emphasis">{typeof tree['name'] === 'string' && tree['name'] ? tree['name'] : file}</p>
       <Button className="ms-auto" size="xsmall" variant="text" disabled={disabled}
         onClick={() => editSource({ file, path: [], resolver: scope })}><Pencil aria-hidden="true" /> Edit resolver JSON</Button>
     </div>
@@ -347,21 +359,40 @@ export function ResolverPane({ workspace, file, model, current, alternative, sco
         const members = tree[section];
         return <section key={section} aria-label={section === 'sets' ? 'Token sets' : 'Variant dimensions'} className="resolver-section">
           <h3 tabIndex={section === 'sets' ? -1 : undefined} ref={section === 'sets' ? setsHeading : undefined}>{section === 'sets' ? 'Token sets' : 'Variant dimensions'}</h3>
-          <p className="text-sm text-muted-foreground">{section === 'sets'
+          <p className="copy-body tone-supporting">{section === 'sets'
             ? 'Collect shared tokens from files or add them here.'
             : 'Define the choices people can preview, such as Light and Dark.'}</p>
-          <ul>{isJsonObject(members) && Object.keys(members).map(name => <li key={name} className="flex items-center gap-1">
+          {section === 'modifiers' && sharedSets.length > 0 && <p className="wrap-anywhere copy-body">Shared sets: {sharedSets.join(', ')}</p>}
+          <ul>{(section === 'sets' ? [...model.sets.keys()] : [...model.modifiers.keys()]).map(name => <li key={name} className="min-w-0">
+            <div className="flex items-center gap-1">
             <Button size="xsmall" variant="text" disabled={disabled} onClick={() => {
-              if (hasStructuredSources(members[name], section)) setAuthoring({ kind: section === 'sets' ? 'set' : 'modifier', name });
-              else editSource({ file, path: [section, name], resolver: scope });
+              if (isJsonObject(members) && Object.hasOwn(members, name)) {
+                if (hasStructuredSources(members[name], section)) setAuthoring({ kind: section === 'sets' ? 'set' : 'modifier', name });
+                else editSource({ file, path: [section, name], resolver: scope });
+              } else {
+                const index = orderRows.findIndex(row => row.name === name ||
+                  row.name === (section === 'sets' ? 'Set · ' : 'Dimension · ') + name);
+                if (index >= 0) setAuthoring({ kind: 'entry', index });
+                else editSource({ file, path: [], resolver: scope });
+              }
             }}>
               <Pencil aria-hidden="true" /> {name}
             </Button>
-            {section === 'sets' && <CommandMenu label={'Actions for set ' + name} icon={<MoreHorizontal aria-hidden="true" />} disabled={disabled}
+            {section === 'sets' && isJsonObject(members) && Object.hasOwn(members, name) && <CommandMenu label={'Actions for set ' + name} icon={<MoreHorizontal aria-hidden="true" />} disabled={disabled}
               sections={[[{ label: 'Rename set…', icon: <Pencil aria-hidden="true" />, run: () => setSetPath({ kind: 'rename', name }) },
                 { label: 'Move set…', icon: <ArrowRightLeft aria-hidden="true" />, disabled: !destinations.length,
                   run: () => setSetPath({ kind: 'move', name }) }],
                 [{ label: 'Remove set…', icon: <Trash2 aria-hidden="true" />, destructive: true, run: () => setSetPath({ kind: 'remove', name }) }]]} />}
+            </div>
+            {section === 'modifiers' && <dl className="mb-2 ms-3 grid gap-1 copy-body">
+              {[...model.modifiers.get(name)?.contexts ?? []].map(([option, contributions]) => {
+                const names = [...new Set(contributions.map(({ origin }) => origin.set ?? origin.file))];
+                return <div key={option} className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-2">
+                  <dt className="wrap-anywhere">{option}{model.modifiers.get(name)?.defaultContext === option && <span className="ms-2 copy-small tone-supporting">Default</span>}</dt>
+                  <dd className="wrap-anywhere tone-supporting">{names.length ? names.join(', ') : 'Shared sets only'}</dd>
+                </div>;
+              })}
+            </dl>}
           </li>)}</ul>
           <Button size="xsmall" variant="text" disabled={disabled} onClick={() => setAuthoring({ kind: section === 'sets' ? 'set' : 'modifier' })}>
             <Plus aria-hidden="true" /> {section === 'sets' ? 'New token set' : 'New variant dimension'}
@@ -371,10 +402,10 @@ export function ResolverPane({ workspace, file, model, current, alternative, sco
     </div>
     <section aria-label="Order of overrides" className="resolver-section">
       <h3>Order of overrides</h3>
-      <p className="text-sm text-muted-foreground">Add sets and dimensions here to include them in the preview. If two entries define the same token, the last one wins.</p>
+      <p className="copy-body tone-supporting">Add sets and dimensions here to include them in the preview. If two entries define the same token, the last one wins.</p>
       <ol className="grid gap-1">{orderRows.map(({ name, id }, index) => {
         return <li key={id} className="flex min-w-0 items-center justify-between gap-1">
-          <span className="wrap-anywhere text-sm">{name}</span>
+          <span className="wrap-anywhere copy-body">{name}</span>
           <div className="flex shrink-0">
             <IconButton size="xsmall" label={'Edit ' + name} disabled={disabled}
               onClick={() => setAuthoring({ kind: 'entry', index })}><Pencil aria-hidden="true" /></IconButton>
@@ -389,7 +420,7 @@ export function ResolverPane({ workspace, file, model, current, alternative, sco
     </section>
     {(issueCount > 0 || contextDiagnostics.length > 0) && <section aria-label="Variant issues" className="resolver-section">
       <h3>Variant issues</h3>
-      {!!issueCount && <ul className="grid gap-1 text-sm" aria-label="Resolver diagnostics">
+      {!!issueCount && <ul className="grid gap-1 copy-body" aria-label="Resolver diagnostics">
         {model.issues.map(issue => <li key={JSON.stringify([issue.file, issue.parts, issue.message])}>
           <Button size="xsmall" variant="text" disabled={disabled} onClick={() => editSource({ file: issue.file, path: issue.parts, resolver: scope })}>
             {issue.parts.join(' / ')} · {issue.message}
@@ -397,7 +428,7 @@ export function ResolverPane({ workspace, file, model, current, alternative, sco
         </li>)}
         {errors.map(message => <li key={message}>{message}</li>)}
       </ul>}
-      {contextDiagnostics.length > 0 && <details className="rounded-lg border px-3 py-2 text-sm">
+      {contextDiagnostics.length > 0 && <details className="rounded-lg border px-3 py-2 copy-body">
         <summary className="cursor-pointer">Context source diagnostics ({contextDiagnostics.length})</summary>
         <ul className="mt-1 grid gap-1">
           {contextDiagnostics.map(({ label, issue, source }) => <li key={JSON.stringify([label, issue.path, issue.field, issue.message])} className="min-w-0">
@@ -417,34 +448,68 @@ export function ResolverPane({ workspace, file, model, current, alternative, sco
   </div>;
 }
 
-export function VariantComparison({ current, alternative, group, query, inspect }: {
-  current: ResolverResolution; alternative: ResolverResolution; group: string; query: string; inspect: (path: string) => void;
+export function VariantComparison({ current: currentData, alternative: alternativeData, inspect }: {
+  current: RenderData<ResolverResolution>; alternative: RenderData<ResolverResolution>; inspect: (path: string) => void;
 }) {
-  const differences = useMemo(() => !current.errors.length && !alternative.errors.length ? compareContexts(alternative, current) : [],
-    [alternative, current]);
-  const changes = useMemo(() => differences.filter(({ path }) => (!group || path.startsWith(group + '.')) && path.toLowerCase().includes(query)),
-    [differences, group, query]);
+  const current = currentData.value;
+  const alternative = alternativeData.value;
+  const valid = !current.errors.length && !alternative.errors.length;
+  const offThread = valid && Math.max(current.graph.tokens.size, alternative.graph.tokens.size) >= 2000;
+  const [result, setResult] = useState<{
+    current: RenderData<ResolverResolution>;
+    alternative: RenderData<ResolverResolution>;
+    differences?: ReturnType<typeof compareContexts>;
+    error?: string;
+  }>();
+  const local = useMemo(() => valid && !offThread ? compareContexts(current, alternative) : [], [alternative, current, offThread, valid]);
+  const matching = result?.current === currentData && result?.alternative === alternativeData ? result : undefined;
+  const differences = offThread ? matching?.differences ?? local : local;
+  const pending = offThread && !matching;
+  useEffect(() => {
+    if (!offThread) return undefined;
+    const controller = new AbortController();
+    async function compare() {
+      try {
+        const changes = await compareVariantsInWorker(current, alternative, controller.signal);
+        if (!controller.signal.aborted) setResult({ current: currentData, alternative: alternativeData, differences: changes });
+      } catch (failure) {
+        if (!controller.signal.aborted) setResult({ current: currentData, alternative: alternativeData, error: errorMessage(failure) });
+      }
+    }
+    void compare();
+    return () => controller.abort();
+  }, [alternative, alternativeData, current, currentData, offThread]);
+  const [query, setQuery] = useState('');
+  const search = useDeferredValue(query.trim().toLowerCase());
+  const changes = useMemo(() => search ? differences.filter(({ path }) => path.toLowerCase().includes(search)) : differences,
+    [differences, search]);
   const [page, setPage] = useState(0);
   const size = 50;
   const currentPage = Math.min(page, Math.max(0, Math.ceil(changes.length / size) - 1));
-  return <><Table aria-label="Variant comparison">
+  return <>
+    <SearchBar className="workspace-search comparison-search" label="Search compared tokens" placeholder="Search compared tokens" leading={<Search aria-hidden="true" />}
+      value={query} onChange={event => { setQuery(event.currentTarget.value); setPage(0); }} />
+    <Table aria-label="Variant comparison" aria-busy={pending}>
     <TableHeader><TableRow><TableHead>Token</TableHead><TableHead>Change</TableHead>
       <TableHead>{variantLabel(current)}</TableHead><TableHead>{variantLabel(alternative)}</TableHead>
     </TableRow></TableHeader>
     <TableBody>{changes.slice(currentPage * size, (currentPage + 1) * size).map(change => <TableRow key={change.path}>
-      <TableCell><Button size="xsmall" variant="text" onClick={() => inspect(change.path)}>{change.path}</Button></TableCell>
+      <TableCell>{current.graph.tokens.has(change.path)
+        ? <Button size="xsmall" variant="text" onClick={() => inspect(change.path)}>{change.path}</Button>
+        : change.path}</TableCell>
       <TableCell>{change.kind}</TableCell>
-      <TableCell>{change.afterProblem ?? <TokenValue value={change.after} swatch />}</TableCell>
       <TableCell>{change.beforeProblem ?? <TokenValue value={change.before} swatch />}</TableCell>
+      <TableCell>{change.afterProblem ?? <TokenValue value={change.after} swatch />}</TableCell>
     </TableRow>)}
       {changes.length === 0 && <TableRow><TableCell colSpan={4}>
-        {current.errors.length || alternative.errors.length ? 'Choose the options for both variants to compare them.' : 'No differences in these tokens.'}
+        {!valid ? 'Choose the options for both variants to compare them.' :
+          pending ? <output>Comparing variants…</output> : matching?.error ?? 'No differences in these tokens.'}
       </TableCell></TableRow>}
     </TableBody>
   </Table>
     {changes.length > size && <div className="flex items-center justify-end gap-2 p-2">
       <Button size="xsmall" variant="text" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>Previous differences</Button>
-      <span className="text-xs">{currentPage * size + 1}–{Math.min((currentPage + 1) * size, changes.length)} of {changes.length}</span>
+      <span className="copy-small">{currentPage * size + 1}–{Math.min((currentPage + 1) * size, changes.length)} of {changes.length}</span>
       <Button size="xsmall" variant="text" disabled={(currentPage + 1) * size >= changes.length}
         onClick={() => setPage(currentPage + 1)}>Next differences</Button>
     </div>}

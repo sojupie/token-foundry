@@ -1,4 +1,4 @@
-import { ArrowRightLeft, ClipboardPaste, Copy, Ellipsis, FolderPlus, Pencil, Settings2, Trash2 } from 'lucide-react';
+import { ArrowRightLeft, ClipboardPaste, Copy, Ellipsis, FolderPlus, Settings2, TextCursorInput, Trash2 } from 'lucide-react';
 import { CommandMenu } from './command-bar.tsx';
 
 export function GroupActions({ path, disabled, authored, variant, addGroupValue, metadata, create, rename, move, duplicate, copy, paste, remove }: {
@@ -17,12 +17,13 @@ export function GroupActions({ path, disabled, authored, variant, addGroupValue,
   remove: () => void;
 }) {
   return <CommandMenu label={path ? 'Actions for ' + path.split('.').join(' / ') : 'Group actions'} heading={path ? path.split('.').join(' / ') : 'All tokens'} icon={<Ellipsis aria-hidden="true" />}
+    triggerRef={button => { if (button) { button.dataset['keyTip'] = 'H'; button.dataset['keyTipMenu'] = ''; } }}
     disabled={disabled} sections={[
       [{ label: 'New group', icon: <FolderPlus aria-hidden="true" />, disabled: !authored, run: create },
         ...(addGroupValue ? [{ label: 'Add group value', icon: <FolderPlus aria-hidden="true" />, run: addGroupValue }] : []),
         ...(!variant ? [{ label: 'Edit group metadata', icon: <Settings2 aria-hidden="true" />, run: metadata }] : [])],
       variant ? [] : [
-        { label: 'Rename group', icon: <Pencil aria-hidden="true" />, disabled: !path || !authored, run: rename },
+        { label: 'Rename group', icon: <TextCursorInput aria-hidden="true" />, disabled: !path || !authored, run: rename },
         { label: 'Move group', icon: <ArrowRightLeft aria-hidden="true" />, disabled: !path || !authored, run: move },
         { label: 'Copy group', icon: <Copy aria-hidden="true" />, disabled: !path, run: copy },
         { label: 'Paste into group…', icon: <ClipboardPaste aria-hidden="true" />, disabled: !authored, run: paste },

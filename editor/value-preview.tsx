@@ -31,8 +31,8 @@ function MotionPreview({ curve, duration = '650ms', delay = '0ms' }: {
   if (!Array.isArray(curve) || !curve.every(coordinate => typeof coordinate === 'number')) return null;
   const easing = 'cubic-bezier(' + curve.join(', ') + ')';
   return <div className="grid min-w-0 gap-1" aria-label="Timing preview">
-    <div className="relative h-6 rounded-full bg-muted" aria-hidden="true">
-      <span className="absolute inset-y-1 aspect-square rounded-full bg-primary motion-reduce:transition-none"
+    <div className="relative h-6 rounded-full muted-surface" aria-hidden="true">
+      <span className="absolute inset-y-1 aspect-square rounded-full timing-preview-marker motion-reduce:transition-none"
         style={{ left: end ? 'calc(100% - 1.25rem)' : '0.25rem', transitionProperty: 'left',
           transitionDuration: duration, transitionDelay: delay, transitionTimingFunction: easing }} />
     </div>
@@ -54,10 +54,10 @@ export function ValuePreview({ type, value }: { type: string; value: JsonValue |
   if (type === 'color') {
     const preview = displayColor(value, gamut);
     return preview && <div className="grid gap-1" aria-label="Color preview">
-      <div className="overflow-hidden rounded-lg border bg-white">
+      <div className="overflow-hidden rounded-lg border color-preview-backdrop">
         <div className="h-10" style={{ backgroundColor: preview.css }} />
       </div>
-      {preview.fallback && <p className="text-xs text-muted-foreground">{preview.fallback}</p>}
+      {preview.fallback && <p className="copy-small tone-supporting">{preview.fallback}</p>}
     </div>;
   }
   if (type === 'cubicBezier') return <MotionPreview curve={value} />;
@@ -70,7 +70,7 @@ export function ValuePreview({ type, value }: { type: string; value: JsonValue |
       cssLength(layer['blur']), cssLength(layer['spread']), displayColor(layer['color'], gamut)?.css ?? 'transparent',
     ].filter(Boolean).join(' ')).join(', ');
     return <div className="grid min-h-24 place-items-center rounded-lg border p-5" aria-label="Shadow preview">
-      <div className="h-12 w-24 rounded-lg bg-background" style={{ boxShadow: css }} />
+      <div className="h-12 w-24 rounded-lg editor-surface" style={{ boxShadow: css }} />
     </div>;
   }
   if (type === 'gradient' && Array.isArray(value)) {

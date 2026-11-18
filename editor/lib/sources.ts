@@ -1,7 +1,7 @@
 import { diffFile, openWorkspace, workspaceChanges } from '../../lib/workspace.ts';
 import { openSampleInWorker, openWorkspaceInWorker } from './workspace-review.ts';
 import type { Workspace } from '../../lib/workspace.ts';
-import { emptyFolder, folderTokenSources, ignoredDirectories, isResolverName, isTokenFile } from './local-folder.ts';
+import { decodeFolderCandidate, emptyFolder, folderTokenSources, ignoredDirectories, isFolderCandidate } from './local-folder.ts';
 import reference from '../../examples/reference.tokens.json?raw';
 import system from '../../examples/system.tokens.json?raw';
 
@@ -23,15 +23,16 @@ export async function openFiles(files: readonly File[], folder: boolean): Promis
   const name = folder ? first.webkitRelativePath.split('/')[0] : first.name;
   const available = folder ? files.filter((file) =>
     !file.webkitRelativePath.split('/').slice(1, -1).some((part) => ignoredDirectories.has(part))) : files;
-  const withResolver = available.some(file => isResolverName(file.name));
-  const selected = folder ? available.filter(file => isTokenFile(file.name) || withResolver && file.name.toLowerCase().endsWith('.json')) : available;
+  const selected = folder ? available.filter(file => isFolderCandidate(file.name)) : available;
   const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
-  const sources = await Promise.all(selected.map(async (file) => ({
-    path: folder ? file.webkitRelativePath.split('/').slice(1).join('/') : file.name,
-    text: decoder.decode(await file.arrayBuffer()),
-  })));
-  if (!sources.length) throw new Error(emptyFolder);
+  const sources = (await Promise.all(selected.map(async file => {
+    const path = folder ? file.webkitRelativePath.split('/').slice(1).join('/') : file.name;
+    const bytes = await file.arrayBuffer();
+    const text = folder ? decodeFolderCandidate(path, bytes) : decoder.decode(bytes);
+    return text === undefined ? [] : [{ path, text }];
+  }))).flat();
   const input = folder ? folderTokenSources(sources) : sources;
+  if (!input.length) throw new Error(emptyFolder);
   return input.reduce((sum, file) => sum + file.text.length, 0) >= 64_000 ?
     openWorkspaceInWorker(name ?? 'Token files', input) : openWorkspace(name ?? 'Token files', input);
 }

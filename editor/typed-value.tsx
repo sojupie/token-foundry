@@ -1,9 +1,8 @@
 import { useId, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { ArrowDown, ArrowUp, ChevronDown, Link2, Plus, Trash2 } from 'lucide-react';
-import { Button, Checkbox, IconButton, TextField } from '@token-catalog/forge-react';
+import { Button, Checkbox, IconButton, TextField, Select, SelectOption } from '@token-catalog/forge-react';
 import { FieldRow } from '@/components/ui/field-row';
-import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 import { colorHex, colorSpace, colorSpaces } from '../lib/color.ts';
 import { referenceLabel } from '../lib/document.ts';
 import type { DocumentGraph } from '../lib/document.ts';
@@ -11,7 +10,7 @@ import { isJsonObject } from '../lib/json.ts';
 import type { JsonObject, JsonValue } from '../lib/json.ts';
 import { serializeTokenPointer, tokenPointer } from '../lib/token-path.ts';
 import { isColor } from '../lib/token-types.ts';
-import { convertColor } from './lib/color-preview.ts';
+import { convertColor, displayColor } from './lib/color-preview.ts';
 import { ReferenceDialog } from './reference-picker.tsx';
 import { TokenValue } from './token-value.tsx';
 import { compositeFields, defaultValue, shadowFields } from './lib/value-shape.ts';
@@ -108,12 +107,12 @@ function StyledSelect({ label, value, options, change, busy, action }: {
   const id = useId();
   return <div className="flex min-w-0 flex-col gap-1">
     <div className="flex items-center justify-between gap-2">
-      <label htmlFor={id} className="text-sm font-medium">{label}</label>{action}
+      <label htmlFor={id} className="token-editor-label">{label}</label>{action}
     </div>
-    <NativeSelect id={id} className="w-full" value={value} disabled={busy} onChange={event => change(event.target.value)}>
-      {!options.some(([key]) => key === value) && <NativeSelectOption value={value}>{value || 'Choose…'}</NativeSelectOption>}
-      {options.map(([key, name]) => <NativeSelectOption key={key} value={key}>{name}</NativeSelectOption>)}
-    </NativeSelect>
+    <Select id={id} className="w-full" value={value} disabled={busy} onChange={event => change(event.target.value)}>
+      {!options.some(([key]) => key === value) && <SelectOption value={value}>{value || 'Choose…'}</SelectOption>}
+      {options.map(([key, name]) => <SelectOption key={key} value={key}>{name}</SelectOption>)}
+    </Select>
   </div>;
 }
 
@@ -152,8 +151,8 @@ function TypedValue(props: FieldProps) {
   const linkButton = field.length > 0 && <IconButton type="button" size="xsmall" label={'Link ' + label} title={'Link ' + label}
     disabled={edit.busy || !edit.file} aria-haspopup="dialog" onClick={() => setLinking(true)}><Link2 aria-hidden="true" /></IconButton>;
   return <div className="grid min-w-0 gap-1.5">
-    {reference ? <div className="grid min-w-0 gap-1 text-xs">
-      <span className="font-medium">{label}</span>
+    {reference ? <div className="grid min-w-0 gap-1   copy-small">
+      <span className="copy-emphasis">{label}</span>
       <TokenValue value={value} authored wrap />
       {literal !== undefined && <TokenValue value={literal} swatch wrap />}
       <div className="flex flex-wrap gap-1">
@@ -178,14 +177,14 @@ function LiteralField(props: FieldProps & { action?: ReactNode }) {
   switch (type) {
     case 'number': return <NumberInput {...props} />;
     case 'numberOrNone':
-      return value === 'none' ? <div className="flex items-center justify-between gap-2 text-sm">{label} · none{action}</div> : <NumberInput {...props} />;
+      return value === 'none' ? <div className="flex items-center justify-between gap-2 copy-body">{label} · none{action}</div> : <NumberInput {...props} />;
     case 'fontWeight': return <TextField label={label} value={displayField(value)} disabled={edit.busy} trailing={action} data-primary-editor
       onChange={event => write(numericValue(event.target.value))} />;
     case 'fontName':
     case 'string':
     case 'hex': return <TextField label={label} value={displayField(value)} disabled={edit.busy} trailing={action} data-primary-editor
       onChange={event => write(event.target.value)} />;
-    case 'boolean': return <div className="flex items-center justify-between gap-2"><label className="flex min-h-8 items-center gap-2 text-sm">
+    case 'boolean': return <div className="flex items-center justify-between gap-2"><label className="flex min-h-8 items-center gap-2 copy-body">
       <Checkbox checked={value === true} disabled={edit.busy} onChange={event => write(event.target.checked)} />{label}
     </label>{action}</div>;
     case 'dimensionUnit':
@@ -272,7 +271,7 @@ function LiteralField(props: FieldProps & { action?: ReactNode }) {
 }
 
 function FieldHeading({ label, action }: { label: string; action?: ReactNode }) {
-  return <div className="flex min-w-0 items-center justify-between gap-2 text-sm font-medium">{label}{action}</div>;
+  return <div className="token-editor-label flex min-w-0 items-center justify-between gap-2">{label}{action}</div>;
 }
 
 function ObjectFields(props: FieldProps & { action?: ReactNode; members: readonly (readonly [string, string, string])[] }) {
@@ -285,11 +284,31 @@ function ObjectFields(props: FieldProps & { action?: ReactNode; members: readonl
   </fieldset>;
 }
 
+function ColorComponent(props: FieldProps & { opacity?: boolean }) {
+  const { edit, label, value, write, opacity } = props;
+  const omitted = opacity ? undefined : 'none';
+  const included = value !== omitted;
+  const [previous, setPrevious] = useState<JsonValue>();
+  return <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-start">
+    <Checkbox aria-label={opacity ? 'Include opacity' : 'Include ' + label.toLowerCase() + ' channel'} checked={included} disabled={edit.busy}
+      onChange={event => {
+        if (event.target.checked) {
+          write(previous ?? (opacity ? 1 : 0));
+        } else {
+          setPrevious(value);
+          write(omitted);
+        }
+      }} />
+    {included ? <TypedValue {...props} /> : <TextField label={label} placeholder="No value" value={opacity ? '1' : ''} disabled />}
+  </div>;
+}
+
 function FixedFields({ values, labels, itemType, ...props }: FieldProps & {
   values: readonly JsonValue[]; labels: readonly string[]; itemType: string;
 }) {
+  const Field = itemType === 'numberOrNone' ? ColorComponent : TypedValue;
   return <FieldRow>
-    {labels.map((label, index) => <TypedValue key={label} {...props} field={[...props.field, String(index)]}
+    {labels.map((label, index) => <Field key={label} {...props} field={[...props.field, String(index)]}
       label={label} type={itemType} value={values[index]} write={next => {
         const parts = values.slice();
         while (parts.length < index) parts.push(null);
@@ -330,7 +349,7 @@ function ArrayFields({ values, itemType, itemLabel, min, ...props }: FieldProps 
           {compact ? <Button type="button" variant="text" size="xsmall" aria-expanded={showing} aria-controls={bodyId}
             onClick={() => setExpanded(showing ? undefined : id)}>
             <ChevronDown aria-hidden="true" className={showing ? 'rotate-180' : undefined} /> {label}
-          </Button> : <span className="text-xs font-medium">{label}</span>}
+          </Button> : <span className="copy-small copy-emphasis">{label}</span>}
           <div className="flex">
             <IconButton type="button" size="xsmall" label={'Move ' + label + ' up'} disabled={edit.busy || !index}
               onClick={() => move(index, index - 1)}><ArrowUp aria-hidden="true" /></IconButton>
@@ -368,14 +387,23 @@ function ColorFields(props: FieldProps & { action?: ReactNode }) {
   const actualSpace = spaceReference ? solutionForLink(edit, spaceReference, [...field, 'colorSpace']) : authoredSpace;
   const name = typeof actualSpace === 'string' ? actualSpace : undefined;
   const channels = object['components'];
-  const labels = colorSpace(name)?.components ?? ['Component 1', 'Component 2', 'Component 3'];
+  const space = colorSpace(name);
+  const labels = space?.components ?? ['Component 1', 'Component 2', 'Component 3'];
+  const channelRanges = name !== 'srgb' && space ? space.ranges.flatMap(([min, max], index) => {
+    const label = labels[index];
+    if (!Number.isFinite(min)) return [];
+    if (!Number.isFinite(max)) return [label + ' ≥ ' + min];
+    return [label + ' ' + min + '–' + max + (label === 'Hue' ? '°' : max === 100 ? '%' : '')];
+  }) : [];
   const alpha = object['alpha'];
   const fallback = object['hex'];
-  const srgb = name === 'srgb' && isColor(value);
+  const srgb = name === 'srgb';
+  const editableHex = srgb && isColor(value);
+  const swatch = srgb ? displayColor(fieldValue(edit.preview, field) ?? value) : undefined;
   const [hexDraft, setHexDraft] = useState<{ before: string; text: string }>();
   const [conversion, setConversion] = useState<{ space: JsonValue | undefined; components: JsonValue | undefined }>();
   const [spaceWarning, setSpaceWarning] = useState('');
-  const hex = srgb ? colorHex(value) : '';
+  const hex = editableHex ? colorHex(value) : '';
   const hexText = hexDraft && (hexDraft.before === hex || hexDraft.text.toUpperCase() === hex) ? hexDraft.text : hex;
   function changeSpace(next: JsonValue | undefined) {
     const link = referenceLabel(next);
@@ -402,15 +430,18 @@ function ColorFields(props: FieldProps & { action?: ReactNode }) {
     {(props.label !== 'Token value' || props.action) && <FieldHeading label={props.label} action={props.action} />}
     <TypedValue {...props} field={[...field, 'colorSpace']} label="Color space" type="colorSpace" value={object['colorSpace']}
       write={changeSpace} />
-    {spaceWarning && <output className="text-xs text-muted-foreground">{spaceWarning}</output>}
+    {spaceWarning && <output className="copy-small tone-supporting">{spaceWarning}</output>}
     {conversion && <Button type="button" size="xsmall" variant="text" className="justify-self-start" disabled={edit.busy}
       onClick={() => {
         write(withField(withField(object, 'colorSpace', conversion.space), 'components', conversion.components));
         setConversion(undefined);
         setSpaceWarning('');
       }}>Undo color-space conversion</Button>}
-    {srgb && <TextField label="sRGB hex" aria-label={field.length ? props.label + ' sRGB hex' : 'Token value'} value={hexText}
-      disabled={edit.busy} data-primary-editor ref={input => input?.setCustomValidity(/^#[0-9a-f]{6}$/iu.test(hexText) ? '' :
+    {srgb && <TextField label="sRGB hex"
+      trailing={<span aria-label="Color preview" className="grid size-5 overflow-hidden rounded-sm border">
+        <span style={{ backgroundColor: swatch?.css }} />
+      </span>} aria-label={field.length ? props.label + ' sRGB hex' : 'Token value'} value={editableHex ? hexText : '—'}
+      disabled={edit.busy || !editableHex} data-primary-editor ref={input => input?.setCustomValidity(!editableHex || /^#[0-9a-f]{6}$/iu.test(hexText) ? '' :
         'Enter six hex digits, such as #336699.')} onChange={event => {
         const text = event.target.value;
         setHexDraft({ before: hex, text });
@@ -418,32 +449,21 @@ function ColorFields(props: FieldProps & { action?: ReactNode }) {
         const components = Array.from({ length: 3 }, (_, index) => parseInt(text.slice(1 + index * 2, 3 + index * 2), 16) / 255);
         write(withField(object, 'components', components));
       }} />}
-    <TypedValue {...props} field={[...field, 'components']} label="Components" type="colorComponents" componentLabels={labels}
+    <TypedValue key={name} {...props} field={[...field, 'components']} label="Color channels" type="colorComponents" componentLabels={labels}
       value={channels} write={next => write(withField(object, 'components', next))} />
 
-    <div className="grid min-w-0 gap-1">
-      {alpha === undefined ? <Button type="button" size="xsmall" variant="text" className="justify-self-start"
-        disabled={edit.busy} onClick={() => write(withField(object, 'alpha', 1))}>Set alpha</Button> :
-        <><TypedValue {...props} field={[...field, 'alpha']} label="Alpha" type="number" value={alpha}
-          write={next => write(withField(object, 'alpha', next))} />
-          <Button type="button" size="xsmall" variant="text" className="justify-self-start" disabled={edit.busy}
-            onClick={() => write(withField(object, 'alpha', undefined))}>Remove alpha</Button></>}
-      <details className="min-w-0">
-        <summary className="cursor-pointer text-sm">Advanced color options</summary>
-      {Array.isArray(channels) && labels.map((label, index) => typeof channels[index] === 'number' || channels[index] === 'none' ?
-        <label key={label} className="flex items-center gap-2 text-xs">
-          <Checkbox checked={channels[index] === 'none'} disabled={edit.busy}
-            onChange={event => write(withField(object, 'components', channels.with(index, event.target.checked ? 'none' : 0)))} />
-          Missing {label.toLowerCase()}
-        </label> : null)}
-      {fallback === undefined ? <Button type="button" size="xsmall" variant="text" className="justify-self-start"
-        disabled={edit.busy} onClick={() => write(withField(object, 'hex', hex || '#000000'))}>Set fallback hex</Button> :
-        <><TypedValue {...props} field={[...field, 'hex']} label="Fallback hex" type="hex" value={fallback}
+    {Array.isArray(channels) && channelRanges.length > 0 &&
+      <div className="token-editor-support">{channelRanges.join(' · ')}</div>}
+    <ColorComponent {...props} opacity field={[...field, 'alpha']} label="Opacity" type="number" value={alpha}
+      write={next => write(withField(object, 'alpha', next))} />
+    {!srgb && (fallback === undefined ? <Button type="button" size="xsmall" variant="text" className="justify-self-start"
+      disabled={edit.busy} onClick={() => write(withField(object, 'hex', '#000000'))}>Add sRGB fallback</Button> :
+      <div className="grid min-w-0 gap-1">
+        <TypedValue {...props} field={[...field, 'hex']} label="sRGB fallback" type="hex" value={fallback}
           write={next => write(withField(object, 'hex', next))} />
-          <Button type="button" size="xsmall" variant="text" className="justify-self-start" disabled={edit.busy}
-            onClick={() => write(withField(object, 'hex', undefined))}>Remove fallback hex</Button></>}
-      </details>
-    </div>
+        <Button type="button" size="xsmall" variant="text" className="justify-self-start" disabled={edit.busy}
+          onClick={() => write(withField(object, 'hex', undefined))}>Remove sRGB fallback</Button>
+      </div>)}
   </fieldset>;
 }
 
@@ -455,8 +475,9 @@ export default function TypedEditorPanel({ type, value, edit, original, resolved
   resolved: JsonValue | undefined;
   write: FieldProps['write'];
 }) {
-  const showPreview = previewTypes.has(type);
   const preview = original ? resolved : previewFields(value, edit);
+  const space = objectValue(preview)['colorSpace'] ?? objectValue(value)['colorSpace'];
+  const showPreview = previewTypes.has(type) && (type !== 'color' || space !== 'srgb');
   return <>
     {showPreview && <ValuePreview type={type} value={preview} />}
     <TypedValue edit={{ ...edit, preview }} {...{ type, value, write }} field={[]} label="Token value" />

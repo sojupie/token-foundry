@@ -1,7 +1,6 @@
 import { useId, useRef, useState } from 'react';
-import { Button, IconButton, TextField } from '@token-catalog/forge-react';
+import { Button, IconButton, TextField, Select, SelectOption } from '@token-catalog/forge-react';
 import { ArrowDown, ArrowUp, Trash2 } from 'lucide-react';
-import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 import { Textarea } from '@/components/ui/textarea';
 import { isJsonObject, parseJson } from '../lib/json.ts';
 import { InlineSourceEditor } from './inline-source-editor.tsx';
@@ -60,15 +59,15 @@ export function ResolverSourceFields({ sources, setSources, options, file }: {
     setSources(next);
   }
   return <fieldset className="grid gap-2">
-    <legend className="text-sm font-medium">Ordered sources</legend>
-    {!sources.length && <p className="text-xs text-muted-foreground">No sources</p>}
+    <legend className="copy-body copy-emphasis">Ordered sources</legend>
+    {!sources.length && <p className="copy-small tone-supporting">No sources</p>}
     <ol className="grid gap-2">{sources.map((source, index) => {
       const label = 'Source ' + (index + 1);
       const field = id + '-source-' + source.id;
       const update = (text: string) => setSources(sources.map(item => item.id === source.id ? { ...item, text } : item));
       return <li key={source.id} className="grid gap-1 rounded-lg border p-2">
         <div className="flex items-center justify-between gap-2">
-          <span className="text-xs font-medium">{label}{source.inline ? ' · Inline tokens' : ''}</span>
+          <span className="copy-small copy-emphasis">{label}{source.inline ? ' · Inline tokens' : ''}</span>
           <span className="flex shrink-0">
             <IconButton type="button" size="xsmall" label={'Move source ' + (index + 1) + ' up'} disabled={!index} onClick={() => move(index, -1)}><ArrowUp aria-hidden="true" /></IconButton>
             <IconButton type="button" size="xsmall" label={'Move source ' + (index + 1) + ' down'} disabled={index + 1 === sources.length} onClick={() => move(index, 1)}><ArrowDown aria-hidden="true" /></IconButton>
@@ -81,15 +80,15 @@ export function ResolverSourceFields({ sources, setSources, options, file }: {
         {source.inline ? <>
           <InlineSourceEditor text={source.text} file={file} write={update} />
           <details>
-            <summary className="cursor-pointer text-sm">Inline source JSON</summary>
+            <summary className="cursor-pointer copy-body">Inline source JSON</summary>
             <Textarea aria-label={label + ' · Inline tokens'} rows={4} value={source.text} spellCheck={false}
-              className="font-mono text-xs" onChange={event => update(event.target.value)} />
+              className="code-editor" onChange={event => update(event.target.value)} />
           </details>
-        </> : <div className="grid gap-1 text-xs"><label htmlFor={field}>Source target</label>
-          <NativeSelect id={field} value={source.text} onChange={event => update(event.target.value)}>
-            {!displayed.some(option => option.reference === source.text) && <NativeSelectOption value={source.text}>{options.find(option => option.reference === source.text)?.label ?? (source.text || 'Choose a source')}</NativeSelectOption>}
-            {displayed.map(option => <NativeSelectOption key={option.reference} value={option.reference}>{option.label}</NativeSelectOption>)}
-          </NativeSelect>
+        </> : <div className="grid gap-1 copy-small"><label htmlFor={field}>Source target</label>
+          <Select id={field} value={source.text} onChange={event => update(event.target.value)}>
+            {!displayed.some(option => option.reference === source.text) && <SelectOption value={source.text}>{options.find(option => option.reference === source.text)?.label ?? (source.text || 'Choose a source')}</SelectOption>}
+            {displayed.map(option => <SelectOption key={option.reference} value={option.reference}>{option.label}</SelectOption>)}
+          </Select>
           <details>
             <summary className="cursor-pointer">Reference path</summary>
             <TextField label={label + ' reference'} value={source.text} onChange={event => update(event.target.value)} />
@@ -100,11 +99,11 @@ export function ResolverSourceFields({ sources, setSources, options, file }: {
     {options.length > 100 && <TextField label="Filter source targets" value={query} onChange={event => { setQuery(event.target.value); setPicked(''); }} />}
     {!!options.length && <div className="flex flex-wrap items-end gap-2">
       <div className="flex min-w-[min(100%,12rem)] flex-1 flex-col gap-1">
-        <label className="text-xs" htmlFor={id + '-open'}>Open file or set</label>
-        <NativeSelect id={id + '-open'} value={picked} onChange={event => setPicked(event.target.value)}>
-          <NativeSelectOption value="">Choose…</NativeSelectOption>
-          {displayed.map(option => <NativeSelectOption key={option.reference} value={option.reference}>{option.label}</NativeSelectOption>)}
-        </NativeSelect>
+        <label className="copy-small" htmlFor={id + '-open'}>Open file or set</label>
+        <Select id={id + '-open'} value={picked} onChange={event => setPicked(event.target.value)}>
+          <SelectOption value="">Choose…</SelectOption>
+          {displayed.map(option => <SelectOption key={option.reference} value={option.reference}>{option.label}</SelectOption>)}
+        </Select>
       </div>
       <Button type="button" size="small" variant="tonal" disabled={!picked} onClick={() => { add(false, picked); setPicked(''); }}>Add source</Button>
     </div>}

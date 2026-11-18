@@ -8,6 +8,7 @@ export interface AuthoredLocation { file: string; path: string }
 
 export interface EffectiveEntry {
   value: JsonValue;
+  authoredValue?: JsonValue;
   source: AuthoredLocation;
   token: boolean;
   children?: ReadonlyMap<string, EffectiveEntry>;
@@ -39,7 +40,7 @@ function mergeGroup(base: EffectiveEntry, local: EffectiveEntry): EffectiveEntry
   if (isJsonObject(inheritedExtensions) && isJsonObject(localExtensions)) {
     value['$extensions'] = { ...inheritedExtensions, ...localExtensions };
   }
-  return { ...local, value, children };
+  return { ...local, value, children, authoredValue: local.authoredValue ?? local.value };
 }
 
 function groupMetadata(value: JsonValue): JsonObject {
@@ -48,7 +49,7 @@ function groupMetadata(value: JsonValue): JsonObject {
 }
 
 function entryKey({ file, path }: AuthoredLocation): string {
-  return JSON.stringify([file, path]);
+  return file.length + ':' + file + path;
 }
 
 export function resolveGroupInheritance(files: readonly TokenFile[]) {

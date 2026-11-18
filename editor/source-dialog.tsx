@@ -81,7 +81,7 @@ export function SourceDialog({ location, original, reviewing, close, prepare, re
       void prepareReview();
     }}>
       <Textarea aria-label="Token source JSON" data-initial-focus
-        readOnly={pending} spellCheck={false} rows={16} className="min-w-0 resize-y whitespace-pre font-mono text-xs"
+        readOnly={pending} spellCheck={false} rows={16} className="min-w-0 resize-y whitespace-pre code-editor max-h-[50dvh]!"
         value={text} onChange={event => setText(event.currentTarget.value)} />
       {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
       <div className="flex justify-end gap-2">

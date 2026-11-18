@@ -1,6 +1,6 @@
-import type { ComponentProps } from 'react';
-import { cn } from '@/lib/utils';
+import { TextArea } from '@token-catalog/forge-react';
+import type { TextAreaProps } from '@token-catalog/forge-react';
 
-export function Textarea({ className, ...props }: ComponentProps<'textarea'>) {
-  return <textarea className={cn('native-field w-full', className)} {...props} />;
+export function Textarea(props: TextAreaProps) {
+  return <TextArea {...props} containerClassName="w-full" />;
 }

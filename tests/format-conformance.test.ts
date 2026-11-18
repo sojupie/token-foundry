@@ -75,10 +75,31 @@ await test('diagnoses every Format value type at the failing field or array inde
   }
 });
 
+await test('reports Android units as compatibility warnings without rewriting or blocking edits', () => {
+  const dp = { ...px, unit: 'dp' };
+  const sp = { ...px, unit: 'sp' };
+  const data = workspace({
+    gap: { $type: 'dimension', $value: dp },
+    inheritedGap: { $type: 'dimension', $value: '{gap}' },
+    text: { $type: 'typography', $value: { ...values.typography, fontSize: sp } },
+    rem: { $type: 'dimension', $value: { ...px, unit: 'rem' } },
+  });
+  assert.equal(data.graph.validation.size, 0);
+  assert.deepEqual(data.graph.resolved.get('inheritedGap'), dp);
+  assert.deepEqual(data.graph.documentDiagnostics.map(({ path, field, severity }) => [path, field, severity]), [
+    ['gap', '$value/unit', 'warning'], ['text', '$value/fontSize/unit', 'warning'],
+  ]);
+  assert.match(data.graph.documentDiagnostics[0]?.message ?? '', /dp is an Android unit.*px or rem/u);
+  assert.match(data.graph.documentDiagnostics[1]?.message ?? '', /sp is an Android unit.*px or rem/u);
+  const review = reviewEdit(data, 'tokens.json', { path: 'gap', create: false, node: { $value: { ...dp, value: 8 } } });
+  assert.equal(review.validationErrors, undefined);
+  assert.deepEqual(review.next.graph.resolved.get('gap'), { value: 8, unit: 'dp' });
+});
+
 await test('uses the same field validation for source, editor, paste, bulk, and proposal imports', () => {
   const data = workspace({ gap: { $type: 'dimension', $value: px } });
   const invalid = { ...px, unit: 'em' };
-  const expected = /\$value\/unit · Use px, rem, dp or sp/u;
+  const expected = /\$value\/unit · Use px or rem for a DTCG dimension/u;
   assert.throws(() => reviewEdit(data, 'tokens.json', { path: 'gap', create: false, node: { $value: invalid } }), expected);
   assert.throws(() => reviewProposal(data, JSON.stringify({ schemaVersion: 1, changes: [{ path: 'gap', before: px, after: invalid }] })), expected);
   assert.match(reviewSource(data, 'tokens.json', JSON.stringify({ gap: { $type: 'dimension', $value: invalid } }), true).validationErrors?.join('\n') ?? '', expected);

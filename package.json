@@ -18,7 +18,7 @@
   },
   "dependencies": {
     "@tanstack/react-query": "^5.107.1",
-    "@token-catalog/forge-react": "file:vendor/token-catalog-forge-react-0.3.8.tgz",
+    "@token-catalog/forge-react": "file:vendor/token-catalog-forge-react-0.3.17.tgz",
     "clsx": "^2.1.1",
     "colorjs.io": "0.7.1",
     "diff": "^9.0.0",
@@ -27,12 +27,12 @@
     "jsonc-parser": "3.3.1",
     "lucide-react": "^1.72.0",
     "react": "^19.3.1",
-    "react-aria-components": "^1.22.1",
     "react-dom": "^19.3.1",
     "tailwind-merge": "^3.7.0"
   },
   "devDependencies": {
     "@playwright/test": "1.65.0",
+    "@tailwindcss/oxide": "^4.3.5",
     "@tailwindcss/vite": "^4.3.5",
     "@types/node": "^24.19.2",
     "@types/react": "^19.3.0",

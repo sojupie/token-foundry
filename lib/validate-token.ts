@@ -9,6 +9,8 @@ const fontWeights = new Set([
 ]);
 const strokeStyles = new Set(['solid', 'dashed', 'dotted', 'double', 'groove', 'ridge', 'outset', 'inset']);
 const lineCaps = new Set(['round', 'butt', 'square']);
+const dtcgDimensionUnits = new Set(['px', 'rem']);
+const androidDimensionUnits = new Set(['dp', 'sp']);
 const fields: Readonly<Record<string, Readonly<Record<string, string>>>> = {
   border: { color: 'color', width: 'dimension', style: 'strokeStyle' },
   transition: { duration: 'duration', delay: 'duration', timingFunction: 'cubicBezier' },
@@ -61,7 +63,10 @@ export function validateTokenValue(type: string | undefined, value: JsonValue | 
 }
 
 export function* tokenValueIssues(type: string | undefined, value: JsonValue | undefined, allowReferences = false,
-  referenceType?: (candidate: JsonValue, field: string) => string | undefined): Generator<string, void> {
+  { referenceType, platformUnit }: {
+    referenceType?: (candidate: JsonValue, field: string) => string | undefined;
+    platformUnit?: (field: string, unit: string) => void;
+  } = {}): Generator<string, void> {
   function* check(expected: string | undefined, candidate: JsonValue | undefined, path: string): Generator<string, void> {
     const invalid = (message: string) => path + ' · ' + message;
     if (allowReferences && isReferenceValue(candidate)) {
@@ -89,8 +94,14 @@ export function* tokenValueIssues(type: string | undefined, value: JsonValue | u
           yield* check('string', unit, path + '/unit');
           return;
         }
-        const units = expected === 'dimension' ? ['px', 'rem', 'dp', 'sp'] : ['ms', 's'];
-        if (typeof unit !== 'string' || !units.includes(unit)) yield path + '/unit · Use ' + (expected === 'dimension' ? 'px, rem, dp or sp' : units.join(' or ')) + '.';
+        const field = path + '/unit';
+        if (expected === 'duration') {
+          if (unit !== 'ms' && unit !== 's') yield field + ' · Use ms or s.';
+        } else if (typeof unit === 'string' && androidDimensionUnits.has(unit)) {
+          platformUnit?.(field, unit);
+        } else if (typeof unit !== 'string' || !dtcgDimensionUnits.has(unit)) {
+          yield field + ' · Use px or rem for a DTCG dimension.';
+        }
         return;
       }
       case 'fontFamily':

@@ -10,6 +10,7 @@ export default defineConfig({
   ],
   use: { baseURL: origin },
   webServer: {
+    env: { FOUNDRY_VITE_CACHE_DIR: 'node_modules/.vite-browser-tests' },
     command: 'npm run dev -- --mode hosted --host 127.0.0.1 --port 4319 --strictPort',
     url: origin,
   },

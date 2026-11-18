@@ -1,9 +1,8 @@
 import { useState } from 'react';
-import { Button, Checkbox, TextField } from '@token-catalog/forge-react';
+import { Button, Checkbox, TextField, Select, SelectOption } from '@token-catalog/forge-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { ActionDialog } from '@/components/ui/dialog';
 import { FieldRow } from '@/components/ui/field-row';
-import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 import { errorMessage } from '../lib/json.ts';
 import { newResolverDocument } from '../lib/resolver.ts';
 import { serializeTokenPointer } from '../lib/token-path.ts';
@@ -63,8 +62,8 @@ export function VariantSetupDialog({ workspace, files, root, reviewing, close, c
     }}>
       <TextField label="Configuration name" required data-initial-focus value={name} onChange={event => setName(event.target.value)} />
       <fieldset className="grid gap-1">
-        <legend className="text-sm font-medium">Shared source files</legend>
-        {files.map(file => <label key={file} className="flex items-center gap-2 text-sm">
+        <legend className="copy-body copy-emphasis">Shared source files</legend>
+        {files.map(file => <label key={file} className="flex items-center gap-2 copy-body">
           <Checkbox checked={base.has(file)} onChange={event => {
             const next = new Set(base);
             if (event.target.checked) next.add(file);
@@ -79,24 +78,24 @@ export function VariantSetupDialog({ workspace, files, root, reviewing, close, c
         <FieldRow>{choices.map((choice, index) => <div key={choiceLabels[index]} className="grid gap-2">
           <TextField label={choiceLabels[index] ?? 'Choice'} required value={choice}
             onChange={event => setChoices(choices.with(index, event.target.value))} />
-          <label className="grid gap-1 text-sm">{index === 0 ? 'First choice source' : 'Second choice source'}
-            <NativeSelect value={overrides[index]} onChange={event => {
+          <label className="grid gap-1 copy-body">{index === 0 ? 'First choice source' : 'Second choice source'}
+            <Select aria-label={index === 0 ? 'First choice source' : 'Second choice source'} value={overrides[index]} onChange={event => {
               const file = event.target.value;
               setOverrides(overrides.with(index, file));
               if (file) setBase(previous => { const next = new Set(previous); next.delete(file); return next; });
             }}>
-              <NativeSelectOption value="">Use shared values</NativeSelectOption>
-              {files.map(file => <NativeSelectOption key={file} value={file}>{file}</NativeSelectOption>)}
-            </NativeSelect>
+              <SelectOption value="">Use shared values</SelectOption>
+              {files.map(file => <SelectOption key={file} value={file}>{file}</SelectOption>)}
+            </Select>
           </label>
         </div>)}</FieldRow>
-        <label className="grid gap-1 text-sm">Default choice
-          <NativeSelect value={preferred} onChange={event => setPreferred(event.target.value)}>
-            <NativeSelectOption value="">Ask when previewing</NativeSelectOption>
-            {choices.map((choice, index) => <NativeSelectOption key={choiceLabels[index]} value={String(index)}>{choice || (choiceLabels[index] ?? 'Choice')}</NativeSelectOption>)}
-          </NativeSelect>
+        <label className="grid gap-1 copy-body">Default choice
+          <Select aria-label="Default choice" value={preferred} onChange={event => setPreferred(event.target.value)}>
+            <SelectOption value="">Ask when previewing</SelectOption>
+            {choices.map((choice, index) => <SelectOption key={choiceLabels[index]} value={String(index)}>{choice || (choiceLabels[index] ?? 'Choice')}</SelectOption>)}
+          </Select>
         </label>
-        <p className="text-sm">The selected choice overrides matching tokens from the shared files.</p>
+        <p className="copy-body">The selected choice overrides matching tokens from the shared files.</p>
       </>}
       {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
       <div className="flex justify-end gap-2">

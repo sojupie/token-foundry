@@ -46,9 +46,10 @@ function rewritePointer(value: string, ownerBefore: string, ownerAfter: string, 
 }
 
 function rewriteDocumentReferences(file: WorkspaceFile, replace: (reference: string, path: JSONPath) => string) {
-  if (file.parseIssue) return { text: file.text, count: 0 };
+  if (file.parseIssue) return { text: file.text, count: 0, references: [] };
   const ast = requireValue(parseTree(file.text), 'token document');
   const edits: Edit[] = [];
+  const references: { before: string; after: string }[] = [];
 
   function walk(value: JsonValue, location: JSONPath) {
     if (Array.isArray(value)) {
@@ -67,10 +68,41 @@ function rewriteDocumentReferences(file: WorkspaceFile, replace: (reference: str
       if (item === next) continue;
       const node = requireValue(findNodeAtLocation(ast, field), 'reference in ' + file.path);
       edits.push({ offset: node.offset, length: node.length, content: JSON.stringify(next) });
+      references.push({ before: item, after: next });
     }
   }
   walk(file.tree, []);
-  return { text: applyEdits(file.text, edits), count: edits.length };
+  return { text: applyEdits(file.text, edits), count: edits.length, references };
+}
+
+export function rewriteDefinitionPointers(file: WorkspaceFile, moves: readonly {
+  file: string; destinationFile: string; from: readonly string[]; to: readonly string[];
+}[]) {
+  const byFile = new Map<string, Map<string, { file: string; parts: readonly string[] }>>();
+  for (const move of moves) {
+    const paths = byFile.get(move.file) ?? new Map<string, { file: string; parts: readonly string[] }>();
+    paths.set(JSON.stringify(move.from), { file: move.destinationFile, parts: move.to });
+    byFile.set(move.file, paths);
+  }
+  return rewriteDocumentReferences(file, reference => {
+    if (!reference.includes('#')) return reference;
+    try {
+      const target = tokenPointer(reference, file.path);
+      const paths = byFile.get(target.file);
+      if (!paths) return reference;
+      for (let size = target.parts.length; size > 0; size--) {
+        const destination = paths.get(JSON.stringify(target.parts.slice(0, size)));
+        if (destination) {
+          const pointer = serializeTokenPointer(file.path, destination.file, [...destination.parts, ...target.parts.slice(size)]);
+          return destination.file === file.path && target.file === file.path && !reference.startsWith('#')
+            ? reference.slice(0, reference.indexOf('#')) + pointer : pointer;
+        }
+      }
+    } catch {
+      // Keep malformed pointers for validation.
+    }
+    return reference;
+  });
 }
 
 export function rewriteSourcePointers(file: WorkspaceFile, from: string, to: string) {

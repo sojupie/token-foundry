@@ -1,7 +1,6 @@
 import { useState } from 'react';
-import { Button, TextField } from '@token-catalog/forge-react';
+import { Button, TextField, Select, SelectOption } from '@token-catalog/forge-react';
 import { ActionDialog } from '@/components/ui/dialog';
-import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { errorMessage } from '../lib/json.ts';
 import { isResolverFile } from '../lib/resolver.ts';
@@ -75,20 +74,20 @@ export function SourceFileDialog({ action, workspace, root, reviewing, close, re
       {action.kind === 'create' && <>
         <TextField label="File name" required data-initial-focus value={path} placeholder="brand"
           onChange={event => { setPath(event.target.value); setError(''); }} />
-        <label className="grid gap-1 text-sm">Folder
-          <NativeSelect value={folder} onChange={event => setFolder(event.target.value)}>
-            <NativeSelectOption value="">{root || 'Workspace root'}</NativeSelectOption>
-            {folders.map(item => <NativeSelectOption key={item} value={item}>{item}</NativeSelectOption>)}
-            <NativeSelectOption value="/">New folder…</NativeSelectOption>
-          </NativeSelect>
+        <label className="grid gap-1 copy-body">Folder
+          <Select aria-label="Folder" value={folder} onChange={event => setFolder(event.target.value)}>
+            <SelectOption value="">{root || 'Workspace root'}</SelectOption>
+            {folders.map(item => <SelectOption key={item} value={item}>{item}</SelectOption>)}
+            <SelectOption value="/">New folder…</SelectOption>
+          </Select>
         </label>
         {folder === '/' && <TextField label="New folder path" required value={newFolder} onChange={event => setNewFolder(event.target.value)} />}
-        {name && <output className="wrap-anywhere text-sm">{prefix + createdPath}</output>}
+        {name && <output className="wrap-anywhere copy-body">{prefix + createdPath}</output>}
       </>}
       {action.kind === 'relocate' && <TextField label="File path" required data-initial-focus value={path}
         placeholder="colors/brand.tokens.json" supporting={root ? 'Relative to ' + root : undefined}
         onChange={event => { setPath(event.target.value); setError(''); }} />}
-      {action.kind === 'remove' && <p className="text-sm">Review the file removal and any references affected by it.</p>}
+      {action.kind === 'remove' && <p className="copy-body">Review the file removal and any references affected by it.</p>}
       {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
       <div className="flex justify-end gap-2">
         <Button type="button" data-initial-focus={action.kind === 'remove' ? '' : undefined} data-dialog-close="" variant="text">Cancel</Button>

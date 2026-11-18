@@ -5,9 +5,12 @@ import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 
 const md3Sample = process.env['MD3_TOKEN_BENCHMARK'];
+const cacheDir = process.env['FOUNDRY_VITE_CACHE_DIR'];
 
 export default defineConfig({
+  ...(cacheDir ? { cacheDir } : {}),
   define: { 'import.meta.env.VITE_MD3_SAMPLE': JSON.stringify(md3Sample ? '1' : '0') },
+  optimizeDeps: { include: ['colorjs.io/fn'] },
   resolve: { alias: { '@': fileURLToPath(new URL('./editor', import.meta.url)) } },
   plugins: [react(), tailwindcss(), {
     name: 'local-md3-sample',

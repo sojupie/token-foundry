@@ -5,6 +5,7 @@ import type { DialogProps } from '@token-catalog/forge-react';
 export function ActionDialog({ busy, className = '', ...props }: Omit<DialogProps, 'headerAction'> & { busy?: boolean }) {
   return <Dialog {...props} className={`action-dialog ${className}`.trim()}
     onToggle={(event) => {
+      if (event.target !== event.currentTarget) return;
       props.onToggle?.(event);
       if (event.newState === 'open') event.currentTarget.querySelector<HTMLElement>('[data-initial-focus]')?.focus({ preventScroll: true });
     }}

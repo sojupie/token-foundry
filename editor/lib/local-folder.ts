@@ -1,6 +1,6 @@
-import { errorMessage, requireValue } from '../../lib/json.ts';
-import { parseTokenFile } from '../../lib/parse-token-file.ts';
+import { errorMessage, isJsonObject, parseJson, requireValue } from '../../lib/json.ts';
 import { compileResolver, isResolverFile } from '../../lib/resolver.ts';
+import type { JsonObject } from '../../lib/json.ts';
 import type { TokenFile } from '../../lib/token-types.ts';
 import { openWorkspaceInWorker } from './workspace-review.ts';
 import { openWorkspace, workspaceChanges } from '../../lib/workspace.ts';
@@ -19,37 +19,79 @@ declare global {
 export const ignoredDirectories = new Set(['.git', 'node_modules', 'dist']);
 export const isTokenFile = (name: string) => /^(?:tokens\.json|.+\.tokens(?:\.json)?)$/iu.test(name);
 export const isResolverName = (name: string) => name.toLowerCase().endsWith('.resolver.json');
-export const emptyFolder = 'The folder has no token files or Resolver documents.';
+export const emptyFolder = 'No DTCG token files or Resolver documents were found in this folder.';
+const fileName = (path: string) => path.split('/').at(-1) ?? '';
+export const isFolderCandidate = (name: string) => isTokenFile(name) || name.toLowerCase().endsWith('.json');
+const isNamedSource = (path: string) => isTokenFile(fileName(path)) || isResolverName(path);
 
 const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 const writeOptions = { mode: 'exclusive', keepExistingData: false } as const;
 
-async function listFiles(folder: FileSystemDirectoryHandle, includeAll = false) {
+async function listFiles(folder: FileSystemDirectoryHandle) {
   const files = new Map<string, FileSystemFileHandle>();
   async function visit(directory: FileSystemDirectoryHandle, prefix: string) {
     for await (const [name, entry] of directory) {
       const path = prefix + name;
       if (entry.kind === 'directory') {
         if (!ignoredDirectories.has(name)) await visit(entry, path + '/');
-      } else if (isTokenFile(name) || name.toLowerCase().endsWith('.json')) files.set(path, entry);
+      } else if (isFolderCandidate(name)) files.set(path, entry);
     }
   }
   await visit(folder, '');
-  if (includeAll || [...files.keys()].some(isResolverName)) return files;
-  return new Map([...files].filter(([path]) => isTokenFile(path.split('/').at(-1) ?? '')));
+  return files;
+}
+
+function tokenGroup(node: JsonObject): boolean | undefined {
+  let containsTokens = typeof node['$ref'] === 'string' || typeof node['$extends'] === 'string' ||
+    isJsonObject(node['$extends']) && typeof node['$extends']['$ref'] === 'string';
+  for (const [key, child] of Object.entries(node)) {
+    if (key.startsWith('$') && key !== '$root') continue;
+    if (!isJsonObject(child)) return undefined;
+    if (Object.hasOwn(child, '$value')) {
+      containsTokens = true;
+      continue;
+    }
+    const childContainsTokens = tokenGroup(child);
+    if (childContainsTokens === undefined) return undefined;
+    if (childContainsTokens) containsTokens = true;
+  }
+  return containsTokens;
 }
 
 export function folderTokenSources(sources: readonly { path: string; text: string }[]) {
-  if (!sources.some(source => isResolverName(source.path))) return sources;
   const parsed = sources.flatMap(({ path, text }): TokenFile[] => {
-    try { return [{ path, tree: parseTokenFile(text, path) }]; }
-    catch { return []; }
+    try {
+      const tree = parseJson(text.replace(/^\uFEFF/u, ''));
+      return isJsonObject(tree) ? [{ path, tree }] : [];
+    } catch { return []; }
   });
-  const used = new Set<string>();
-  for (const resolver of parsed.filter(isResolverFile)) {
-    for (const path of compileResolver(resolver, parsed).sourceFiles) used.add(path);
+  const detected = new Set<string>();
+  for (const file of parsed) {
+    if (isResolverFile(file)) {
+      for (const path of compileResolver(file, parsed).sourceFiles) detected.add(path);
+      detected.add(file.path);
+    } else if (!Object.hasOwn(file.tree, '$value') && tokenGroup(file.tree)) {
+      detected.add(file.path);
+    }
   }
-  return sources.filter(({ path }) => isTokenFile(path.split('/').at(-1) ?? '') || isResolverName(path) || used.has(path));
+  return sources.filter(({ path }) => isNamedSource(path) || detected.has(path));
+}
+
+export function decodeFolderCandidate(path: string, bytes: ArrayBuffer) {
+  try {
+    return decoder.decode(bytes);
+  } catch (failure) {
+    if (isNamedSource(path)) throw new Error('Could not read ' + path + ' as UTF-8. ' + errorMessage(failure), { cause: failure });
+    return undefined;
+  }
+}
+
+async function readFolderSources(handles: ReadonlyMap<string, FileSystemFileHandle>) {
+  const sources = await Promise.all([...handles].toSorted(([a], [b]) => a.localeCompare(b)).map(async ([path, handle]) => {
+    const text = decodeFolderCandidate(path, await (await handle.getFile()).arrayBuffer());
+    return text === undefined ? [] : [{ path, text }];
+  }));
+  return sources.flat();
 }
 
 async function readFile(handle: FileSystemFileHandle, path: string) {
@@ -62,12 +104,8 @@ async function readFile(handle: FileSystemFileHandle, path: string) {
 
 export async function openLocalFolder(folder: WritableDirectory) {
   const handles = await listFiles(folder);
-  if (!handles.size) throw new Error(emptyFolder);
-  const sources = await Promise.all([...handles.keys()].toSorted().map(async (path) => {
-    const text = await readFile(requireValue(handles.get(path), path), path);
-    return { path, text };
-  }));
-  const selected = folderTokenSources(sources);
+  const selected = folderTokenSources(await readFolderSources(handles));
+  if (!selected.length) throw new Error(emptyFolder);
   const workspace = selected.reduce((sum, file) => sum + file.text.length, 0) >= 64_000 ?
     await openWorkspaceInWorker(folder.name, selected) : openWorkspace(folder.name, selected);
 
@@ -85,10 +123,11 @@ export async function openLocalFolder(folder: WritableDirectory) {
     if (await folder.requestPermission({ mode: 'readwrite' }) !== 'granted') {
       throw new Error('Write access was declined. Allow access and try again, or download a patch.');
     }
-    const current = await listFiles(folder, true);
+    const current = await listFiles(folder);
     const changes = new Map(workspaceChanges(next).map(change => [change.path, change]));
     const paths = new Set([...next.baseline.map(({ path }) => path), ...changes.keys()]);
-    if ([...current.keys()].some(path => (isTokenFile(path.split('/').at(-1) ?? '') || isResolverName(path)) && !paths.has(path))) {
+    const additions = new Map([...current].filter(([path]) => !paths.has(path)));
+    if ([...additions.keys()].some(isNamedSource) || folderTokenSources(await readFolderSources(additions)).length) {
       throw new Error('The set of token files changed on disk. Download the patch or reopen the folder to review the current files.');
     }
     const checked = await Promise.all([...paths].map(async path => {

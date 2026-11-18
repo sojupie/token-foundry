@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
+import { compileResolver, resolveResolver } from '../lib/resolver.ts';
 import { copyEntries, decodeClipboard, encodeClipboard } from '../lib/structure.ts';
 import { fieldDependsOn, referenceConsumers, referenceProblems } from '../lib/document.ts';
-import { diffFile, openWorkspace, reviewAgainstLatest, reviewBulkEdit, reviewDelete, reviewDuplicate, reviewEdit, reviewMove, reviewMoves, reviewMetadata, reviewPaste, reviewProposal, reviewRepositorySources, reviewRemoveOverride, reviewSource, reviewSourcePath, reviewWorkspace, workspaceChanges } from '../lib/workspace.ts';
+import { diffFile, openWorkspace, reviewAgainstLatest, reviewBulkEdit, reviewDelete, reviewDuplicate, reviewEdit, reviewMove, reviewMoves, reviewMetadata, reviewPaste, reviewProposal, reviewRepositorySources, reviewRemoveOverride, reviewResolverStructure, reviewSource, reviewSourcePath, reviewWorkspace, workspaceChanges } from '../lib/workspace.ts';
 
 await test('reviews an in-browser edit, preserves other files and exports a Git patch', async () => {
   const paths = ['reference.tokens.json', 'system.tokens.json'];
@@ -713,4 +714,116 @@ await test('bulk type changes replace incompatible values and retain compatible 
   assert.deepEqual(result.next.graph.resolved.get('spacing'), { value: 4, unit: 'rem' });
   assert.deepEqual(result.next.graph.resolved.get('count'), { value: 8, unit: 'px' });
   assert.deepEqual(result.bulk?.records.map(record => record.path), ['count']);
+});
+
+await test('bulk editing a variant writes the winning physical definitions and rebases pointers', () => {
+  const file = 'appearance.resolver.json';
+  const original = {
+    version: '2025.10',
+    modifiers: { Appearance: { default: 'Light', contexts: {
+      Light: [{ gap: { $type: 'number', $value: 4 } }],
+      Dark: [{ gap: { $type: 'number', $value: 8 }, target: { $type: 'number', $value: 12 } }],
+    } } },
+    resolutionOrder: [{ $ref: '#/modifiers/Appearance' }],
+  };
+  const workspace = openWorkspace('Example', [{ path: file, text: JSON.stringify(original) }]);
+  const inputs = { Appearance: 'Dark' };
+  const model = compileResolver({ path: file, tree: original }, workspace.files);
+  const result = reviewBulkEdit(workspace, ['gap'], { kind: 'value', referenceFile: file, value: { $ref: '#/target/%24value' } }, {
+    resolution: resolveResolver(model, inputs),
+    review: { file, contexts: [{ label: 'Dark', inputs }] },
+  });
+  assert.deepEqual(result.validationErrors, []);
+  const edited = result.next.files.find(source => source.path === file);
+  assert.ok(edited);
+  const updated = compileResolver(edited, result.next.files);
+  assert.equal(resolveResolver(updated, inputs).graph.resolved.get('gap'), 12);
+  assert.equal(resolveResolver(updated, { Appearance: 'Light' }).graph.resolved.get('gap'), 4);
+  assert.match(edited.text, /appearance\.resolver\.json#\/modifiers\/Appearance\/contexts\/Dark\/0\/target/u);
+});
+
+await test('structural edits target inline variant definitions and preserve shared aliases', () => {
+  const path = 'appearance.resolver.json';
+  const original = {
+    version: '2025.10',
+    sets: { Shared: { sources: [{ gap: { $type: 'number', $value: 4 },
+      sharedConsumer: { $type: 'number', $value: '{gap}' } }] } },
+    modifiers: { Appearance: { default: 'Light', contexts: { Light: [],
+      Dark: [{ gap: { $type: 'number', $value: 8 }, own: { $type: 'number', $value: '{gap}' },
+        group: { marker: { $type: 'number', $value: 1 } } }] } } },
+    resolutionOrder: [{ $ref: '#/sets/Shared' }, { $ref: '#/modifiers/Appearance' }],
+  };
+  const workspace = openWorkspace('Example', [{ path, text: JSON.stringify(original) }]);
+  const variant = (data: typeof workspace, appearance: string) => {
+    const source = data.files.find(file => file.path === path);
+    assert.ok(source);
+    return resolveResolver(compileResolver(source, data.files), { Appearance: appearance });
+  };
+  const apply = (data: typeof workspace, operation: 'rename' | 'move' | 'duplicate' | 'delete', changes: { path: string; to?: string }[]) =>
+    reviewResolverStructure(data, { resolution: variant(data, 'Dark'), review: {
+      file: path, contexts: [{ label: 'Light', inputs: { Appearance: 'Light' } }],
+    } }, operation, changes);
+  const renamed = apply(workspace, 'rename', [{ path: 'gap', to: 'spacing' }]);
+  assert.deepEqual(renamed.validationErrors ?? [], []);
+  assert.equal(variant(renamed.next, 'Dark').graph.resolved.get('own'), 8);
+  assert.equal(variant(renamed.next, 'Dark').graph.resolved.get('sharedConsumer'), 4);
+  assert.equal(variant(renamed.next, 'Light').graph.resolved.get('sharedConsumer'), 4);
+  assert.equal(renamed.structure?.referencesUpdated, 1);
+  const moved = apply(renamed.next, 'move', [{ path: 'spacing', to: 'group.spacing' }]);
+  assert.deepEqual(moved.validationErrors ?? [], []);
+  assert.equal(variant(moved.next, 'Dark').graph.resolved.get('own'), 8);
+  const duplicate = apply(moved.next, 'duplicate', [{ path: 'group.spacing', to: 'group.copy' }]);
+  assert.equal(variant(duplicate.next, 'Dark').graph.resolved.get('group.copy'), 8);
+  const deleted = apply(duplicate.next, 'delete', [{ path: 'group.copy' }]);
+  assert.equal(variant(deleted.next, 'Dark').graph.tokens.has('group.copy'), false);
+  assert.equal(variant(deleted.next, 'Dark').graph.resolved.get('group.spacing'), 8);
+  const breaksLink = apply(deleted.next, 'delete', [{ path: 'group.spacing' }]);
+  assert.ok(breaksLink.validationErrors?.some(error => error.includes('Dark') && error.includes('own')));
+});
+
+await test('cross-set move rewrites exact links and reports a changed winner with the same value', () => {
+  const file = 'variant.resolver.json';
+  const workspace = openWorkspace('Example', [
+    { path: file, text: JSON.stringify({
+      version: '2025.10', sets: {
+        Base: { sources: [{ $ref: 'base.tokens.json' }] },
+        Destination: { sources: [{ $ref: 'destination.tokens.json' }] },
+      }, resolutionOrder: [{ $ref: '#/sets/Base' }, { $ref: '#/sets/Destination' }],
+    }) },
+    { path: 'base.tokens.json', text: '{"system":{"gap":{"$type":"number","$value":4},"consumer":{"$type":"number","$value":{"$ref":"#/system/gap/%24value"}}}}' },
+    { path: 'destination.tokens.json', text: '{"system":{}}' },
+  ]);
+  const manifest = workspace.files.find(source => source.path === file);
+  assert.ok(manifest);
+  const resolution = resolveResolver(compileResolver(manifest, workspace.files), {});
+  const reviewed = reviewResolverStructure(workspace, { resolution, review: { file, contexts: [{ label: 'Shared', inputs: {} }] } },
+    'move', [{ path: 'system.gap', to: 'system.gap' }], {
+      layer: { set: 'Destination' }, source: { file: 'destination.tokens.json', parts: ['system'] }, group: 'system',
+    });
+  assert.deepEqual(reviewed.validationErrors ?? [], []);
+  assert.equal(reviewed.structure?.references?.[0]?.after, 'destination.tokens.json#/system/gap/%24value');
+  assert.deepEqual(reviewed.contextImpact?.[0]?.sources, [{ path: 'system.gap', before: 'Base', after: 'Destination' }]);
+  assert.match(reviewed.next.files.find(source => source.path === 'destination.tokens.json')?.text ?? '', /"gap"/u);
+  assert.doesNotMatch(reviewed.next.files.find(source => source.path === 'base.tokens.json')?.text ?? '', /"gap":/u);
+});
+
+await test('moving into an empty variant option reports references broken in the original variant', () => {
+  const file = 'variant.resolver.json';
+  const workspace = openWorkspace('Example', [{ path: file, text: JSON.stringify({
+    version: '2025.10', modifiers: { Appearance: { default: 'Light', contexts: {
+      Light: [{ gap: { $type: 'number', $value: 4 }, alias: { $type: 'number', $value: '{gap}' } }],
+      Dark: [],
+    } } }, resolutionOrder: [{ $ref: '#/modifiers/Appearance' }],
+  }) }]);
+  const manifest = workspace.files.find(source => source.path === file);
+  assert.ok(manifest);
+  const resolution = resolveResolver(compileResolver(manifest, workspace.files), {});
+  const reviewed = reviewResolverStructure(workspace, { resolution, review: { file, contexts: [{ label: 'Light', inputs: {} }] } },
+    'move', [{ path: 'gap', to: 'gap' }], {
+      layer: { option: { modifier: 'Appearance', context: 'Dark' } },
+      source: { file, parts: ['modifiers', 'Appearance', 'contexts', 'Dark', '0'] }, group: '',
+    });
+  assert.ok(reviewed.validationErrors?.some(error => error.includes('Light') && error.includes('alias')));
+  assert.ok(reviewed.contextImpact?.some(context => context.label.includes('Dark') &&
+    context.changes.some(change => change.path === 'gap' && change.kind === 'Added')));
 });

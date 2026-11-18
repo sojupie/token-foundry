@@ -79,3 +79,31 @@ Both builds ran locally in Chromium with 4× CPU throttling. The figures are med
 The 10-token group switch still rebuilds the visible collection. The group tree limits the initial DOM size for larger workspaces. A separate Chromium verification imported and edited 10,000 tokens and switched a 10,000-token Resolver from Light to Dark and back. That run checked correctness under concurrent test load. The graph transfer and first render still contribute to the time before the new values appear.
 
 The separate six-run row-menu comparison measured **200 → 184 ms** for opening and **96 → 112 ms** for Escape dismissal. Opening now updates only the shared popover. Dismissal restores the invoking cell. [Shared menu](../editor/command-bar.tsx)
+
+## Large-workspace follow-up
+
+The later audit used matched Chromium development builds at 1440 × 900, with no CPU throttling. The table reports the median of four input-to-paint samples per action and dataset. The generated workspace contained 40,000 literal tokens in 50 groups. The Material 3 sample contained 6,814 resolved tokens. Each grid page retained its 100-row limit.
+
+| Action | Material 3 before → after | 40,000 tokens before → after |
+| --- | ---: | ---: |
+| Select a cell | 476 → 36 ms | 684 → 44 ms |
+| Move focus with Arrow Down | 456 → 24 ms | 616 → 24 ms |
+| Open the token editor | 684 → 52 ms | 768 → 56 ms |
+| Select a cell with the editor open | 508 → 40 ms | 636 → 48 ms |
+| Open Edit | 364 → 72 ms | 532 → 84 ms |
+| Open a row menu | 516 → 68 ms | 612 → 80 ms |
+| Navigate between groups | 484 → 116 ms | 720 → 200 ms |
+| Open Workspace | 388 → 64 ms | 432 → 48 ms |
+| Return to Tokens | 312 → 68 ms | 516 → 80 ms |
+
+To repeat the measurements, use the same browser size and both development builds. Open the Material 3 sample or import a document with 50 groups of 800 DTCG dimension tokens each. After the first grid is ready, alternate between comparable groups. Time a click on an unselected cell, Arrow Down, opening the top or row menu, and opening the token editor with a selected row. Wait for menus and focus feedback to settle between actions. Record Event Timing without a CDP trace for the timing table and make a separate trace for attribution.
+
+Chromium traced the baseline cell click to roughly 733 ms of JavaScript on the 40,000-token file, versus about 16 ms for style and paint combined. React Aria's focus path updated the table collection on ordinary pointer and keyboard actions. The native grid owns cell navigation and column resizing, while an external selection store notifies only affected rows. The group tree subscribes through the group map instead of passing the token graph to every branch. Search reuses normalized token strings and ordinary browsing slices directly into the indexed group range.
+
+A separate CPU profile caught React's development profiler comparing large graph props recursively on a variant switch. That comparison alone took about 2.65 seconds on a 40,001-token Resolver. Large read-only render data now crosses those component boundaries by snapshot identity, with development checks enabled.
+
+The Material 3 editor for a token with 442 direct consumers went from a 472 ms paint to 40 ms. The first page of references now renders after the editor controls. It mounts 24 entries per list and reuses a reverse index for the graph revision.
+
+The worker retains bounded workspace snapshots, receives selected Resolver contributions, and returns changed source files with updated graphs. A warm Material 3 review request took less than 0.1 ms to post. Full validation across variants still took 1.16–1.67 seconds on the worker. Comparison and file diff generation also run there. Review tables and file diffs mount one page at a time.
+
+A separate Chromium run imported 40,001 tokens with 8,000 aliases and measured from the start of each action until the expected resolved value appeared in the grid. Import took 2,096 → 1,459 ms, the first switch to Dark took 1,886 → 1,022 ms, returning to the default Light took 1,579 → 175 ms, and switching back to cached Dark took 610 → 70 ms. The cache keys variants by effective context, so choosing Light explicitly reuses the graph already built for the implicit default. These are single-run timings.

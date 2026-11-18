@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { resolveResolver } from '../../lib/resolver.ts';
+import { resolveResolver, resolverInputs } from '../../lib/resolver.ts';
 import type { ResolverModel, ResolverResolution } from '../../lib/resolver.ts';
 import { errorMessage } from '../../lib/json.ts';
 import { resolveVariantInWorker } from './workspace-review.ts';
@@ -22,7 +22,11 @@ function store(model: ResolverModel, key: string, value: ResolverResolution) {
 }
 
 export function useVariantResolution(model: ResolverModel | undefined, inputs: Inputs, offThread: boolean) {
-  const key = useMemo(() => JSON.stringify(Object.entries(inputs).toSorted(([a], [b]) => a.localeCompare(b))), [inputs]);
+  const key = useMemo(() => {
+    const selection = model && resolverInputs(model, inputs);
+    const entries = selection && !selection.errors.length ? Array.from(selection.contexts) : Object.entries(inputs);
+    return JSON.stringify(entries.toSorted(([a], [b]) => a.localeCompare(b)));
+  }, [model, inputs]);
   const [result, setResult] = useState<{ model: ResolverModel; key: string; error?: string; value?: ResolverResolution }>();
   const cached = model && resolutions.get(model)?.get(key);
   const local = useMemo(() => model && !offThread ?

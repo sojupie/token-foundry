@@ -1,9 +1,14 @@
+import { winningOrigins } from '../lib/resolver.ts';
+import type { ResolverResolution } from '../lib/resolver.ts';
+import { originName } from './resolver-pane.tsx';
 import { tokenDisplayName } from './lib/value-shape.ts';
-import { useId, useRef, useState } from 'react';
-import type { KeyboardEvent } from 'react';
-import { Cell, Column, ColumnResizer, ResizableTableContainer, Row, Table, TableBody, TableHeader } from 'react-aria-components';
-import { AlertCircle, ArrowRightLeft, Copy, Ellipsis, Link2, Settings2, SquarePen, Trash2, Undo2 } from 'lucide-react';
-import { IconButton } from '@token-catalog/forge-react';
+import { useCallback, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import type { FocusEvent, KeyboardEvent, MouseEvent, ReactNode, RefObject } from 'react';
+import { GridColumnResizer, useGridWidths } from './grid-columns.tsx';
+import type { GridSelection } from './lib/grid-selection.ts';
+import type { RenderData } from './lib/render-data.ts';
+import { AlertCircle, ArrowRightLeft, Copy, Ellipsis, Link2, Pencil, Settings2, TextCursorInput, Trash2, Undo2 } from 'lucide-react';
+import { IconButton, Select, SelectOption } from '@token-catalog/forge-react';
 import { EditorPopover } from '@/components/ui/popover';
 import { SelectionCheckbox } from '@/components/ui/selection-checkbox';
 import type { DocumentGraph, TokenEntry } from '../lib/document.ts';
@@ -15,23 +20,33 @@ import { TokenValue } from './token-value.tsx';
 import { RowCommandMenu } from './command-bar.tsx';
 import type { RowMenuHandle } from './command-bar.tsx';
 
+// ARIA in HTML permits a native table to expose the grid role when its
+// controls implement grid keyboard navigation.
+const gridSemantics = { role: 'grid', tabIndex: -1, 'aria-label': 'Tokens', 'aria-multiselectable': true };
 const columns = ['name', 'value', 'resolved', 'type', 'description'] as const;
+const narrowColumns = ['name', 'value'] as const;
 const editableColumns = ['name', 'value', 'type', 'description'] as const;
 type CellDraft = Extract<Draft, { create: false }>;
 const labels = { name: 'Name', value: 'Value', resolved: 'Resolved value', type: 'Type', description: 'Description' };
-const defaultWidths = { name: '3fr', value: '2.5fr', resolved: '1.5fr', type: 100, description: '2fr' } as const;
-const minimumWidths = { name: 144, value: 144, resolved: 120, type: 80, description: 112 };
+
+export interface GridData {
+  rows: readonly [string, TokenEntry][];
+  graph: DocumentGraph;
+  activeValueGraph: DocumentGraph | undefined;
+  resolution: ResolverResolution | undefined;
+  definition: ResolverResolution | undefined;
+}
 
 interface Props {
   narrow: boolean;
   variant: boolean;
-  rows: readonly [string, TokenEntry][];
-  graph: DocumentGraph;
+  canStructure: (path: string) => boolean;
+  rename: (path: string) => void;
+  data: RenderData<GridData>;
+  previewLabel: string | undefined;
+  resolvedHeading: string;
   group: string;
-  selected: string;
-  activeColumn: GridColumn;
-  checked: ReadonlySet<string>;
-  setChecked: (update: (current: Set<string>) => Set<string>) => void;
+  gridSelection: GridSelection;
   select: (path: string, column?: GridColumn) => void;
   edit: (path: string, column: EditableColumn, link?: boolean) => void;
   inspect: (path: string) => void;
@@ -49,13 +64,12 @@ interface Props {
   busy: boolean;
 }
 
-function focusInlineField(field: HTMLInputElement | HTMLSelectElement | null) {
+function focusInlineField(field: HTMLInputElement | null) {
   field?.focus({ preventScroll: true });
-  if (field instanceof HTMLInputElement) field.select();
+  if (field && !field.readOnly) field.select();
 }
 
 function focusGridControl(control: HTMLElement | null | undefined) {
-  control?.closest<HTMLElement>('td, th')?.focus({ preventScroll: true });
   control?.focus();
 }
 
@@ -66,14 +80,14 @@ function InlineCell({ draft: initialDraft, entry, setDraft, commit, cancel, afte
   const [draft, updateDraft] = useState(initialDraft);
   const openingPopover = useRef(false);
 
-  function keydown(event: KeyboardEvent<HTMLInputElement | HTMLSelectElement>) {
+  function keydown(event: KeyboardEvent<HTMLInputElement>) {
     event.stopPropagation();
     if (event.nativeEvent.isComposing) return;
     if (event.key === 'Escape') {
       event.preventDefault();
       cancel();
     }
-    if (event.key === 'Tab' || (event.key === 'Enter' && event.currentTarget instanceof HTMLInputElement)) {
+    if (event.key === 'Tab' || (event.key === 'Enter' && !event.currentTarget.readOnly)) {
       event.preventDefault();
       commit(draft, after(event.key, event.shiftKey));
     }
@@ -82,27 +96,25 @@ function InlineCell({ draft: initialDraft, entry, setDraft, commit, cancel, afte
   const invalid = !!error;
   const hex = draft.column === 'value' && inputFormat(entry.type, entry.value) === 'hex';
   const field = draft.column === 'description' ? 'Description' : 'Token ' + draft.column;
-  const inputStyle = 'h-9 w-full min-w-0 bg-background px-2 text-xs ring-2 ring-inset ring-primary outline-none aria-invalid:ring-destructive';
-
-  return <div className="flex h-9 min-w-0 items-center" onBlur={(event) => {
+  return <div className="grid-inline-editor" data-invalid={invalid || undefined} onBlur={(event) => {
     if (!openingPopover.current && !event.currentTarget.contains(event.relatedTarget) && !commit(draft, null)) {
-      const control = event.currentTarget.querySelector<HTMLInputElement | HTMLSelectElement>('input, select');
+      const control = event.currentTarget.querySelector<HTMLInputElement>('input');
       requestAnimationFrame(() => { if (control?.isConnected) control.focus(); });
     }
   }}>
-    {draft.column === 'type' ? <select ref={focusInlineField} className={inputStyle} aria-label={field} aria-invalid={invalid}
+    {draft.column === 'type' ? <Select ref={focusInlineField} className="w-full" aria-label={field} aria-invalid={invalid}
       aria-errormessage={invalid ? 'inline-edit-error' : undefined} value={draft.type ?? ''} onKeyDown={keydown}
       onChange={(event) => {
         const next = { ...draft, type: event.target.value };
         if (!commit(next)) { openingPopover.current = true; setDraft({ ...next, mode: 'details' }); }
       }}>
-      <option value="">Automatic</option>
+      <SelectOption value="">Automatic</SelectOption>
       {[...new Set([...dtcgTypes, ...(entry.node.$type ? [entry.node.$type] : [])])].map((type) =>
-        <option key={type} value={type}>{type}</option>)}
-    </select> : <>
+        <SelectOption key={type} value={type}>{type}</SelectOption>)}
+    </Select> : <>
       <input ref={focusInlineField} aria-label={field} aria-invalid={invalid} aria-errormessage={invalid ? 'inline-edit-error' : undefined}
         autoComplete="off" spellCheck={false} value={draft[draft.column]}
-        className={inputStyle + (draft.column === 'description' ? '' : ' font-mono') + (draft.column === 'value' ? hex ? ' pe-14' : ' pe-8' : '')}
+        className={'grid-inline-input' + (draft.column === 'description' ? '' : ' code-text')}
         onKeyDown={keydown} onChange={(event) => {
           const value = event.target.value;
           if (draft.column === 'value' && value.startsWith('{')) {
@@ -111,39 +123,180 @@ function InlineCell({ draft: initialDraft, entry, setDraft, commit, cancel, afte
           }
           else updateDraft({ ...draft, [draft.column]: value });
         }} />
-      {hex && <input type="color" aria-label="Pick color" className="absolute end-8 size-5 cursor-pointer border-0 bg-transparent p-0"
-        value={/^#[0-9a-f]{6}$/iu.test(draft.value) ? draft.value : '#000000'}
-        onChange={(event) => updateDraft({ ...draft, value: event.target.value })} />}
-      {draft.column === 'value' && <IconButton size="xsmall" label="Link token" aria-haspopup="dialog"
-        className="cell-action end-1" onPointerDown={(event) => event.preventDefault()}
-        onClick={() => { openingPopover.current = true; setDraft({ ...draft, type: entry.node.$type, mode: 'link' }); }}><Link2 aria-hidden="true" /></IconButton>}
+      {draft.column === 'value' && <div className="grid-inline-actions">
+        {hex && <input type="color" aria-label="Pick color" className="workspace-color-picker"
+          value={/^#[0-9a-f]{6}$/iu.test(draft.value) ? draft.value : '#000000'}
+          onChange={(event) => updateDraft({ ...draft, value: event.target.value })} />}
+        <IconButton size="xsmall" label="Link token" aria-haspopup="dialog"
+          onPointerDown={(event) => event.preventDefault()}
+          onClick={() => { openingPopover.current = true; setDraft({ ...draft, type: entry.node.$type, mode: 'link' }); }}>
+          <Link2 aria-hidden="true" />
+        </IconButton>
+      </div>}
     </>}
   </div>;
 }
 
-export function TokenGrid({ narrow, variant, rows, graph, group, selected, activeColumn, checked, setChecked, select, edit, draft, setDraft, commit, cancel,
+interface GridActions {
+  select: Props['select'];
+  edit: Props['edit'];
+  inspect: Props['inspect'];
+  setDraft: Props['setDraft'];
+  commit: Props['commit'];
+  cancel: Props['cancel'];
+  openRowMenu: (cell: HTMLElement, path: string) => boolean;
+  selectRange: (to: string) => void;
+  selectRow: (path: string, toggle: boolean) => void;
+  anchorRow: (path: string) => void;
+  focusCell: (button: HTMLButtonElement, path: string, field: GridColumn) => void;
+  pointerDown: (button: HTMLButtonElement) => void;
+  clearPointer: () => void;
+  afterEdit: (index: number, field: EditableColumn, key: string, backward: boolean) => CellPosition | undefined;
+}
+
+function RowSelection({ gridSelection, path, disabled, actions }: {
+  gridSelection: GridSelection; path: string; disabled: boolean; actions: RefObject<GridActions>;
+}) {
+  const subscribe = useCallback((listener: () => void) => gridSelection.subscribeRow(path, listener), [gridSelection, path]);
+  const selected = useSyncExternalStore(subscribe, () => gridSelection.getSnapshot().checked.has(path));
+  const markRow = useCallback((label: HTMLLabelElement | null) => {
+    const row = label?.closest('tr');
+    row?.setAttribute('aria-selected', String(selected));
+    row?.toggleAttribute('data-selected', selected);
+  }, [selected]);
+  return <SelectionCheckbox rowRef={markRow} tabIndex={-1} label={'Select row Name for ' + path} {...{ selected, disabled }}
+    change={next => {
+      actions.current.anchorRow(path);
+      gridSelection.setChecked(previous => {
+        const checked = new Set(previous);
+        if (next) checked.add(path);
+        else checked.delete(path);
+        return checked;
+      });
+    }} />;
+}
+
+function setPageChecked(gridSelection: GridSelection, rows: GridData['rows'], selected: boolean) {
+  gridSelection.setChecked(previous => {
+    const checked = new Set(previous);
+    for (const [path] of rows) {
+      if (selected) checked.add(path);
+      else checked.delete(path);
+    }
+    return checked;
+  });
+}
+
+function PageSelection({ gridSelection, rows, disabled }: {
+  gridSelection: GridSelection; rows: GridData['rows']; disabled: boolean;
+}) {
+  const count = useSyncExternalStore(gridSelection.subscribeChecked, () => {
+    const { checked } = gridSelection.getSnapshot();
+    return rows.reduce((total, [path]) => total + Number(checked.has(path)), 0);
+  });
+  const selected = rows.length > 0 && count === rows.length;
+  return <SelectionCheckbox tabIndex={-1} label="Select all visible tokens" {...{ selected, disabled }} indeterminate={count > 0 && !selected}
+    change={next => setPageChecked(gridSelection, rows, next)} />;
+}
+
+function GridCell({ path, field, entry, index, gridSelection, actions, variant, draft, disabled, stacked, error, children }: {
+  path: string; field: GridColumn; entry: TokenEntry; index: number;
+  gridSelection: GridSelection; actions: RefObject<GridActions>;
+  variant: boolean; draft: CellDraft | null; disabled: boolean; stacked: boolean; error: string; children: ReactNode;
+}) {
+  const subscribe = useCallback((listener: () => void) => gridSelection.subscribeRow(path, listener), [gridSelection, path]);
+  const active = useSyncExternalStore(subscribe, () => {
+    const { selected, activeColumn } = gridSelection.getSnapshot();
+    if (path !== selected) return 0;
+    if (field === activeColumn) return 2;
+    return field === 'value' ? 1 : 0;
+  });
+  const showLink = !variant && active > 0 && field === 'value' && !disabled;
+  const showActions = field === 'name' && !disabled;
+  return <div className="relative min-w-0">
+    {draft?.mode === 'inline' ? <InlineCell {...{ draft, entry, error }}
+      setDraft={next => actions.current.setDraft(next)}
+      commit={(pending, after) => actions.current.commit(pending, after)}
+      cancel={restore => actions.current.cancel(restore)}
+      after={(key, backward) => actions.current.afterEdit(index, draft.column, key, backward)} /> :
+      <button type="button" tabIndex={-1} data-stacked={stacked ? '' : undefined} data-edit-column={field}
+        data-active-cell={active === 2 ? '' : undefined} aria-label={labels[field] + ' for ' + path}
+        className={'grid-cell-button' + (field === 'name' || !variant && field === 'value' ? ' pe-8' : '')}
+        onFocus={event => actions.current.focusCell(event.currentTarget, path, field)}
+        onPointerDown={event => {
+          event.stopPropagation();
+          if (event.isPrimary && event.button === 0) actions.current.pointerDown(event.currentTarget);
+        }}
+        onPointerUp={() => actions.current.clearPointer()}
+        onPointerCancel={() => actions.current.clearPointer()}
+        onPointerLeave={() => actions.current.clearPointer()}
+        onClick={event => {
+          event.stopPropagation();
+          if (disabled) return;
+          if (event.shiftKey) actions.current.selectRange(path);
+          else actions.current.selectRow(path, event.ctrlKey || event.metaKey);
+          actions.current.select(path, field);
+          focusGridControl(event.currentTarget);
+        }}
+        onDoubleClick={event => { if (field !== 'resolved' && !event.shiftKey && !event.ctrlKey && !event.metaKey) actions.current.edit(path, field); }}
+        onKeyDown={event => {
+          if (!disabled && field !== 'resolved' && (event.key === 'F2' || event.key === 'Enter')) {
+            event.preventDefault();
+            event.stopPropagation();
+            actions.current.edit(path, field);
+          }
+        }}>{children}</button>}
+    {showLink && <IconButton tabIndex={-1} size="xsmall" label={'Link reference for ' + path} aria-haspopup="dialog"
+      onClick={() => actions.current.edit(path, 'value', true)} className="cell-action end-0.5 top-1/2 -translate-y-1/2">
+      <Link2 aria-hidden="true" />
+    </IconButton>}
+    {showActions && <IconButton tabIndex={-1} size="xsmall" label={'Token actions for ' + path} aria-haspopup="menu" aria-expanded="false"
+      className="cell-action token-row-actions end-0.5 top-1/2 -translate-y-1/2"
+      onKeyDown={event => {
+        if (event.key !== 'Enter' && event.key !== ' ' && event.key !== 'ArrowDown') return;
+        event.preventDefault(); event.stopPropagation();
+        actions.current.openRowMenu(event.currentTarget, path);
+      }}
+      onPointerDown={event => event.stopPropagation()} onClick={event => {
+        event.stopPropagation();
+        actions.current.openRowMenu(event.currentTarget, path);
+      }}><Ellipsis aria-hidden="true" /></IconButton>}
+  </div>;
+}
+
+export function TokenGrid({ narrow, variant, canStructure, rename, data, previewLabel, resolvedHeading, group, gridSelection, select, edit, draft, setDraft, commit, cancel,
   inspect, metadata, move, duplicate, copy, remove, restoreInherited, busy, error }: Props) {
+  const { rows, graph, activeValueGraph, resolution, definition } = data.value;
+  const valueGraph = activeValueGraph ?? graph;
   const anchor = useRef<HTMLTableCellElement>(null);
-  const rowAnchor = useRef<string | undefined>(undefined);
+  const pointerAnchor = useRef<string | undefined>(undefined);
+  const range = useRef<{ rows: GridData['rows']; start: number; end: number; baseline: ReadonlySet<string>; checked: Set<string> } | null>(null);
   const pointerCell = useRef<HTMLButtonElement | null>(null);
   const rowMenu = useRef<RowMenuHandle>(null);
   function openRowMenu(cell: HTMLElement, path: string) {
     const button = cell.closest('tr')?.querySelector<HTMLButtonElement>('.token-row-actions');
     const entry = graph.tokens.get(path);
     if (!button || button.disabled || !entry || !rowMenu.current) return false;
+    const returnCell = cell === button ? cell.closest('td')?.querySelector<HTMLElement>('[data-edit-column]') ?? cell : cell;
+    focusGridControl(returnCell);
     rowMenu.current.open(button, {
       label: 'Token actions for ' + path,
       heading: tokenDisplayName(path),
-      restore: () => { if (cell.isConnected) focusGridControl(cell); },
-      sections: [[{ label: 'Edit token', icon: <SquarePen aria-hidden="true" />, run: () => inspect(path) },
+      restore: () => {
+        if (returnCell.isConnected && (document.activeElement === document.body || document.activeElement === button)) {
+          focusGridControl(returnCell);
+        }
+      },
+      sections: [[{ label: 'Edit token', icon: <Pencil aria-hidden="true" />, run: () => inspect(path) },
         { label: 'References', icon: <Link2 aria-hidden="true" />, run: () => inspect(path) },
-        { label: 'Edit token metadata', icon: <Settings2 aria-hidden="true" />, run: () => metadata(path) },
-        { label: 'Move token', icon: <ArrowRightLeft aria-hidden="true" />, disabled: !!entry.inheritedFrom, run: () => move(path) },
-        { label: 'Copy token', icon: <Copy aria-hidden="true" />, run: () => copy(path) },
-        { label: 'Duplicate token', icon: <Copy aria-hidden="true" />, run: () => duplicate(path) },
-        entry.overrides && !entry.inheritedFrom
+        ...(!variant ? [{ label: 'Edit token metadata', icon: <Settings2 aria-hidden="true" />, run: () => metadata(path) },
+          { label: 'Copy token', icon: <Copy aria-hidden="true" />, run: () => copy(path) }] : []),
+        { label: 'Rename token', icon: <TextCursorInput aria-hidden="true" />, disabled: !!entry.inheritedFrom || !canStructure(path), run: () => rename(path) },
+        { label: 'Move token', icon: <ArrowRightLeft aria-hidden="true" />, disabled: !!entry.inheritedFrom || !canStructure(path), run: () => move(path) },
+        { label: 'Duplicate token', icon: <Copy aria-hidden="true" />, disabled: !canStructure(path), run: () => duplicate(path) },
+        !variant && entry.overrides && !entry.inheritedFrom
           ? { label: 'Use inherited value', icon: <Undo2 aria-hidden="true" />, run: () => restoreInherited(path) }
-          : { label: 'Delete token', icon: <Trash2 aria-hidden="true" />, disabled: !!entry.inheritedFrom, run: () => remove(path), destructive: true }]],
+          : { label: 'Delete token', icon: <Trash2 aria-hidden="true" />, disabled: !!entry.inheritedFrom || !canStructure(path), run: () => remove(path), destructive: true }]],
     });
     return true;
   }
@@ -151,8 +304,43 @@ export function TokenGrid({ narrow, variant, rows, graph, group, selected, activ
   const editing = draft && !draft.create && draft.mode !== 'inspector' ? draft : null;
   const popover = editing?.mode === 'details' ? editing : null;
   const linking = editing?.mode === 'link' ? editing : null;
-  const visibleColumns = narrow ? columns.filter(field => field === 'name' || field === 'value') : columns;
-  const editOrder: readonly EditableColumn[] = narrow ? editableColumns.filter(field => field === 'name' || field === 'value') : editableColumns;
+  const visibleColumns = narrow ? narrowColumns : columns;
+  const table = useRef<HTMLTableElement>(null);
+  const container = useRef<HTMLDivElement>(null);
+  const { widths, resize, checkboxWidth } = useGridWidths(visibleColumns, container);
+  const tabStop = useRef<HTMLElement | null>(null);
+  const rememberedCell = useRef({ row: 0, selector: '[data-edit-column="name"]' });
+  useLayoutEffect(() => {
+    if (tabStop.current?.isConnected) return;
+    tabStop.current = gridEntryControl() ?? null;
+    tabStop.current?.setAttribute('tabindex', '0');
+  });
+
+  function gridEntryControl() {
+    if (tabStop.current?.isConnected) return tabStop.current;
+    const displayed = table.current?.tBodies[0]?.rows;
+    const { row, selector } = rememberedCell.current;
+    const nearest = displayed?.[Math.min(row, displayed.length - 1)];
+    return nearest?.querySelector<HTMLElement>(selector) ??
+      nearest?.querySelector<HTMLElement>('[data-edit-column="name"]');
+  }
+
+  function rememberFocus(event: FocusEvent<HTMLTableElement>) {
+    const target = event.target;
+    if (target === event.currentTarget && rows.length) {
+      focusGridControl(gridEntryControl());
+      return;
+    }
+    if (!(target instanceof HTMLElement)) return;
+    const row = target.closest<HTMLTableRowElement>('[data-token-row]');
+    if (!row || !target.matches('[data-edit-column], input[type="checkbox"]')) return;
+    const column = target.dataset['editColumn'];
+    rememberedCell.current = { row: row.sectionRowIndex, selector: column ? '[data-edit-column="' + column + '"]' : 'input[type="checkbox"]' };
+    if (tabStop.current !== target) tabStop.current?.setAttribute('tabindex', '-1');
+    tabStop.current = target;
+    target.tabIndex = 0;
+  }
+  const editOrder: readonly EditableColumn[] = narrow ? narrowColumns : editableColumns;
 
   function afterEdit(index: number, field: EditableColumn, key: string, backward: boolean): CellPosition | undefined {
     const step = backward ? -1 : 1;
@@ -166,19 +354,32 @@ export function TokenGrid({ narrow, variant, rows, graph, group, selected, activ
     return path && nextColumn ? { path, column: nextColumn } : undefined;
   }
 
-  function selectRange(from: string, to: string) {
-    const anchorIndex = rows.findIndex(([path]) => path === rowAnchor.current);
-    const fromIndex = anchorIndex < 0 || !checked.size ? rows.findIndex(([path]) => path === from) : anchorIndex;
-    const toIndex = rows.findIndex(([path]) => path === to);
-    if (toIndex < 0) return;
-    const start = fromIndex < 0 ? toIndex : fromIndex;
-    rowAnchor.current = rows[start]?.[0];
-    setChecked(() => new Set(rows.slice(Math.min(start, toIndex), Math.max(start, toIndex) + 1).map(([path]) => path)));
+  function selectRange(to: string, focused?: string) {
+    const { checked, selected } = gridSelection.getSnapshot();
+    const from = rows.findIndex(([path]) => path === (focused ?? selected));
+    const end = rows.findIndex(([path]) => path === to);
+    if (end < 0) return;
+    // A new checked set or page means another action ended the range.
+    const previous = range.current;
+    const continuing = previous?.rows === rows && previous.checked === checked && previous.end === from ? previous : null;
+    if (continuing?.end === end) return;
+    const pointerStart = focused === undefined && checked.size ? rows.findIndex(([path]) => path === pointerAnchor.current) : -1;
+    const start = continuing?.start ?? (pointerStart >= 0 ? pointerStart : from >= 0 ? from : end);
+    const baseline = continuing?.baseline ?? checked;
+    const next = new Set(baseline);
+    for (const [path] of rows.slice(Math.min(start, end), Math.max(start, end) + 1)) next.add(path);
+    range.current = { rows, start, end, baseline, checked: next };
+    gridSelection.setChecked(next);
+  }
+
+  function anchorRow(path: string) {
+    range.current = null;
+    pointerAnchor.current = path;
   }
 
   function selectRow(path: string, toggle: boolean) {
-    rowAnchor.current = path;
-    setChecked(previous => {
+    anchorRow(path);
+    gridSelection.setChecked(previous => {
       if (!toggle && previous.size === 1 && previous.has(path)) return previous;
       const next = toggle ? new Set(previous) : new Set<string>();
       if (toggle && next.has(path)) next.delete(path);
@@ -187,164 +388,215 @@ export function TokenGrid({ narrow, variant, rows, graph, group, selected, activ
     });
   }
 
+  function openMenuFromGrid(target: Element, keyboard: boolean) {
+    const row = target.closest<HTMLElement>('[data-token-row]');
+    const nearestCell = target.closest<HTMLElement>('[data-edit-column], input[type="checkbox"]');
+    const cell = row ? nearestCell ?? row.querySelector<HTMLElement>('[data-edit-column="name"]') :
+      keyboard ? gridEntryControl() : null;
+    const path = cell?.closest<HTMLElement>('[data-token-row]')?.dataset['tokenRow'];
+    return !!(cell && path && openRowMenu(cell, path));
+  }
+
+  function showContextMenu(event: MouseEvent<HTMLDivElement>) {
+    if (draft || busy || !(event.target instanceof Element) ||
+      event.target.closest('input:not([type="checkbox"]), textarea, select, [contenteditable]')) return;
+    if (openMenuFromGrid(event.target, event.button !== 2)) event.preventDefault();
+  }
+
+  function moveGridFocus(control: HTMLElement | null | undefined, keepRange = false) {
+    const previous = document.activeElement;
+    focusGridControl(control);
+    if (!keepRange && document.activeElement !== previous) range.current = null;
+  }
+
   function navigateCells(event: KeyboardEvent<HTMLDivElement>) {
     pointerCell.current = null;
-    if (draft || busy || !(event.target instanceof HTMLElement) || event.altKey || event.ctrlKey || event.metaKey) return;
+    if (event.key === 'Tab') {
+      range.current = null;
+      if (!draft && event.target instanceof HTMLElement && event.target !== tabStop.current &&
+        container.current?.contains(event.target)) {
+        gridEntryControl()?.focus({ preventScroll: true });
+      }
+      return;
+    }
+    if (draft || busy || event.nativeEvent.isComposing || !(event.target instanceof HTMLElement)) return;
+    const command = event.ctrlKey || event.metaKey;
+    const menuKey = !command && (event.altKey ? !event.shiftKey && event.key === 'ArrowDown' :
+      event.key === 'ContextMenu' || event.shiftKey && event.key === 'F10');
+    if (menuKey && openMenuFromGrid(event.target, true)) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    const cell = event.target.closest<HTMLElement>('[data-edit-column]');
+    if (event.altKey) {
+      if (cell && !command && event.shiftKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+        const index = visibleColumns.findIndex(column => column === cell.dataset['editColumn']);
+        if (index < 0) return;
+        event.preventDefault();
+        const rtl = getComputedStyle(cell).direction === 'rtl';
+        const step = (event.key === 'ArrowRight') !== rtl ? 8 : -8;
+        resize(index, (widths[index] ?? 0) + step);
+      }
+      return;
+    }
+    const checkbox = event.target.closest<HTMLInputElement>('input[type="checkbox"]');
+    const row = event.target.closest<HTMLElement>('[data-token-row]');
+    if (checkbox?.closest('thead') && event.key === 'ArrowDown') {
+      event.preventDefault();
+      moveGridFocus(table.current?.querySelector<HTMLElement>('tbody input[type="checkbox"]'));
+      return;
+    }
+    const path = row?.dataset['tokenRow'];
+    if (!row || !path || !cell && !checkbox) return;
+    const location = cell?.dataset['editColumn'];
+    if (event.key === ' ') {
+      event.preventDefault();
+      event.stopPropagation();
+      if (command && event.shiftKey) return;
+      selectRow(path, !event.shiftKey);
+      return;
+    }
+    if (command && event.key.toLowerCase() === 'a') {
+      range.current = null;
+      event.preventDefault();
+      setPageChecked(gridSelection, rows, true);
+      return;
+    }
+    if (event.key === 'Home' || event.key === 'End') {
+      event.preventDefault();
+      const end = event.key === 'End';
+      const column = end ? visibleColumns.at(-1) : visibleColumns[0];
+      const edge = command ? rows.at(end ? -1 : 0)?.[0] : path;
+      const target = edge === path ? row : event.currentTarget.querySelector<HTMLElement>('[data-token-row="' + CSS.escape(edge ?? '') + '"]');
+      moveGridFocus(target?.querySelector<HTMLElement>('[data-edit-column="' + column + '"]'));
+      return;
+    }
     const vertical = event.key === 'ArrowUp' || event.key === 'ArrowDown';
     const horizontal = event.key === 'ArrowLeft' || event.key === 'ArrowRight';
     if (!vertical && !horizontal) return;
-    const cell = event.target.closest<HTMLElement>('[data-edit-column]');
-    const checkbox = event.target.closest<HTMLInputElement>('input[type="checkbox"]');
-    if (!cell && !checkbox) return;
-    const row = event.target.closest<HTMLElement>('[data-token-row]');
-    const from = row?.dataset['tokenRow'];
-    if (!from) return;
     event.preventDefault();
     event.stopPropagation();
-    const column = cell?.dataset['editColumn'];
     if (horizontal) {
-      const index = visibleColumns.findIndex(field => field === column);
-      const next = index + (event.key === 'ArrowRight' ? 1 : -1);
-      if (visibleColumns[next]) focusGridControl(row.querySelector<HTMLElement>('[data-edit-column="' + visibleColumns[next] + '"]'));
-      else if (next === -1 && !variant) focusGridControl(row.querySelector<HTMLInputElement>('input[type="checkbox"]'));
+      const index = visibleColumns.findIndex(field => field === location);
+      const right = event.key === 'ArrowRight';
+      const next = command ? right ? visibleColumns.length - 1 : 0 : index + (right ? 1 : -1);
+      if (visibleColumns[next]) moveGridFocus(row.querySelector<HTMLElement>('[data-edit-column="' + visibleColumns[next] + '"]'), event.shiftKey);
+      else if (next === -1) moveGridFocus(row.querySelector<HTMLInputElement>('input[type="checkbox"]'), event.shiftKey);
       return;
     }
-    const index = rows.findIndex(([path]) => path === from);
-    const to = rows[index + (event.key === 'ArrowUp' ? -1 : 1)]?.[0];
-    if (!to) return;
-    if (event.shiftKey && !variant) selectRange(from, to);
-    const control = column ? '[data-edit-column="' + column + '"]' : 'input[type="checkbox"]';
-    focusGridControl(event.currentTarget.querySelector<HTMLElement>('[data-token-row="' + CSS.escape(to) + '"] ' + control));
+    const up = event.key === 'ArrowUp';
+    const index = command ? (up ? 0 : rows.length - 1) : rows.findIndex(([id]) => id === path) + (up ? -1 : 1);
+    const to = rows[index]?.[0];
+    if (!to) {
+      if (checkbox && up && !command && !event.shiftKey) {
+        moveGridFocus(table.current?.querySelector<HTMLElement>('thead input[type="checkbox"]'));
+      }
+      return;
+    }
+    if (event.shiftKey) selectRange(to, path);
+    const control = location ? '[data-edit-column="' + location + '"]' : 'input[type="checkbox"]';
+    moveGridFocus(event.currentTarget.querySelector<HTMLElement>('[data-token-row="' + CSS.escape(to) + '"] ' + control), event.shiftKey);
   }
 
-  return <>
-    <p className="sr-only" id={keyboardHelp}>Use arrow keys to navigate. {variant ? 'Enter or F2 opens the token editor.' :
-      'Space toggles the row. Shift with Up or Down extends the row selection. Enter or F2 edits one cell. Shift+F10 opens token actions. Escape cancels an edit or clears selection.'}</p>
-    <div className="contents" onKeyDownCapture={navigateCells}>
-    <ResizableTableContainer data-slot="table-container" className="h-full w-full overflow-auto">
-      <Table aria-label="Tokens" aria-describedby={keyboardHelp} selectionMode={variant ? 'none' : 'multiple'} selectionBehavior="toggle" selectedKeys={checked}
-        escapeKeyBehavior="none" className="foundry-table w-full md:min-w-[640px] table-fixed text-sm [&_th:not(:last-child)]:border-e [&_td:not(:last-child)]:border-e"
-        onSelectionChange={keys => {
-          const next = new Set(checked);
-          for (const [path] of rows) {
-            if (keys === 'all' || keys.has(path)) next.add(path);
-            else next.delete(path);
-          }
-          const changed = rows.filter(([path]) => next.has(path) !== checked.has(path));
-          if (changed.length === 1) rowAnchor.current = changed[0]?.[0];
-          setChecked(() => next);
-        }}>
-        <TableHeader className="sticky top-0 z-10">
-          {!variant && <Column id="selection" width={42} minWidth={42} maxWidth={42} className="text-center" aria-label="Selection">
-            <SelectionCheckbox label="Select all visible tokens" disabled={variant || !!draft || busy} />
-          </Column>}
-          {visibleColumns.map(field => <Column key={field} id={field} isRowHeader={field === 'name'} aria-label={labels[field]}
-            defaultWidth={defaultWidths[field]} minWidth={narrow ? 96 : minimumWidths[field]} className="relative h-10 px-2 pe-4 text-start font-medium">
-            {labels[field]}
-            <ColumnResizer aria-label={'Resize ' + labels[field] + ' column'} className="column-resizer" />
-          </Column>)}
-        </TableHeader>
-        <TableBody renderEmptyState={() => <p className="p-8 text-center text-muted-foreground">No matching tokens.</p>}>
+  // Keep event handlers separate from the memoized grid rows. Layout
+  // effects publish the latest committed editor actions before browser input.
+  const editorActions: GridActions = {
+    select, edit, inspect, setDraft, commit, cancel, openRowMenu, selectRange, selectRow, afterEdit,
+    anchorRow,
+    focusCell: (button, path, field) => {
+      if (pointerCell.current !== button && !editing) select(path, field);
+    },
+    pointerDown: button => { pointerCell.current = button; },
+    clearPointer: () => { pointerCell.current = null; },
+  };
+  const actions = useRef(editorActions);
+  useLayoutEffect(() => { actions.current = editorActions; });
+
+  const tableRows = useMemo(() => rows.length ? <>
         {rows.map(([path, entry], index) => {
           const { node, type, value } = entry;
           const name = tokenDisplayName(group ? path.slice(group.length + 1) : path);
-          const issue = graph.issues.get(path);
-          const invalid = graph.validation.get(path)?.join('\n');
+          const issue = definition && !activeValueGraph ? undefined : valueGraph.issues.get(path);
+          const invalid = valueGraph.validation.get(path)?.join('\n');
+          const effectiveValue = valueGraph.resolved.get(path);
+          const effectiveToken = activeValueGraph?.tokens.get(path);
+          const absent = !!activeValueGraph && !effectiveToken;
+          const source = resolution && winningOrigins(resolution, path).at(-1);
+          const authoredSource = definition && winningOrigins(definition, path).at(-1);
+          const differentDefinition = source && authoredSource && (source.file !== authoredSource.file ||
+            source.parts.length !== authoredSource.parts.length || source.parts.some((part, offset) => part !== authoredSource.parts[offset]));
+          const resolvedValue = absent ? <span className="copy-small tone-supporting">Not included in {previewLabel}</span> :
+            issue || invalid ? <span title={issue ?? invalid} className="flex items-center gap-1 copy-small tone-error">
+              <AlertCircle className="size-3.5 shrink-0" aria-hidden="true" /> {issue ? 'Unresolved' : 'Invalid'}</span> :
+            (activeValueGraph || JSON.stringify(value) !== JSON.stringify(effectiveValue)) ? <TokenValue value={effectiveValue} swatch={(effectiveToken?.type ?? type) === 'color'} /> : null;
+          const resolved = differentDefinition && source ? <span className="block">
+            {resolvedValue}<span className="block truncate copy-small tone-supporting">From {originName(source)}</span>
+          </span> : resolvedValue;
           const origin = node.$type ? 'Declared on token' : entry.referenceType ? 'Inferred from reference' :
             type ? 'Inherited from group' : 'Type unavailable';
           const values = {
-            name: <span className="token-name truncate font-mono text-xs" title={entry.inheritedFrom ? 'Inherited from ' + entry.inheritedFrom.path + ' · ' + entry.inheritedFrom.file : path}>
-              {name}{entry.inheritedFrom && <span className="ms-2 font-sans text-muted-foreground">Inherited</span>}
-              {!entry.inheritedFrom && entry.overrides && <span className="ms-2 font-sans text-muted-foreground">Override</span>}
-            </span>,
+            name: <><span className="token-name block truncate text-left code-text copy-small" dir={narrow ? undefined : "rtl"} title={entry.inheritedFrom ? 'Inherited from ' + entry.inheritedFrom.path + ' · ' + entry.inheritedFrom.file : path}>
+              <bdi>{name}</bdi>{entry.inheritedFrom && <span className="ms-2 copy-proportional tone-supporting">Inherited</span>}
+              {!entry.inheritedFrom && entry.overrides && <span className="ms-2 copy-proportional tone-supporting">Override</span>}
+            </span>{!definition && source && <span className="block truncate copy-small tone-supporting" title={source.file}>
+              {originName(source)}
+            </span>}</>,
             value: <><TokenValue value={value} authored containsReferences={!!graph.dependencies.get(path)?.size} />
-              {narrow && (issue || invalid ? <span className="block text-xs text-destructive">{issue ? 'Unresolved' : 'Invalid'}</span> :
-                graph.links.has(path) && <span className="block"><TokenValue value={graph.resolved.get(path)} swatch={type === 'color'} /></span>)}</>,
-            resolved: issue || invalid ? <span title={issue ?? invalid} className="flex items-center gap-1 text-xs text-destructive">
-              <AlertCircle className="size-3.5 shrink-0" aria-hidden="true" /> {issue ? 'Unresolved' : 'Invalid'}</span> :
-              JSON.stringify(value) === JSON.stringify(graph.resolved.get(path)) ? null : <TokenValue value={graph.resolved.get(path)} swatch={type === 'color'} />,
-            type: <span className="truncate text-xs" title={origin}>{type ?? '—'}</span>,
-            description: <span className="truncate text-xs text-muted-foreground" title={node.$description}>{node.$description}</span>,
+              {narrow && resolved && (activeValueGraph || issue || invalid || graph.links.has(path)) && <span className="block">{resolved}</span>}</>,
+            resolved,
+            type: <span className="truncate copy-small" title={origin}>{type ?? '—'}</span>,
+            description: <span className="truncate copy-small tone-supporting" title={node.$description}>{node.$description}</span>,
           };
-          return <Row key={path} id={path} data-token-row={path}>
-            {!variant && <Cell className="p-0 text-center"><SelectionCheckbox label="Select row" disabled={!!draft || busy} /></Cell>}
+          return <tr key={path} aria-selected="false" data-token-row={path}>
+            <td className="p-0 text-center">
+              <RowSelection {...{ path, gridSelection, actions }} disabled={!!draft || busy} />
+            </td>
             {visibleColumns.map(field => {
-              const active = path === selected;
-              const showLink = !variant && active && field === 'value' && !draft && !busy;
-              const showActions = !variant && field === 'name' && !draft && !busy;
               const currentEdit = editing?.path === path && editing.column === field ? editing : null;
-              return <Cell key={field} ref={currentEdit ? anchor : undefined} className="min-w-0 p-0" allowsArrowNavigation={!currentEdit || currentEdit.mode !== 'inline'}>
-                <div className="relative min-w-0">
-                  {currentEdit?.mode === 'inline' ? <InlineCell draft={currentEdit} {...{ entry, setDraft, commit, cancel, error }}
-                    after={(key, backward) => afterEdit(index, currentEdit.column, key, backward)} /> :
-                    <button type="button"
-                      data-edit-column={field} data-active-cell={active && field === activeColumn ? '' : undefined} aria-label={labels[field] + ' for ' + path}
-                      className={'grid-cell-button' + (!variant && (field === 'value' || field === 'name') ? ' pe-8' : '')}
-                      onFocus={event => {
-                        if (pointerCell.current !== event.currentTarget && !editing) select(path, field);
-                      }}
-                      onPointerDown={event => {
-                        event.stopPropagation();
-                        if (event.isPrimary && event.button === 0) pointerCell.current = event.currentTarget;
-                      }}
-                      onPointerUp={() => { pointerCell.current = null; }}
-                      onPointerCancel={() => { pointerCell.current = null; }}
-                      onPointerLeave={() => { pointerCell.current = null; }}
-                      onClick={event => {
-                        event.stopPropagation();
-                        if (draft || busy) return;
-                        if (!variant) {
-                          if (event.shiftKey) selectRange(selected, path);
-                          else selectRow(path, event.ctrlKey || event.metaKey);
-                        }
-                        select(path, field);
-                        if ((narrow || variant) && field === 'name' && !event.shiftKey && !event.ctrlKey && !event.metaKey) inspect(path);
-                      }}
-                      onDoubleClick={event => { if (field !== 'resolved' && !event.shiftKey && !event.ctrlKey && !event.metaKey) edit(path, field); }}
-                      onContextMenu={event => {
-                        if (openRowMenu(event.currentTarget, path)) event.preventDefault();
-                      }}
-                      onKeyDown={event => {
-                        if (!variant && !draft && !busy && event.key === ' ') {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          selectRow(path, true);
-                          return;
-                        }
-                        if ((event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) && openRowMenu(event.currentTarget, path)) {
-                          event.preventDefault();
-                          event.stopPropagation();
-                        }
-                        if (field !== 'resolved' && (event.key === 'F2' || event.key === 'Enter')) {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          edit(path, field);
-                        }
-                      }}>{values[field]}</button>}
-                  {showLink && <IconButton size="xsmall" label={'Link reference for ' + path} aria-haspopup="dialog"
-                    onClick={() => edit(path, 'value', true)} className="cell-action end-0.5 top-1/2 -translate-y-1/2">
-                    <Link2 aria-hidden="true" />
-                  </IconButton>}
-                  {showActions && <IconButton size="xsmall" label={'Token actions for ' + path}
-                    aria-haspopup="menu" aria-expanded="false"
-                    className="cell-action token-row-actions end-0.5 top-1/2 -translate-y-1/2"
-                    onKeyDown={event => {
-                      if (event.key !== 'Enter' && event.key !== ' ' && event.key !== 'ArrowDown') return;
-                      event.preventDefault(); event.stopPropagation();
-                      openRowMenu(event.currentTarget, path);
-                    }}
-                    onPointerDown={event => event.stopPropagation()} onClick={event => {
-                      event.stopPropagation();
-                      openRowMenu(event.currentTarget, path);
-                    }}><Ellipsis aria-hidden="true" /></IconButton>}
-                </div>
-              </Cell>;
+              const Tag = field === 'name' ? 'th' : 'td';
+              return <Tag key={field} scope={field === 'name' ? 'row' : undefined}
+                ref={currentEdit ? anchor : undefined} data-inline-type={field === 'type' && currentEdit?.mode === 'inline' || undefined}
+                className="min-w-0 p-0 copy-regular">
+                <GridCell {...{ path, field, entry, index, variant, actions, gridSelection }}
+                  draft={currentEdit} disabled={!!draft || busy} error={currentEdit ? error : ''}
+                  stacked={field === 'name' && !definition && !!source || field === 'value' && narrow && !!resolved}>
+                  {values[field]}
+                </GridCell>
+              </Tag>;
             })}
-          </Row>;
+          </tr>;
         })}
-        </TableBody>
-      </Table>
-    </ResizableTableContainer>
+  </> : <tr><td colSpan={visibleColumns.length + 1}><p className="p-8 text-center tone-supporting">No matching tokens.</p></td></tr>,
+  [actions, activeValueGraph, anchor, busy, definition, draft, editing, error, graph, gridSelection, group, narrow, previewLabel,
+    resolution, rows, valueGraph, variant, visibleColumns]);
+
+  return <>
+    <p className="sr-only" id={keyboardHelp}>Use arrow keys to navigate. Space toggles the row. Shift with Up or Down adds a range from the focused row. From the first row checkbox, press Up to reach the select-all checkbox.
+      {variant && !definition ? ' Enter or F2 opens the token editor.' : ' Enter or F2 edits a cell.'}
+      {' Alt+Down or Shift+F10 opens token actions.'} Escape cancels an edit or clears selection.</p>
+    <div className="contents" onKeyDownCapture={navigateCells} onContextMenuCapture={showContextMenu}
+      onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget)) range.current = null; }}>
+      <div ref={container} tabIndex={-1} data-slot="table-container" className="h-full w-full overflow-auto">
+        <table ref={table} id="token-grid" {...gridSemantics} tabIndex={rows.length ? -1 : 0} aria-describedby={keyboardHelp} aria-keyshortcuts="Alt+ArrowDown Shift+F10"
+          className="foundry-table w-full table-fixed copy-body [&_th:not(:last-child)]:border-e [&_td:not(:last-child)]:border-e"
+          style={{ minWidth: widths.reduce((sum, width) => sum + width, checkboxWidth) }} onFocusCapture={rememberFocus}>
+          <colgroup>
+            <col style={{ width: checkboxWidth }} />
+            {visibleColumns.map((column, index) => <col key={column} style={{ width: widths[index] }} />)}
+          </colgroup>
+          <thead className="sticky top-0 z-10"><tr>
+            <th scope="col" aria-label="Selection" className="text-center">
+              <PageSelection {...{ rows, gridSelection }} disabled={!!draft || busy} />
+            </th>
+            {visibleColumns.map((column, index) => <th key={column} scope="col" aria-label={column === 'resolved' ? resolvedHeading : labels[column]} className="relative h-10 px-2 pe-4 text-start copy-emphasis">
+              {column === 'resolved' ? resolvedHeading : labels[column]}
+              <GridColumnResizer {...{ index, column, widths, resize }} columns={visibleColumns} label={labels[column]} />
+            </th>)}
+          </tr></thead>
+          <tbody>{tableRows}</tbody>
+        </table>
+      </div>
     </div>
     <RowCommandMenu ref={rowMenu} />
     {linking && <TokenReferenceDialog draft={linking} graph={graph} type={graph.tokens.get(linking.path)?.type}

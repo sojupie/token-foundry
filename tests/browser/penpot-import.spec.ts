@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { isProposal } from '../../integrations/github/contract.ts';
+import { chooseOption } from './select-field.ts';
 
 const tokens = { reference: { space: { small: { $type: 'dimension', $value: '12px' } } } };
 
@@ -12,8 +13,8 @@ test('reviews and applies a Penpot token export', async ({ page }) => {
   await dialog.getByRole('button', { name: 'Choose file…' }).click();
   await (await chooser).setFiles({ name: 'tokens.json', mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify({ Old: { reference: { space: { small: { $type: 'dimension', $value: '8px' } } } }, Sevan: tokens })) });
-  await expect(dialog.getByLabel('Token set')).toHaveValue('');
-  await dialog.getByLabel('Token set').selectOption('Sevan');
+  await expect(dialog.getByRole('combobox', { name: 'Token set', exact: true })).toHaveAttribute('data-select-value', '');
+  await chooseOption(dialog.getByRole('combobox', { name: 'Token set', exact: true }), 'Sevan');
   await dialog.getByRole('button', { name: 'Review changes' }).click();
   const review = page.getByRole('dialog', { name: 'Review value changes' });
   await expect(review).toContainText('reference.space.small');
@@ -39,7 +40,7 @@ test('submits the reviewed import through the GitHub workspace', async ({ page }
   });
   await page.goto('/');
   await page.getByRole('button', { name: 'Workspace', exact: true }).click();
-  await page.getByRole('button', { name: 'Integrations', exact: true }).click();
+  await page.getByRole('button', { name: 'Manage integrations', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Open GitHub repository…' }).click();
   await page.getByRole('button', { name: 'Open repository' }).click();
   await expect(page.locator('[data-workspace-name]')).toHaveText(repository);
