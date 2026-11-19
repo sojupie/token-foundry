@@ -214,6 +214,33 @@ test('exports an applicable patch from a read-only folder', async ({ page, brows
   execFileSync('git', ['apply', '--check', await (await download).path()], { cwd: directory });
 });
 
+test('text inputs keep a single active outline on pointer and keyboard focus', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto('/');
+  await command(page, 'File', 'Open built-in example');
+  await page.getByRole('button', { name: 'New token', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'New token', exact: true });
+  const name = dialog.getByRole('textbox', { name: 'Token name', exact: true });
+  const expectSingleOutline = async (input: typeof name) => {
+    const field = dialog.locator('.md-outlined-text-field').filter({ has: page.locator('input:focus, textarea:focus') });
+    await expect(input).toBeFocused();
+    await expect(input).toHaveCSS('outline-style', 'none');
+    await expect(field).toHaveCSS('outline-style', 'none');
+    await expect(field.locator('.md-field-outline').first()).toHaveCSS('border-top-width', '3px');
+    const extra = field.locator('.md-field-focus-outline');
+    if (await extra.count()) await expect(extra).toHaveCSS('opacity', '0');
+  };
+  await name.click();
+  await expectSingleOutline(name);
+  await name.press('Shift+Tab');
+  await page.keyboard.press('Tab');
+  await expectSingleOutline(name);
+  await dialog.getByRole('button', { name: 'Raw JSON', exact: true }).click();
+  const json = dialog.getByRole('textbox', { name: 'Token value JSON', exact: true });
+  await json.click();
+  await expectSingleOutline(json);
+});
+
 test('styled chips and select fields keep keyboard navigation and return focus', async ({ page }) => {
   await page.goto('/');
   await command(page, 'File', 'Open Material 3 sample');
