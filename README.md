@@ -1,11 +1,31 @@
 # Token Foundry
 
-Open design token files or a folder, edit tokens in the table, and review the file diff. Folder selection recognizes DTCG tokens and
-Resolver documents by content in plain `.json` files and also opens files named
-`tokens.json`, `*.tokens.json`, `*.tokens`, or `*.resolver.json`. It preserves
-relative paths and skips `.git`, `node_modules`, and `dist` within the
-selected folder.
-The built-in example uses two files.
+Browser-based editor for DTCG design token files and Resolver documents. Open a
+local folder or connect a GitHub repository, edit tokens in a table, and review
+the combined file diff before saving.
+
+Hosted at [tokenfoundry.lindstruct.com](https://tokenfoundry.lindstruct.com/).
+
+## Features
+
+- **Local files & folders:** Recognizes DTCG tokens and Resolver documents in
+  `.json`, `tokens.json`, `*.tokens.json`, `*.tokens`, and `*.resolver.json`
+  (skipping `.git`, `node_modules`, and `dist`). Saves directly to disk via the
+  File System Access API (checking for external edits), downloads a unified
+  `git apply` patch, or exports single-file JSON.
+- **DTCG 2025.10 editing:** Full support for Format, Color, and Resolver
+  documents—group `$extends`, `$root` group values, JSON Pointer field
+  references, all 13 token types, multi-context variants, diagnostics, undo/redo,
+  and bulk edits. See [DTCG 2025.10 conformance](docs/dtcg-feature-checklist.md).
+- **Material 3 sample:** **File → Open Material 3 sample** loads the Token
+  Catalog tree across all six Light/Dark and contrast variants. Refresh it from
+  a Catalog export with `node scripts/build-material-sample.ts /path/to/published/assets/dtcg`.
+- **Hosted GitHub mode:** Optional Cloudflare Worker connector for opening pull
+  requests against configured repositories.
+
+## Run locally
+
+Requires Node.js 24+.
 
 ```sh
 npm ci
@@ -13,107 +33,51 @@ npm run check
 npm run dev
 ```
 
-Use Node.js 24. `npm run build` produces a static site under `dist/`.
-The editor parses files in the browser. The workspace model accepts paths and
-file text and produces reviewed changes. The React UI handles file selection and
-downloads.
+`npm run build` outputs the static site to `dist/`. Run browser integration
+tests with:
 
-Choose **Open token folder…**, make and apply edits in the editor, then choose
-**Review and save** to see the combined diff. On browsers with native
-directory access, **Save to folder** asks for write access and saves the
-reviewed changes to the existing files. The save checks for external edits
-across the workspace, including files used by references. If writing stops
-partway through, you can retry the same review to finish the remaining files.
-Browsers with the standard folder picker can open the same files and
-**Download patch**. Run `git apply token-changes.patch` in your checkout.
-**Download token JSON** exports a copy of a single open file.
+```sh
+npx playwright install chromium firefox
+npm run test:browser
+```
 
-Use the arrow keys to move between rows, checkboxes, and cells. Press Space
-to check a row. Press Escape to clear selection while keeping your place.
-Double-click a cell or press Enter or F2 to edit. Names, descriptions, and
-simple values edit in the cell. In that editor, Enter applies the edit and
-moves down. Tab applies it and moves to the next editable cell. Escape cancels
-and returns focus to the cell. References and structured values open an
-anchored editor.
-
-Drag the right edge of a column heading to resize it. With the keyboard, focus
-the resize handle, press Enter, adjust the width with the arrow keys, then
-press Enter to finish.
-
-The grid toolbar creates tokens and groups, searches the current group,
-and filters unresolved tokens. Selecting tokens enables Move and Delete there. The group menu handles moves and deletes for the current
-group. The final review shows the affected files.
-
-Open and export commands live under **File**. Use the sidebar icon to show or hide groups. The hosted editor
-connects to GitHub under **Workspace → Integrations**. **File → Open Material 3 sample**
-opens the full Token Catalog tree and six Light/Dark and contrast combinations.
-In **Tokens**, choose **Editing set** to work on a named set and **Active
-variant** to change the resolved values. **Edit token** opens the inspector,
-which shows the source file and location of the definition being edited. Use
-**Variants** in the navigation rail to manage sets, choices, and override order.
-**Workspace** holds pending changes, integrations, and source files.
-
-To refresh the bundled sample from a Catalog publication, pass its DTCG
-export directory (the directory containing `index.json`) to
-`node scripts/build-material-sample.ts /path/to/published/assets/dtcg`.
-The script checks that each appearance reconstructs its original export.
-
-**Unresolved** filters the current group to tokens whose references could not
-be resolved. Select a cell and choose **References** to see the diagnostic.
-
-Run the browser integration tests with `npx playwright install chromium firefox`
-and `npm run test:browser`. Set `MD3_TOKEN_BENCHMARK` to the path of the
-6,818-token Material 3 export to exercise the same unresolved-reference flow
-at that size. In a dev build, this also enables **File → Open Material 3 benchmark**.
+Set `MD3_TOKEN_BENCHMARK` to a 6,818-token Material 3 export to run the
+large-workspace unresolved-reference test (also enables **File → Open Material 3
+benchmark** in dev builds).
 
 ## Work on the UI
 
-Foundry is a React and Vite app for editing DTCG token files. Start in
-[`editor/main.tsx`](editor/main.tsx) for the workspace and
-[`editor/token-grid.tsx`](editor/token-grid.tsx) for cell editing.
-The `lib/` directory owns token parsing, references, and reviewed file
-changes. The UI owns focus, drafts, and review state.
+Foundry is a React + Vite app. `lib/` owns token parsing, references, and
+reviewed diffs; `editor/main.tsx` and `editor/token-grid.tsx` own workspace
+state, grid navigation/selection, and cell editing; `editor/workspace.css` owns
+workspace layout.
 
-Use `@token-catalog/forge-react` for UI controls. Check Catalog for an existing
-pattern before adding a component. If it exists in Catalog, expose it through
-Forge React. Evaluate new components for reuse in Forge before adding them
-to Foundry. Import the package stylesheet once and place `data-component-assets`
-on the workspace and on portals outside it. Set `data-theme` and
-`data-contrast` on the document element to select a Forge theme.
+UI controls come from `@token-catalog/forge-react` (bundled as a pinned tarball
+in `vendor/`). Import its stylesheet once, place `data-component-assets` on the
+workspace and any portals, and set `data-theme` / `data-contrast` on `<html>`.
 
-The token grid owns navigation, selection, and resizing. Keep cell focus
-independent of checked rows. Forge owns the appearance and interaction of
-the controls inside the grid and throughout the editor. Keep workspace
-layout in [`editor/workspace.css`](editor/workspace.css) and reserve local
-component overrides for deliberate Foundry-specific departures from the
-shared guidance.
-
-For shared changes, edit the [Forge React package](https://github.com/sojupie/tokens/tree/main/forge/react)
-and follow its build guide. Then copy the new versioned tarball into
-`vendor/` and install it from the Foundry root. Replace `VERSION` with the tarball version.
+To update Forge React from [Token Catalog](https://github.com/sojupie/tokens/tree/main/forge/react),
+pack the new tarball into `vendor/`, install it, and remove the old tarball:
 
 ```sh
 npm install "./vendor/token-catalog-forge-react-VERSION.tgz"
 ```
 
-Remove the superseded tarball and commit the new tarball, `package.json`, and
-`package-lock.json` together. Foundry builds from that pinned package, so it
-can build on its own. Run `npm run check`, `npm run build`,
-`npm run build:hosted`, and `npm run test:browser`. For changes to the grid
-or a popup, test keyboard navigation, selection, Escape, and focus return.
+Commit the tarball, `package.json`, and `package-lock.json` together, then run
+`npm run check`, `npm run build`, `npm run build:hosted`, and
+`npm run test:browser`.
 
-## Import Penpot tokens
+## Imports
 
-Export tokens from Penpot as a single JSON file. Open the matching token files in Foundry, then choose **File → Import Penpot tokens…**, select the file and token set, and review the changes. Foundry updates values of existing tokens; it does not create or delete tokens. The export has no baseline, so compare changes carefully when the repository has changed since the export.
+### Penpot tokens
+Export a single JSON file from Penpot, open the matching token files in Foundry,
+and choose **File → Import Penpot tokens…** to update existing token values
+(Penpot imports do not create or delete tokens).
 
-## Import value changes
-
-Foundry matches changes by token path in the current workspace. Open the files
-that contain those tokens together. Choose **File → Import proposal…** and select
-`token-proposal.json` from your Figma token plugin or a JSON file in the format
-below. Review the old and new values, then apply the changes.
-Your other edits stay in place. If an old value differs from the open value,
-the import stops and names the token. Apply downloaded `.patch` files with Git.
+### Value proposals
+Choose **File → Import proposal…** to apply a `token-proposal.json` (e.g. from a
+Figma plugin) matched by token path. If any `before` value differs from the open
+workspace, the import stops and names the token:
 
 ```json
 {
@@ -124,78 +88,46 @@ the import stops and names the token. Apply downloaded `.patch` files with Git.
 }
 ```
 
-A producer can also open the editor with the same JSON encoded as
-`#proposal=<percent-encoded JSON>` (up to 8,000 encoded characters). The editor
-removes the fragment from the address bar and keeps the proposal in memory for
-review. Opening this URL leaves the workspace and Git untouched.
+Producers can also open Foundry with `#proposal=<percent-encoded JSON>` (up to
+8,000 encoded characters); the editor strips the fragment and holds the proposal
+in memory for review.
 
-## Public build
+## Deployment
 
-Run `npm run deploy:public` to build and deploy the local-file editor to
-[tokenfoundry.lindstruct.com](https://tokenfoundry.lindstruct.com/). The command
-uses `wrangler.public.jsonc` and updates the `token-foundry` Worker. GitHub Actions
-checks changes. Deploy from a clean checkout with Wrangler signed in to the
-Cloudflare account that owns the Worker.
+### Public build
+Run `npm run deploy:public` (uses `wrangler.public.jsonc`) from a clean checkout
+with Wrangler signed in to deploy the local-only editor to
+[tokenfoundry.lindstruct.com](https://tokenfoundry.lindstruct.com/).
 
-## Hosted Git
+### Hosted Git (Cloudflare Worker + GitHub App)
+`npm run build:hosted` enables the GitHub connector. Serve `dist/` as static
+assets, deploy the Worker (`npm run build:worker` to validate locally), route
+only `<editor-host>/git/*` to it, and protect that route with Cloudflare Access.
 
-`npm run build:hosted` enables the GitHub connector. Serve its `dist/` as static
-assets. Deploy the Worker separately and route only `your-editor-host/git/*` to
-it. Protect that route with Cloudflare Access before exposing it. Add the invited
-email addresses or organization group to the Access policy. The public editor
-loads and edits local files with no API calls. The Worker checks the Access JWT
-on each Git request. The default configuration disables alternate Worker URLs.
+Register a GitHub App with **Contents** and **Pull requests** (read & write)
+permissions and callback URL `https://<editor-host>/git/callback`, installed on
+the target repositories only.
 
-Register a GitHub App with repository **Contents** and **Pull requests** read
-and write permissions. Set its user authorization callback to
-`https://your-editor-host/git/callback`. Install it on the intended repositories
-only. Each signed-in GitHub user must already have the repository permissions
-needed for the proposed action.
-
-| Worker setting | Value |
+| Worker variable / secret | Value |
 | --- | --- |
-| `EDITOR_ORIGIN` | The HTTPS editor origin, without a trailing slash |
-| `ACCESS_ISSUER` | The Cloudflare Access team origin, `https://your-team.cloudflareaccess.com` |
-| `ACCESS_AUDIENCE` | The Access application's audience tag |
-| `GIT_PROJECTS` | A JSON object mapping exact GitHub repository names to token folders, such as `{"org/design-system":"tokens"}` |
+| `EDITOR_ORIGIN` | HTTPS editor origin (no trailing slash) |
+| `ACCESS_ISSUER` | Cloudflare Access team origin (`https://<team>.cloudflareaccess.com`) |
+| `ACCESS_AUDIENCE` | Access application audience tag |
+| `GIT_PROJECTS` | JSON map of `"org/repo": "tokens-folder"` |
 | `GITHUB_CLIENT_ID` | GitHub App client ID |
-| `GITHUB_CLIENT_SECRET` | GitHub App client secret, set as a Worker secret |
-| `GIT_SESSION_KEY` | A random 32-byte key encoded as unpadded base64url, set as a Worker secret |
+| `GITHUB_CLIENT_SECRET` | GitHub App client secret (secret) |
+| `GIT_SESSION_KEY` | Random 32-byte unpadded base64url key (secret) |
 
-After signing in, the editor shows your GitHub account and the configured
-repositories available through the GitHub App. Choose a repository to open it.
-
-Connected workspaces read the default branch at a pinned commit. Proposals can
-modify existing `*.tokens.json`, `*.tokens`, and `tokens.json` files inside the
-configured folder. The Worker rechecks the default branch and original file
-contents and then opens a pull request. The limit is 40 files and 2 MiB per
-workspace, 512 KiB per file, and 16 changed files per proposal.
-
-If the base revision changes during review, choose **Review latest revision**.
-The editor retains changes to files that still match their original contents
-and recalculates the diff and resolved values against the latest snapshot.
-If the repository also changed one of those files, download the original patch
-to reconcile it. Opening a pull request requires confirming the refreshed review.
-
-`npm run build:worker` validates the Worker bundle locally. The tests exercise
-OAuth, authorization, repository reads and pull-request retries with mocked
-providers.
+Connected workspaces read the default branch at a pinned commit and open pull
+requests against existing `*.tokens.json`, `*.tokens`, and `tokens.json` files
+(limits: 40 files / 2 MiB per workspace, 512 KiB per file, 16 changed files per
+PR). If the base branch moves during review, **Review latest revision** rebases
+clean files and lets you download a patch for conflicting ones.
 
 ### Invite-only staging
-
-Run `npm run deploy:sevan` to build and deploy the private editor and Git API to
+Run `npm run deploy:sevan` (`wrangler.staging.jsonc`) to deploy the private
+editor + Git API to
 [sevan.tokenfoundry.lindstruct.com](https://sevan.tokenfoundry.lindstruct.com/).
-The command updates the `token-foundry-staging` Worker using
-`wrangler.staging.jsonc`.
-
-Before the first deploy to that hostname, add
-`https://sevan.tokenfoundry.lindstruct.com/git/callback` to the GitHub App's
-callback URLs. Protect the Worker in Cloudflare Access for **All traffic** before
-attaching its custom domain. Set the Worker variables and secrets above in
-Cloudflare. The Wrangler config sets `EDITOR_ORIGIN` and keeps the other
-dashboard variables. Manage both Foundry custom domains in **Domains & Routes**.
-Both deploy configs disable the `workers.dev` and version URLs.
-
-After deploying, check that the Sevan editor asks signed-out visitors to sign in.
-As an invited user, connect GitHub and open the configured repository. Use the
-custom domain when starting a new GitHub session.
+Before the first deploy, add `https://sevan.tokenfoundry.lindstruct.com/git/callback`
+to the GitHub App, protect the Worker with Cloudflare Access for **All traffic**,
+and set the Worker variables/secrets above in Cloudflare.
