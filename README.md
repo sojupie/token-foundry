@@ -1,4 +1,4 @@
-# Token Foundry
+# TokenFoundry
 
 Browser-based editor for DTCG design token files and Resolver documents. Open a
 local folder or connect a GitHub repository, edit tokens in a table, and review
