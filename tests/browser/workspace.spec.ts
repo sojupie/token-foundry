@@ -241,6 +241,23 @@ test('text inputs keep a single active outline on pointer and keyboard focus', a
   await expectSingleOutline(json);
 });
 
+test('search bar focuses from its container hitbox and hugs its focus outline', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto('/');
+  await command(page, 'File', 'Open built-in example');
+  const search = page.getByRole('searchbox', { name: 'Search tokens in group' });
+  const bar = page.locator('.md-search-bar').filter({ has: search });
+  await bar.locator('.md-search-leading-slot').click();
+  await expect(search).toBeFocused();
+  await expect(bar).toHaveCSS('outline-style', 'solid');
+  const { width, offset } = await bar.evaluate(element => {
+    const style = getComputedStyle(element);
+    return { width: Number.parseFloat(style.outlineWidth), offset: Number.parseFloat(style.outlineOffset) };
+  });
+  expect(width).toBeGreaterThan(0);
+  expect(offset).toBeCloseTo(-width, 1);
+});
+
 test('styled chips and select fields keep keyboard navigation and return focus', async ({ page }) => {
   await page.goto('/');
   await command(page, 'File', 'Open Material 3 sample');
