@@ -47,16 +47,17 @@ benchmark** in dev builds).
 
 ## Work on the UI
 
-Foundry is a React + Vite app. `lib/` owns token parsing, references, and
-reviewed diffs; `editor/main.tsx` and `editor/token-grid.tsx` own workspace
-state, grid navigation/selection, and cell editing; `editor/workspace.css` owns
-workspace layout.
+TokenFoundry is a React + Vite app. `lib/` owns token parsing, references, and
+reviewed diffs; `editor/main.tsx` owns workspace navigation (`Tokens`,
+`Variants`, `Workspace`, `Changes`, `Figma`) and state; `editor/token-grid.tsx`
+owns grid navigation, selection, and cell editing; `editor/workspace-pages.tsx`
+owns the workspace, Figma, and changes views; `editor/workspace.css` owns layout.
 
 UI controls come from `@token-catalog/forge-react` (bundled as a pinned tarball
 in `vendor/`). Import its stylesheet once, place `data-component-assets` on the
 workspace and any portals, and set `data-theme` / `data-contrast` on `<html>`.
 
-To update Forge React from [Token Catalog](https://github.com/sojupie/tokens/tree/main/forge/react),
+To update Forge React from [TokenCatalog](https://github.com/sojupie/tokens/tree/main/forge/react),
 pack the new tarball into `vendor/`, install it, and remove the old tarball:
 
 ```sh
@@ -69,10 +70,23 @@ Commit the tarball, `package.json`, and `package-lock.json` together, then run
 
 ## Imports
 
-### Penpot tokens
-Export a single JSON file from Penpot, open the matching token files in Foundry,
-and choose **File → Import Penpot tokens…** to update existing token values
-(Penpot imports do not create or delete tokens).
+### Figma
+
+Open the **Figma** view in TokenFoundry (or the **Workspace** tab in the
+development plugin) to pair a Figma file with the active workspace or download a
+source snapshot for offline import. Plugin edits sync into the shared workspace
+draft, and concurrent changes appear in **Changes** (or **Figma**) for
+three-way review. Source files, references, units, and metadata stay in
+TokenFoundry. See [Figma setup and sync guide](docs/figma.md) and the
+[Figma, TokenFoundry, and Sevan requirements](docs/figma-foundry-requirements.md).
+
+Once a GitHub pull request is created, subsequent saves update the same branch
+from its latest saved commit. Release and library publication remain separate
+steps after merging.
+
+**File → Recover local work…** restores local browser recovery copies of source
+edits, baselines, pinned GitHub proposals, and unfinished forms. Recovery copies
+can also be downloaded and reopened.
 
 ### Value proposals
 Choose **File → Import proposal…** to apply a `token-proposal.json` (e.g. from a
@@ -122,7 +136,8 @@ Connected workspaces read the default branch at a pinned commit and open pull
 requests against existing `*.tokens.json`, `*.tokens`, and `tokens.json` files
 (limits: 40 files / 2 MiB per workspace, 512 KiB per file, 16 changed files per
 PR). If the base branch moves during review, **Review latest revision** rebases
-clean files and lets you download a patch for conflicting ones.
+independent definitions, including edits in the same file. Conflicting
+definitions are reviewed in the editor before the merged result is saved.
 
 ### Invite-only staging
 Run `npm run deploy:sevan` (`wrangler.staging.jsonc`) to deploy the private

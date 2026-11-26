@@ -1,0 +1,11 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "token-foundry-figma-relay-staging",
+  "main": "worker/figma-relay.ts",
+  "compatibility_date": "2026-11-01",
+  "workers_dev": true,
+  "preview_urls": false,
+  "vars": { "RELAY_ORIGIN": "https://token-foundry-figma-relay-staging.ollemarmenlind02.workers.dev" },
+  "durable_objects": { "bindings": [{ "name": "WORKSPACES", "class_name": "SharedWorkspaceStore", "script_name": "token-foundry-figma-state-staging" },
+    { "name": "WORKSPACE_INDEX", "class_name": "WorkspaceRegistry", "script_name": "token-foundry-figma-state-staging" }] }
+}

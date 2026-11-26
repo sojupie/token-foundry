@@ -1,5 +1,6 @@
 import { createTwoFilesPatch } from 'diff';
 import { applyEdits, findNodeAtLocation, modify, parseTree } from 'jsonc-parser';
+import type { Edit, Node } from 'jsonc-parser';
 import { authoredResolverValue, compareContexts, compileResolver, emptyLayerSite, equivalentResolverChoices, isResolverFile, newResolverDocument, resolveResolver, resolverInputs, resolverLayer, resolverValueAt, winningOrigins } from './resolver.ts';
 import type { ResolverLayer, ResolverResolution } from './resolver.ts';
 import { diagnosticKey } from './document-diagnostics.ts';
@@ -13,6 +14,8 @@ import type { ClipboardEntry, Move } from './structure.ts';
 import { dtcgTypes } from './token-types.ts';
 import { tokenFieldType, validateTokenValue } from './validate-token.ts';
 import type { TokenChange, TokenFile } from './token-types.ts';
+import { mergeRepositorySources } from './repository-merge.ts';
+import type { RepositoryChoice } from './repository-merge.ts';
 
 interface Source { readonly path: string; readonly text: string }
 interface WorkspaceFile extends TokenFile {
@@ -194,7 +197,7 @@ function updateMetadataFile(workspace: Workspace, file: string, path: string, ch
   const options = { formattingOptions: formatOptions(source.text) };
   let text = token?.inheritedFrom ? overrideToken(source, token, { path, node: {}, create: false }).text : source.text;
   for (const [key, value] of Object.entries(changes)) {
-    text = applyEdits(text, modify(text, [...location, key], value, options));
+    text = editField(text, [...location, key], value, options.formattingOptions);
   }
   return { text, token, group };
 }
@@ -567,7 +570,7 @@ export function reviewBulkEdit(workspace: Workspace, selection: readonly string[
       const sourceLines = original.split(/(?<=\n)/u);
       let text = sourceLines.map((line, index) => index && line.startsWith(indent) ? line.slice(indent.length) : line).join('');
       for (const [key, value] of Object.entries(change.node)) {
-        text = applyEdits(text, modify(text, [key], value, { formattingOptions }));
+        text = editField(text, [key], value, formattingOptions);
       }
       if (Object.hasOwn(change.node, '$value')) {
         text = applyEdits(text, modify(text, ['$ref'], undefined, { formattingOptions }));
@@ -739,22 +742,11 @@ export function reviewRepositorySources(name: string, baseline: readonly Source[
   return reviewSavedFiles(openWorkspace(name, baseline), openWorkspace(name, sources).files);
 }
 
-export function reviewAgainstLatest(workspace: Workspace, latest: Workspace): Review | null {
-  const files = new Map(latest.files.map((file) => [file.path, file]));
-  let remaining = false;
-  for (const { path, before, after } of workspaceChanges(workspace)) {
-    const file = files.get(path);
-    const current = file?.text ?? null;
-    if (current === after) continue;
-    if (current !== before) {
-      throw new Error(path + ' changed in the repository. Download the patch to merge your edits locally.');
-    }
-    if (after === null) files.delete(path);
-    else files.set(path, { path, text: after, tree: parseTokenFile(after, path) });
-    remaining = true;
-  }
-  if (!remaining) return null;
-  const next = reviewAffectedResolvers(latest, reviewFiles(latest, [...files.values()], new Set(), '', { knownWorkspace: workspace }));
+export function reviewAgainstLatest(workspace: Workspace, latest: Workspace, choices: readonly RepositoryChoice[] = []): Review | null {
+  const sources = mergeRepositorySources(workspace.baseline, workspace.files, latest.files, choices);
+  const files = openWorkspace(workspace.name, sources).files;
+  if (!workspaceChanges({ baseline: latest.files, files }).length) return null;
+  const next = reviewAffectedResolvers(latest, reviewFiles(latest, files, new Set(), '', { knownWorkspace: workspace }));
   if (next.validationErrors?.length) throw new Error(next.validationErrors.join('\n'));
   return next;
 }
@@ -1083,6 +1075,42 @@ export function reviewDelete(workspace: Workspace, paths: readonly string[]): Re
   return reviewStructure(workspace, files, 'Delete', roots.map(from => ({ from })));
 }
 
+// Preserve an existing value's layout and untouched lexical values when its
+// shape stays the same. This edits one authored definition atomically; it does
+// not merge composite fields from different authors.
+function valueEdits(node: Node, value: JsonValue): Edit[] | undefined {
+  if (node.type === 'object' && isJsonObject(value)) {
+    const children = node.children ?? [];
+    if (children.length !== Object.keys(value).length) return undefined;
+    const edits: Edit[] = [];
+    for (const property of children) {
+      const key: unknown = property.children?.[0]?.value;
+      const child = property.children?.[1];
+      if (typeof key !== 'string' || !child || !Object.hasOwn(value, key)) return undefined;
+      const next = value[key];
+      if (next === undefined) return undefined;
+      const changed = valueEdits(child, next);
+      if (!changed) return undefined;
+      edits.push(...changed);
+    }
+    return edits;
+  }
+  if (node.type === 'array' && Array.isArray(value)) {
+    if (node.children?.length !== value.length) return undefined;
+    const edits = node.children.map((child, index) => value[index] === undefined ? undefined : valueEdits(child, value[index]));
+    return edits.some(edit => edit === undefined) ? undefined : edits.flatMap(edit => edit ?? []);
+  }
+  if (node.type === 'object' || node.type === 'array' || typeof value === 'object' && value !== null) return undefined;
+  return node.value === value ? [] : [{ offset: node.offset, length: node.length, content: JSON.stringify(value) }];
+}
+
+function editField(text: string, location: (string | number)[], value: JsonValue | undefined, formattingOptions: ReturnType<typeof formatOptions>): string {
+  const ast = value === undefined ? undefined : parseTree(text);
+  const node = ast && findNodeAtLocation(ast, location);
+  const edits = node && value !== undefined ? valueEdits(node, value) : undefined;
+  return applyEdits(text, edits ?? modify(text, location, value, { formattingOptions }));
+}
+
 function editFile(source: WorkspaceFile, change: TokenChange): WorkspaceFile {
   const { path, create } = change;
 
@@ -1096,7 +1124,7 @@ function editFile(source: WorkspaceFile, change: TokenChange): WorkspaceFile {
     const previous = requireObject(nodeAt(source.tree, path), path);
     for (const key of new Set([...Object.keys(previous), ...Object.keys(next)])) {
       if (JSON.stringify(previous[key]) !== JSON.stringify(next[key])) {
-        text = applyEdits(text, modify(text, [...location, key], next[key], { formattingOptions }));
+        text = editField(text, [...location, key], next[key], formattingOptions);
       }
     }
   }
@@ -1268,6 +1296,131 @@ export function workspaceChanges({ baseline, files }: Pick<Workspace, 'baseline'
   }
   for (const [path, text] of before) changes.push({ path, before: text, after: null });
   return changes;
+}
+
+export interface TokenBaselineChange {
+  path: string;
+  file: string;
+  kind: 'added' | 'removed' | 'modified';
+  before?: JsonValue | undefined;
+  after?: JsonValue | undefined;
+}
+
+function safeParseTree(path: string, text: string | null): JsonObject | undefined {
+  if (text === null) return undefined;
+  try { return parseTokenFile(text, path); }
+  catch { return undefined; }
+}
+
+function collectAuthoredTokens(tree: JsonObject, prefix = '', out = new Map<string, JsonObject>()): Map<string, JsonObject> {
+  for (const [key, value] of Object.entries(tree)) {
+    if (!isJsonObject(value)) continue;
+    if (key === '$root' && prefix && ('$value' in value || '$ref' in value)) {
+      out.set(prefix + '.$root', value);
+      continue;
+    }
+    if (key.startsWith('$')) continue;
+    const path = prefix ? prefix + '.' + key : key;
+    if ('$value' in value || '$ref' in value) out.set(path, value);
+    else collectAuthoredTokens(value, path, out);
+  }
+  return out;
+}
+
+function tokenDisplayValue(node: JsonObject | undefined): JsonValue | undefined {
+  if (!node) return undefined;
+  return '$value' in node ? node['$value'] : typeof node['$ref'] === 'string' ? { $ref: node['$ref'] } : undefined;
+}
+
+export function workspaceTokenChanges(workspace: Pick<Workspace, 'baseline' | 'files'>): TokenBaselineChange[] {
+  const changes = workspaceChanges(workspace);
+  const tokens: TokenBaselineChange[] = [];
+  for (const { path, before, after } of changes) {
+    const beforeTree = safeParseTree(path, before);
+    const afterTree = safeParseTree(path, after);
+    if (before !== null && !beforeTree || after !== null && !afterTree) continue;
+    if (beforeTree && isResolverFile({ path, tree: beforeTree }) || afterTree && isResolverFile({ path, tree: afterTree })) continue;
+    const beforeTokens = beforeTree ? collectAuthoredTokens(beforeTree) : new Map<string, JsonObject>();
+    const afterTokens = afterTree ? collectAuthoredTokens(afterTree) : new Map<string, JsonObject>();
+    const allPaths = [...new Set([...beforeTokens.keys(), ...afterTokens.keys()])].toSorted();
+    for (const tokenPath of allPaths) {
+      const prev = beforeTokens.get(tokenPath);
+      const next = afterTokens.get(tokenPath);
+      if (valueKey(prev) === valueKey(next)) continue;
+      tokens.push({
+        path: tokenPath,
+        file: path,
+        kind: !prev ? 'added' : !next ? 'removed' : 'modified',
+        ...(prev ? { before: tokenDisplayValue(prev) } : {}),
+        ...(next ? { after: tokenDisplayValue(next) } : {}),
+      });
+    }
+  }
+  return tokens.toSorted((a, b) => a.file < b.file ? -1 : a.file > b.file ? 1 : a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
+}
+
+export function revertFileChange(workspace: Workspace, filePath: string): Workspace {
+  const baselineFile = workspace.baseline.find(file => file.path === filePath);
+  const currentSources = workspace.files.map(({ path, text }) => ({ path, text }));
+  let nextSources: Source[];
+  if (baselineFile) {
+    if (currentSources.some(file => file.path === filePath)) {
+      nextSources = currentSources.map(file => file.path === filePath ? { path: filePath, text: baselineFile.text } : file);
+    } else {
+      const result: Source[] = [];
+      let inserted = false;
+      const beforeSet = new Set(workspace.baseline.slice(0, workspace.baseline.indexOf(baselineFile)).map(file => file.path));
+      for (const file of currentSources) {
+        if (!inserted && !beforeSet.has(file.path)) {
+          result.push({ path: filePath, text: baselineFile.text });
+          inserted = true;
+        }
+        result.push(file);
+      }
+      if (!inserted) result.push({ path: filePath, text: baselineFile.text });
+      nextSources = result;
+    }
+  } else {
+    if (currentSources.length <= 1) throw new Error('Keep at least one source file in the workspace.');
+    nextSources = currentSources.filter(file => file.path !== filePath);
+  }
+  return { ...openWorkspace(workspace.name, nextSources), baseline: workspace.baseline };
+}
+
+export function revertTokenChange(workspace: Workspace, filePath: string, tokenPath: string): Workspace {
+  const baselineFile = workspace.baseline.find(file => file.path === filePath);
+  const currentFile = workspace.files.find(file => file.path === filePath);
+  const baselineTree = baselineFile ? parseTokenFile(baselineFile.text, filePath) : undefined;
+  const baselineNode = baselineTree ? nodeAt(baselineTree, tokenPath) : undefined;
+  if (!baselineFile && baselineNode === undefined && !currentFile) return workspace;
+  const baseText = currentFile?.text ?? '{}';
+  const formattingOptions = formatOptions(baseText);
+  let editedText = applyEdits(baseText, modify(baseText, tokenPath.split('.'), baselineNode, { formattingOptions }));
+  if (baselineNode === undefined) {
+    const parts = tokenPath.split('.');
+    while (parts.length > 1) {
+      parts.pop();
+      const parsed = parseTokenFile(editedText, filePath);
+      const currentParent = nodeAt(parsed, parts.join('.'));
+      const baselineParent = baselineTree ? nodeAt(baselineTree, parts.join('.')) : undefined;
+      if (!isJsonObject(currentParent) || Object.keys(currentParent).length > 0 || baselineParent !== undefined) break;
+      editedText = applyEdits(editedText, modify(editedText, parts, undefined, { formattingOptions }));
+    }
+  }
+  const parsedEdited = parseTokenFile(editedText, filePath);
+  if (baselineFile && baselineTree && valueKey(parsedEdited) === valueKey(baselineTree)) {
+    editedText = baselineFile.text;
+  }
+  const currentSources = workspace.files.map(({ path, text }) => ({ path, text }));
+  let nextSources: Source[];
+  if (!baselineFile && Object.keys(parsedEdited).length === 0 && currentSources.length > 1) {
+    nextSources = currentSources.filter(file => file.path !== filePath);
+  } else if (currentSources.some(file => file.path === filePath)) {
+    nextSources = currentSources.map(file => file.path === filePath ? { path: filePath, text: editedText } : file);
+  } else {
+    nextSources = [...currentSources, { path: filePath, text: editedText }];
+  }
+  return { ...openWorkspace(workspace.name, nextSources), baseline: workspace.baseline };
 }
 
 export function diffFile({ path, before, after }: FileChange): string {

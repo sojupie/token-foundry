@@ -7,10 +7,14 @@
   "preview_urls": false,
   "keep_vars": true,
   "vars": {
-    "EDITOR_ORIGIN": "https://sevan.tokenfoundry.lindstruct.com"
+    "EDITOR_ORIGIN": "https://sevan.tokenfoundry.lindstruct.com",
+    "FIGMA_PLUGIN_ORIGIN": "https://token-foundry-figma-relay-staging.ollemarmenlind02.workers.dev"
   },
   "assets": {
     "directory": "./.wrangler/staging-assets",
-    "run_worker_first": ["/git/*"]
-  }
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/git/*", "/figma/workspaces/*", "/figma/pairing/*"]
+  },
+  "durable_objects": { "bindings": [{ "name": "WORKSPACES", "class_name": "SharedWorkspaceStore", "script_name": "token-foundry-figma-state-staging" },
+    { "name": "WORKSPACE_INDEX", "class_name": "WorkspaceRegistry", "script_name": "token-foundry-figma-state-staging" }] }
 }

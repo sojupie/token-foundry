@@ -70,7 +70,7 @@ export function MoveDialog({ paths, operation, graph, scopeLabel, model, files, 
 
   return <ActionDialog open={!reviewing} busy={checking} onOpenChange={open => { if (!open && !reviewing && !checking) close(); }} title={title}
     description={[single ?? paths.length + ' tokens selected', scopeLabel && 'Editing ' + scopeLabel].filter(Boolean).join(' · ')}>
-      <form noValidate className="grid gap-4" onSubmit={(event) => {
+      <form noValidate className="grid gap-space200" onSubmit={(event) => {
         event.preventDefault();
         if (checking) return;
         try {
@@ -103,39 +103,34 @@ export function MoveDialog({ paths, operation, graph, scopeLabel, model, files, 
         } catch (failure) { setChecking(false); setError(errorMessage(failure)); }
       }}>
         {named && <TextField label={label} data-initial-focus value={name} onChange={(event) => setName(event.target.value)} required />}
-        {operation === 'move' && options.length > 0 && <label className="grid gap-1 copy-body copy-emphasis">
-          Destination set
-          <Select aria-label="Destination set" value={setKey} onChange={event => {
-            const value = event.target.value;
-            setSetKey(value); setDestination(value ? '' : single ? parentPath(single) : ''); setSourceIndex(0); setError('');
-          }}>
-            <SelectOption value="">Keep each token in its current set</SelectOption>
-            {options.map(({ label: optionLabel, layer: optionLayer }, index) =>
-              <SelectOption key={JSON.stringify(optionLayer)} value={String(index + 1)}>{optionLabel}</SelectOption>)}
-          </Select>
-        </label>}
-        {!rename && <div className="grid gap-2">
+        {operation === 'move' && options.length > 0 && <Select label="Destination set" value={setKey} onChange={event => {
+          const value = event.target.value;
+          setSetKey(value); setDestination(value ? '' : single ? parentPath(single) : ''); setSourceIndex(0); setError('');
+        }}>
+          <SelectOption value="">Keep each token in its current set</SelectOption>
+          {options.map(({ label: optionLabel }, index) =>
+            <SelectOption key={optionLabel} value={String(index + 1)}>{optionLabel}</SelectOption>)}
+        </Select>}
+        {!rename && <div className="grid gap-space100">
           <p className="copy-body copy-emphasis">Destination group</p>
-          <div className="max-h-[45vh] overflow-auto rounded-md border">
+          <div className="scroll-pane-md overflow-auto rounded-md border">
             {targetGraph ? <FolderTree key={setKey} groups={targetGraph.groups} allowed={allowed} current={destination ?? ''}
               select={path => { setDestination(path); setSourceIndex(0); setError(''); }} label="Destination group" rootLabel="Top level" /> :
-              <output className="block p-2">{resolved.error ?? 'Loading destination groups…'}</output>}
+              <output className="block pad-space100">{resolved.error ?? 'Loading destination groups…'}</output>}
           </div>
           <p className="wrap-anywhere copy-small tone-supporting">{destination === undefined ? 'Same groups as the originals' : destination || 'Top level'}</p>
           {layer && resolution && !candidates.length && <p className="copy-body tone-supporting">This group needs a source in the destination set.</p>}
-          {candidates.length > 1 && <label className="grid gap-1 copy-body copy-emphasis">Destination source
-            <Select aria-label="Destination source" value={String(sourceIndex)} onChange={event => setSourceIndex(Number(event.target.value))}>
-              {candidates.map(({ file, parts }, index) => <SelectOption key={JSON.stringify([file, parts])} value={String(index)}>
-                {file}{parts.length > 0 ? ' · ' + parts.join(' / ') : ''}
-              </SelectOption>)}
-            </Select>
-          </label>}
+          {candidates.length > 1 && <Select label="Destination source" value={String(sourceIndex)} onChange={event => setSourceIndex(Number(event.target.value))}>
+            {candidates.map(({ file, parts }, index) => <SelectOption key={`${file}:${parts.join('/')}:${String(index)}`} value={String(index)}>
+              {file}{parts.length > 0 ? ' · ' + parts.join(' / ') : ''}
+            </SelectOption>)}
+          </Select>}
           {duplicate && !single && destination !== undefined && <Button type="button" variant="text" onClick={() => setDestination(undefined)}>
             Use original groups
           </Button>}
         </div>}
         {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
-        <div className="flex flex-wrap justify-end gap-2">
+        <div className="flex flex-wrap justify-end gap-space100">
           <Button type="button" variant="text" data-dialog-close="">Cancel</Button>
           <Button type="submit" disabled={checking || (layer ? !target : named ? !name.trim() || destination === parentPath(single ?? '') && name.trim() === leafName(single ?? '') :
             !duplicate && paths.every(path => destination === parentPath(path)))}>{'Review ' + operation}</Button>

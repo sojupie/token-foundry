@@ -48,7 +48,7 @@ export function PasteDialog({ workspace, entries, group, reviewing, close, revie
   return <ActionDialog open={!reviewing} title="Paste tokens or groups"
     description={entries.length + (entries.length === 1 ? ' copied entry' : ' copied entries')}
     onOpenChange={open => { if (!open && !reviewing) close(); }}>
-    <form className="grid gap-3" onSubmit={event => {
+    <form className="grid gap-space150" onSubmit={event => {
       event.preventDefault();
       try {
         const moves = entries.map((entry, index) => {
@@ -61,23 +61,22 @@ export function PasteDialog({ workspace, entries, group, reviewing, close, revie
         setError(errorMessage(failure));
       }
     }}>
-      <div className="grid gap-1.5">
+      <div className="grid gap-space75">
         <p className="copy-body copy-emphasis">Destination group</p>
-        <div className="max-h-[30vh] overflow-auto rounded-md border">
+        <div className="scroll-pane-xs overflow-auto rounded-md border">
           <FolderTree groups={graph.groups} allowed={allowed} current={destination} select={path => {
             setDestination(path); setFile(''); setError('');
           }} label="Paste destination group" rootLabel="Top level" />
         </div>
       </div>
-      {files.length > 1 && <div className="grid gap-1 copy-body">
-        <label htmlFor={id + '-file'}>Destination file</label>
-        <Select id={id + '-file'} value={file} onChange={event => setFile(event.target.value)}>
+      {files.length > 1 && <div className="grid gap-space50 copy-body">
+        <Select id={id + '-file'} label="Destination file" value={file} onChange={event => setFile(event.target.value)}>
           {files.map(path => <SelectOption key={path} value={path}>{path}</SelectOption>)}
         </Select>
         {entries.some(entry => entry.fragments.length > 1 && entry.fragments.every(fragment => files.includes(fragment.file))) &&
-          <p className="copy-small tone-supporting">Groups that span these files keep their file boundaries.</p>}
+          <p className="copy-small tone-supporting">Groups spanning these files keep their file boundaries.</p>}
       </div>}
-      <ul className="grid max-h-[32vh] gap-2 overflow-auto py-1">
+      <ul className="grid scroll-pane-sm gap-space100 overflow-auto pad-block-space50">
         {entries.map((entry, index) => <li key={entry.path}>
           <TextField label={entries.length === 1 ? entry.group ? 'Group name' : 'Token name' : 'Name for ' + entry.path}
             data-initial-focus={index === 0 ? '' : undefined} required value={defaults[index] ?? ''}
@@ -85,7 +84,7 @@ export function PasteDialog({ workspace, entries, group, reviewing, close, revie
         </li>)}
       </ul>
       {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
-      <div className="flex justify-end gap-2">
+      <div className="flex justify-end gap-space100">
         <Button type="button" data-dialog-close="" variant="text">Cancel</Button>
         <Button type="submit" disabled={!file}>Review paste</Button>
       </div>

@@ -1,5 +1,5 @@
 import { base64url } from 'jose';
-import { baseChanged, commitOid, repositoryName } from '../integrations/github/contract.ts';
+import { baseChanged, commitOid, proposalBranch, proposalUnavailable, repositoryName } from '../integrations/github/contract.ts';
 import type { PullRequestProposal, RepositorySnapshot } from '../integrations/github/contract.ts';
 import { compileResolver, isResolverFile } from '../lib/resolver.ts';
 import { parseTokenFile } from '../lib/parse-token-file.ts';
@@ -27,7 +27,7 @@ function safePath(path: string): boolean {
   return path.split('/').every((part) => pathSegment.test(part));
 }
 
-function configuredProjects(raw: string): Map<string, string> {
+export function configuredProjects(raw: string): Map<string, string> {
   let projects: unknown;
   try { projects = JSON.parse(raw); } catch { fail(503, 'Git repositories have not been configured.'); }
   if (!isRecord(projects)) fail(503, 'Git repositories have not been configured.');
@@ -71,6 +71,8 @@ function apiError(response: Response): never {
 
 interface Project {
   branch: string;
+  baseBranch: string;
+  pullRequest?: string;
   revision: string;
   files: string[];
   size: number;
@@ -79,11 +81,13 @@ interface Project {
 }
 
 export class GitHub {
+  readonly #repository: string;
   readonly #prefix: string;
   readonly #headers: Record<string, string>;
   readonly #transport: typeof fetch;
 
   constructor(repository: string, token: string, transport: typeof fetch) {
+    this.#repository = repository;
     this.#prefix = '/repos/' + repository;
     this.#headers = { Authorization: 'Bearer ' + token, 'User-Agent': 'Design-Token-Editor', 'X-GitHub-Api-Version': '2022-11-28' };
     this.#transport = transport;
@@ -146,12 +150,19 @@ export class GitHub {
     return this.#directoryTree(oid(next['sha']), rest);
   }
 
-  async #project(root: string): Promise<Project> {
+  async #project(root: string, requestedBranch?: string): Promise<Project> {
     const metadata = object(await this.#json(this.#prefix));
-    const branch = metadata['default_branch'];
-    if (typeof branch !== 'string' || !branch) fail(422, 'The repository has no default branch.');
-    const ref = object(await this.#json(this.#prefix + '/git/ref/heads/' + encodeURIComponent(branch)));
-    const revision = oid(object(ref['object'])['sha']);
+    const baseBranch = metadata['default_branch'];
+    if (typeof baseBranch !== 'string' || !baseBranch) fail(422, 'The repository has no default branch.');
+    let pullRequest: string | undefined;
+    if (requestedBranch) {
+      if (!proposalBranch.test(requestedBranch)) fail(400, 'Open a proposal created in Foundry.');
+      pullRequest = await this.#findPull(this.#repository, requestedBranch, baseBranch);
+      if (!pullRequest) fail(409, 'This proposal was merged or closed. Review the latest repository version to continue your draft.', proposalUnavailable);
+    }
+    const branch = requestedBranch ?? baseBranch;
+    const revision = await this.#ref(branch);
+    if (!revision) fail(409, 'This proposal branch is unavailable. Review the latest repository version to continue your draft.', requestedBranch ? proposalUnavailable : baseChanged);
     const commit = object(await this.#json(this.#prefix + '/git/commits/' + revision));
     const tree = await this.#directoryTree(oid(object(commit['tree'])['sha']), root.split('/'));
     const entries = await this.#tree(tree, true);
@@ -197,7 +208,7 @@ export class GitHub {
       };
       await expandSources();
     }
-    return { branch, revision, files: [...files].toSorted(), size, documents, entries: occupied };
+    return { branch, baseBranch, ...(pullRequest ? { pullRequest } : {}), revision, files: [...files].toSorted(), size, documents, entries: occupied };
   }
 
   async #file(path: string, revision: string): Promise<string> {
@@ -206,10 +217,10 @@ export class GitHub {
     return limitedText(response, maximumFileBytes, 422, true);
   }
 
-  async open(repository: string, root: string): Promise<RepositorySnapshot> {
-    const { revision, files, documents } = await this.#project(root);
+  async open(repository: string, root: string, branch?: string): Promise<RepositorySnapshot> {
+    const { revision, files, documents, pullRequest } = await this.#project(root, branch);
     const sources = await Promise.all(files.map(async (path) => ({ path, text: documents.get(path) ?? await this.#file(path, revision) })));
-    return { repository, revision, root, files: sources };
+    return { repository, revision, root, files: sources, ...(branch ? { branch } : {}), ...(pullRequest ? { pullRequest } : {}) };
   }
 
   async #findPull(repository: string, head: string, base: string): Promise<string | undefined> {
@@ -217,6 +228,11 @@ export class GitHub {
     const pulls = await this.#json(this.#prefix + '/pulls?' + query.toString());
     if (!isUnknownArray(pulls)) fail(502, 'GitHub returned an unexpected pull request list.');
     return pulls.length ? this.#pullUrl(repository, object(pulls[0])) : undefined;
+  }
+
+  async canEdit(): Promise<boolean> {
+    const repository = object(await this.#json(this.#prefix));
+    return isRecord(repository['permissions']) && repository['permissions']['push'] === true;
   }
 
   #pullUrl(repository: string, result: Record<string, unknown>): string {
@@ -249,7 +265,7 @@ export class GitHub {
     if (!isRecord(response['data']) || !isRecord(response['data']['createCommitOnBranch'])) {
       fail(409, 'The proposal branch could not be committed. Retry or check repository branch rules.');
     }
-    oid(object(response['data']['createCommitOnBranch']['commit'])['oid']);
+    return oid(object(response['data']['createCommitOnBranch']['commit'])['oid']);
   }
 
   async #verifyCommit(revision: string, headOid: string, changes: PullRequestProposal['changes']) {
@@ -259,7 +275,7 @@ export class GitHub {
     function accepts(path: unknown, status: unknown) {
       return typeof path === 'string' && expected.get(path) === status && expected.delete(path);
     }
-    if (comparison['total_commits'] !== 1 || !isUnknownArray(changed) ||
+    if (comparison['status'] !== 'ahead' || comparison['ahead_by'] !== 1 || comparison['behind_by'] !== 0 || comparison['total_commits'] !== 1 || !isUnknownArray(changed) ||
       !changed.every(value => isRecord(value) && (value['status'] === 'renamed'
         ? accepts(value['previous_filename'], 'removed') && accepts(value['filename'], 'added')
         : accepts(value['filename'], value['status']))) || expected.size) {
@@ -269,9 +285,29 @@ export class GitHub {
     if (matches.includes(false)) fail(409, 'The proposal branch contains different file contents.');
   }
 
-  async propose(root: string, { repository, revision, changes }: PullRequestProposal): Promise<string> {
+  async recoverProposal({ repository, revision, changes, branch }: PullRequestProposal): Promise<{ url: string; branch: string; revision: string } | undefined> {
+    const ordered = changes.toSorted((left, right) => left.path.localeCompare(right.path, 'en'));
+    const digest = base64url.encode(new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(JSON.stringify([revision, ordered.map(({ path, after }) => [path, after])])))));
+    const head = branch ?? 'token-editor/' + digest;
+    const committed = await this.#ref(head);
+    if (!committed || committed === revision) return undefined;
+    // Only the exact single commit and exact reviewed file bytes prove a lost
+    // response succeeded. A newer author's commit requires another review.
+    await this.#verifyCommit(revision, committed, ordered);
+    const repositoryInfo = object(await this.#json(this.#prefix));
+    const base = repositoryInfo['default_branch'];
+    if (typeof base !== 'string') fail(502, 'GitHub did not return the default branch.');
+    const existing = await this.#findPull(repository, head, base);
+    if (existing) return { url: existing, branch: head, revision: committed };
+    // propose() can recover an unreported first commit and create its PR,
+    // provided the default branch still matches the reviewed checkpoint.
+    if (branch) fail(409, 'The proposal was merged or closed. Review the latest repository before saving.');
+    return undefined;
+  }
+
+  async propose(root: string, { repository, revision, changes, branch }: PullRequestProposal, beforeWrite?: () => Promise<void>): Promise<{ url: string; branch: string; revision: string }> {
     if (changes.length > maximumChanges) fail(422, 'Review at most ' + maximumChanges + ' changed files at once.');
-    const project = await this.#project(root);
+    const project = await this.#project(root, branch);
     if (revision !== project.revision) staleBase();
     const paths = new Set(project.files);
     const seen = new Set<string>();
@@ -348,6 +384,12 @@ export class GitHub {
     if (validation.validationErrors?.length) fail(422, validation.validationErrors.join('\n'));
 
     const ordered = changes.toSorted((left, right) => left.path.localeCompare(right.path, 'en'));
+    await beforeWrite?.();
+    if (branch) {
+      const nextRevision = await this.#commit(repository, revision, branch, ordered);
+      if (!project.pullRequest) fail(409, 'The proposal is no longer open.');
+      return { url: project.pullRequest, branch, revision: nextRevision };
+    }
     const digest = base64url.encode(new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(JSON.stringify([revision, ordered.map(({ path, after }) => [path, after])])))));
     const head = 'token-editor/' + digest;
     let headOid = await this.#ref(head);
@@ -357,11 +399,11 @@ export class GitHub {
       headOid = response.ok ? revision : await this.#ref(head);
       if (!headOid) fail(409, 'The proposal branch could not be created. Check repository branch rules.');
     }
-    if (headOid === revision) await this.#commit(repository, revision, head, ordered);
+    if (headOid === revision) headOid = await this.#commit(repository, revision, head, ordered);
     else {
       await this.#verifyCommit(revision, headOid, ordered);
       const existing = await this.#findPull(repository, head, project.branch);
-      if (existing) return existing;
+      if (existing) return { url: existing, branch: head, revision: headOid };
     }
     if (await this.#ref(project.branch) !== revision) staleBase();
     const response = await this.#request(this.#prefix + '/pulls', {
@@ -369,11 +411,11 @@ export class GitHub {
     });
     if (response.status === 422) {
       const existing = await this.#findPull(repository, head, project.branch);
-      if (existing) return existing;
+      if (existing) return { url: existing, branch: head, revision: headOid };
       fail(409, 'GitHub could not open the pull request. The proposal branch is available for retry.');
     }
     if (!response.ok) apiError(response);
     const result: unknown = await response.json();
-    return this.#pullUrl(repository, object(result));
+    return { url: this.#pullUrl(repository, object(result)), branch: head, revision: headOid };
   }
 }

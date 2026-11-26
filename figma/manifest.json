@@ -1,0 +1,14 @@
+{
+  "name": "Token Foundry",
+  "id": "1707061345231623977",
+  "api": "1.0.0",
+  "main": "code.js",
+  "ui": "ui.html",
+  "editorType": ["figma"],
+  "documentAccess": "dynamic-page",
+  "networkAccess": {
+    "allowedDomains": ["https://sevan.foundry.tokencatalog.dev", "https://sevan.tokenfoundry.lindstruct.com", "https://token-foundry-figma-relay-staging.ollemarmenlind02.workers.dev"],
+    "devAllowedDomains": ["http://localhost:5173"],
+    "reasoning": "Connect to a source snapshot authorized in Foundry; send revision-checked token edits."
+  }
+}

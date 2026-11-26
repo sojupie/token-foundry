@@ -38,7 +38,6 @@ async function review(workspace: Workspace, operation: Extract<WorkspaceWorkerRe
     case 'source': return reviewSource(workspace, operation.file, operation.text, true, operation.scope);
     case 'edit': return reviewEdit(workspace, operation.file, operation.change);
     case 'proposal': return reviewProposal(workspace, operation.text);
-    case 'penpot': return (await import('../../lib/penpot-import.ts')).reviewPenpot(workspace, operation.text, operation.set);
     case 'restore-inherited': return reviewRemoveOverride(workspace, operation.path);
     case 'delete': return reviewDelete(workspace, operation.paths);
     case 'bulk':

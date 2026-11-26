@@ -221,7 +221,7 @@ function GridCell({ path, field, entry, index, gridSelection, actions, variant, 
       after={(key, backward) => actions.current.afterEdit(index, draft.column, key, backward)} /> :
       <button type="button" tabIndex={-1} data-stacked={stacked ? '' : undefined} data-edit-column={field}
         data-active-cell={active === 2 ? '' : undefined} aria-label={labels[field] + ' for ' + path}
-        className={'grid-cell-button' + (field === 'name' || !variant && field === 'value' ? ' pe-8' : '')}
+        className={'grid-cell-button' + (field === 'name' || !variant && field === 'value' ? ' pad-end-space400' : '')}
         onFocus={event => actions.current.focusCell(event.currentTarget, path, field)}
         onPointerDown={event => {
           event.stopPropagation();
@@ -247,11 +247,11 @@ function GridCell({ path, field, entry, index, gridSelection, actions, variant, 
           }
         }}>{children}</button>}
     {showLink && <IconButton tabIndex={-1} size="xsmall" label={'Link reference for ' + path} aria-haspopup="dialog"
-      onClick={() => actions.current.edit(path, 'value', true)} className="cell-action end-0.5 top-1/2 -translate-y-1/2">
+      onClick={() => actions.current.edit(path, 'value', true)} className="cell-action cell-action-end -translate-y-1/2">
       <Link2 aria-hidden="true" />
     </IconButton>}
     {showActions && <IconButton tabIndex={-1} size="xsmall" label={'Token actions for ' + path} aria-haspopup="menu" aria-expanded="false"
-      className="cell-action token-row-actions end-0.5 top-1/2 -translate-y-1/2"
+      className="cell-action token-row-actions cell-action-end -translate-y-1/2"
       onKeyDown={event => {
         if (event.key !== 'Enter' && event.key !== ' ' && event.key !== 'ArrowDown') return;
         event.preventDefault(); event.stopPropagation();
@@ -527,8 +527,8 @@ export function TokenGrid({ narrow, variant, canStructure, rename, data, preview
           const differentDefinition = source && authoredSource && (source.file !== authoredSource.file ||
             source.parts.length !== authoredSource.parts.length || source.parts.some((part, offset) => part !== authoredSource.parts[offset]));
           const resolvedValue = absent ? <span className="copy-small tone-supporting">Not included in {previewLabel}</span> :
-            issue || invalid ? <span title={issue ?? invalid} className="flex items-center gap-1 copy-small tone-error">
-              <AlertCircle className="size-3.5 shrink-0" aria-hidden="true" /> {issue ? 'Unresolved' : 'Invalid'}</span> :
+            issue || invalid ? <span title={issue ?? invalid} className="flex items-center gap-space50 copy-small tone-error">
+              <AlertCircle className="swatch-sm shrink-0" aria-hidden="true" /> {issue ? 'Unresolved' : 'Invalid'}</span> :
             (activeValueGraph || JSON.stringify(value) !== JSON.stringify(effectiveValue)) ? <TokenValue value={effectiveValue} swatch={(effectiveToken?.type ?? type) === 'color'} /> : null;
           const resolved = differentDefinition && source ? <span className="block">
             {resolvedValue}<span className="block truncate copy-small tone-supporting">From {originName(source)}</span>
@@ -537,8 +537,8 @@ export function TokenGrid({ narrow, variant, canStructure, rename, data, preview
             type ? 'Inherited from group' : 'Type unavailable';
           const values = {
             name: <><span className="token-name block truncate text-left code-text copy-small" dir={narrow ? undefined : "rtl"} title={entry.inheritedFrom ? 'Inherited from ' + entry.inheritedFrom.path + ' · ' + entry.inheritedFrom.file : path}>
-              <bdi>{name}</bdi>{entry.inheritedFrom && <span className="ms-2 copy-proportional tone-supporting">Inherited</span>}
-              {!entry.inheritedFrom && entry.overrides && <span className="ms-2 copy-proportional tone-supporting">Override</span>}
+              <bdi>{name}</bdi>{entry.inheritedFrom && <span className="margin-start-space100 copy-proportional tone-supporting">Inherited</span>}
+              {!entry.inheritedFrom && entry.overrides && <span className="margin-start-space100 copy-proportional tone-supporting">Override</span>}
             </span>{!definition && source && <span className="block truncate copy-small tone-supporting" title={source.file}>
               {originName(source)}
             </span>}</>,
@@ -567,7 +567,7 @@ export function TokenGrid({ narrow, variant, canStructure, rename, data, preview
             })}
           </tr>;
         })}
-  </> : <tr><td colSpan={visibleColumns.length + 1}><p className="p-8 text-center tone-supporting">No matching tokens.</p></td></tr>,
+  </> : <tr><td colSpan={visibleColumns.length + 1}><p className="pad-space400 text-center tone-supporting">No matching tokens.</p></td></tr>,
   [actions, activeValueGraph, anchor, busy, definition, draft, editing, error, graph, gridSelection, group, narrow, previewLabel,
     resolution, rows, valueGraph, variant, visibleColumns]);
 
@@ -589,7 +589,7 @@ export function TokenGrid({ narrow, variant, canStructure, rename, data, preview
             <th scope="col" aria-label="Selection" className="text-center">
               <PageSelection {...{ rows, gridSelection }} disabled={!!draft || busy} />
             </th>
-            {visibleColumns.map((column, index) => <th key={column} scope="col" aria-label={column === 'resolved' ? resolvedHeading : labels[column]} className="relative h-10 px-2 pe-4 text-start copy-emphasis">
+            {visibleColumns.map((column, index) => <th key={column} scope="col" aria-label={column === 'resolved' ? resolvedHeading : labels[column]} className="relative table-head-row pad-inline-space100 pad-end-space200 text-start copy-emphasis">
               {column === 'resolved' ? resolvedHeading : labels[column]}
               <GridColumnResizer {...{ index, column, widths, resize }} columns={visibleColumns} label={labels[column]} />
             </th>)}
@@ -603,7 +603,7 @@ export function TokenGrid({ narrow, variant, canStructure, rename, data, preview
       seed={linking.value.startsWith('{') && !linking.value.endsWith('}') ? linking.value.slice(1) : ''}
       choose={value => commit({ ...linking, value })} applyRawValue={commit} close={() => cancel()} error={error} />}
     {popover && <EditorPopover anchor={anchor} label={'Edit ' + labels[popover.column].toLowerCase()} onDismiss={cancel}>
-      <TokenEditForm initialDraft={popover} {...{ graph, cancel, error, busy, commit }} />
+      <TokenEditForm initialDraft={popover} onDraftChange={setDraft} {...{ graph, cancel, error, busy, commit }} />
     </EditorPopover>}
   </>;
 }

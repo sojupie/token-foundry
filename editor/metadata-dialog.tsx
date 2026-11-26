@@ -1,5 +1,5 @@
 import { useId, useMemo, useState } from 'react';
-import { Button, TextField, Select, SelectOption } from '@token-catalog/forge-react';
+import { Button, Disclosure, TextField, Select, SelectOption } from '@token-catalog/forge-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { ActionDialog } from '@/components/ui/dialog';
 import { FieldRow } from '@/components/ui/field-row';
@@ -109,7 +109,7 @@ export function MetadataDialog({ workspace, location, reviewing, close, prepare,
 
   return <ActionDialog title={kind === 'group' ? 'Group metadata' : 'Token metadata'} description={path || 'All tokens'}
     open={!reviewing} onOpenChange={open => { if (!open && !reviewing) close(); }}>
-    <form className="grid min-w-0 gap-4" onSubmit={event => {
+    <form className="grid min-w-0 gap-space200" onSubmit={event => {
       event.preventDefault();
       try {
         const patches = new Map(changedFiles.map(([source, fields]) => [source, metadataPatch(formattedMetadata(workspace, source, path), fields)]));
@@ -119,11 +119,9 @@ export function MetadataDialog({ workspace, location, reviewing, close, prepare,
         setError(errorMessage(failure));
       }
     }}>
-      {files.length > 1 ? <label htmlFor={id + "-file"} className="grid gap-1 copy-body">Source file
-        <Select aria-label="Source file" id={id + "-file"} value={file} onChange={event => { setFile(event.currentTarget.value); setNamespace(''); setError(''); }}>
-          {files.map(source => <SelectOption value={source} key={source}>{source}</SelectOption>)}
-        </Select>
-      </label> : <p className="wrap-anywhere copy-small">{file}</p>}
+      {files.length > 1 ? <Select label="Source file" id={id + "-file"} value={file} onChange={event => { setFile(event.currentTarget.value); setNamespace(''); setError(''); }}>
+        {files.map(source => <SelectOption value={source} key={source}>{source}</SelectOption>)}
+      </Select> : <p className="wrap-anywhere copy-small">{file}</p>}
       {files.length > 1 && <p className="copy-small tone-supporting">
         {changedFiles.length ? changedFiles.map(([source]) => source).join(', ') + ' will be reviewed together.' :
           'Each source has its own definition of this group.'}
@@ -138,62 +136,57 @@ export function MetadataDialog({ workspace, location, reviewing, close, prepare,
         onChange={event => update('description', event.currentTarget.value)} />
       {inheritedDescription && <p className="wrap-anywhere copy-small tone-supporting">Inherited description · {inheritedDescription}</p>}
       {kind === 'group' && <FieldRow>
-        <label htmlFor={id + "-type"} className="grid gap-1 copy-body">Default type
-          <Select aria-label="Default type" id={id + "-type"} value={draft.type} onChange={event => update('type', event.currentTarget.value)}>
-            <SelectOption value="">Inherited{currentType && !initial.type ? ' · ' + currentType : ''}</SelectOption>
-            {!dtcgTypes.some(type => type === draft.type) && draft.type && <SelectOption value={draft.type}>{draft.type}</SelectOption>}
-            {dtcgTypes.map(type => <SelectOption value={type} key={type}>{type}</SelectOption>)}
-          </Select>
-        </label>
-        <label htmlFor={id + "-base"} className="grid gap-1 copy-body">Inherit from group
-          <Select aria-label="Inherit from group" id={id + "-base"} value={draft.base} onChange={event => update('base', event.currentTarget.value)}>
-            <SelectOption value="">None</SelectOption>
-            {draft.base && !hasBase && <SelectOption value={draft.base}>{draft.base}</SelectOption>}
-            {targets.map(target => <SelectOption value={target.value} key={target.value}>{target.label}</SelectOption>)}
-          </Select>
-        </label>
-      </FieldRow>}
-      <label htmlFor={id + "-status"} className="grid gap-1 copy-body">Deprecation
-        <Select aria-label="Deprecation" id={id + "-status"} value={draft.deprecation} onChange={event => update('deprecation', event.currentTarget.value)}>
-          <SelectOption value="">Inherited</SelectOption>
-          <SelectOption value="false">Mark as not deprecated</SelectOption>
-          <SelectOption value="true">Deprecated</SelectOption>
-          <SelectOption value="reason">Deprecated with explanation</SelectOption>
+        <Select label="Default type" id={id + "-type"} value={draft.type} onChange={event => update('type', event.currentTarget.value)}>
+          <SelectOption value="">Inherited{currentType && !initial.type ? ' · ' + currentType : ''}</SelectOption>
+          {!dtcgTypes.some(type => type === draft.type) && draft.type && <SelectOption value={draft.type}>{draft.type}</SelectOption>}
+          {dtcgTypes.map(type => <SelectOption value={type} key={type}>{type}</SelectOption>)}
         </Select>
-      </label>
+        <Select label="Inherit from group" id={id + "-base"} value={draft.base} onChange={event => update('base', event.currentTarget.value)}>
+          <SelectOption value="">None</SelectOption>
+          {draft.base && !hasBase && <SelectOption value={draft.base}>{draft.base}</SelectOption>}
+          {targets.map(target => <SelectOption value={target.value} key={target.value}>{target.label}</SelectOption>)}
+        </Select>
+      </FieldRow>}
+      <Select label="Deprecation" id={id + "-status"} value={draft.deprecation} onChange={event => update('deprecation', event.currentTarget.value)}>
+        <SelectOption value="">Inherited</SelectOption>
+        <SelectOption value="false">Mark as not deprecated</SelectOption>
+        <SelectOption value="true">Deprecated</SelectOption>
+        <SelectOption value="reason">Deprecated with explanation</SelectOption>
+      </Select>
       {draft.deprecation === 'reason' ? <TextField label="Explanation" value={draft.reason}
         onChange={event => update('reason', event.currentTarget.value)} /> :
         !draft.deprecation && currentDeprecation && <p className="copy-small">Inherited deprecation{typeof currentDeprecation === 'string' ? ' · ' + currentDeprecation : ''}</p>}
-      <details className="grid gap-2"><summary className="cursor-pointer copy-body">Advanced metadata</summary>
-        {extensions && <div className="grid gap-2 py-2">
-          {Object.keys(extensions).map(key => <div key={key} className="flex items-center justify-between gap-2 copy-body">
-            <span className="wrap-anywhere">{key}</span>
-            <Button type="button" size="xsmall" variant="text" aria-label={'Remove namespace ' + key} onClick={() => {
-              const next = { ...extensions };
-              delete next[key];
-              update('extensions', Object.keys(next).length ? JSON.stringify(next, null, 2) : '');
-            }}>Remove</Button>
-          </div>)}
-          <div className="flex flex-wrap items-center gap-2">
-            <TextField label="Vendor namespace" value={namespace} containerClassName="min-w-0 flex-1"
-              onChange={event => setNamespace(event.target.value)} />
-            <Button type="button" size="xsmall" variant="text" disabled={!namespace.trim() || Object.hasOwn(extensions, namespace.trim())}
-              onClick={() => {
-                update('extensions', JSON.stringify({ ...extensions, [namespace.trim()]: {} }, null, 2)); setNamespace('');
-              }}>Add namespace</Button>
-          </div>
-        </div>}
-        <label htmlFor={id + "-extensions"} className="grid gap-1 copy-body">Vendor extensions JSON
-          <Textarea id={id + "-extensions"} value={draft.extensions} onChange={event => update('extensions', event.currentTarget.value)}
-            rows={4} spellCheck={false} className="code-text copy-small" placeholder='{"vendor.namespace": {}}' />
-        </label>
-        {showInheritedExtensions && <details className="min-w-0 copy-small">
-          <summary className="cursor-pointer">Effective vendor extensions</summary>
-          <pre className="mt-2 max-h-40 overflow-auto rounded border p-2 code-text">{inheritedExtensions}</pre>
-        </details>}
-      </details>
+      <Disclosure compact label="Advanced metadata">
+        <div className="grid gap-space150 pad-top-space100">
+          {extensions && <div className="grid gap-space100">
+            {Object.keys(extensions).map(key => <div key={key} className="flex items-center justify-between gap-space100 copy-body">
+              <span className="wrap-anywhere">{key}</span>
+              <Button type="button" size="xsmall" variant="text" aria-label={'Remove namespace ' + key} onClick={() => {
+                const next = { ...extensions };
+                delete next[key];
+                update('extensions', Object.keys(next).length ? JSON.stringify(next, null, 2) : '');
+              }}>Remove</Button>
+            </div>)}
+            <div className="flex flex-wrap items-center gap-space100">
+              <TextField label="Vendor namespace" value={namespace} containerClassName="min-w-0 flex-1"
+                onChange={event => setNamespace(event.target.value)} />
+              <Button type="button" size="xsmall" variant="text" disabled={!namespace.trim() || Object.hasOwn(extensions, namespace.trim())}
+                onClick={() => {
+                  update('extensions', JSON.stringify({ ...extensions, [namespace.trim()]: {} }, null, 2)); setNamespace('');
+                }}>Add namespace</Button>
+            </div>
+          </div>}
+          <label htmlFor={id + "-extensions"} className="grid gap-space50 copy-body">Vendor extensions JSON
+            <Textarea id={id + "-extensions"} value={draft.extensions} onChange={event => update('extensions', event.currentTarget.value)}
+              rows={4} spellCheck={false} className="code-text copy-small" placeholder='{"vendor.namespace": {}}' />
+          </label>
+          {showInheritedExtensions && <Disclosure compact label="Effective vendor extensions">
+            <pre className="margin-top-space100 scroll-list-lg overflow-auto rounded border pad-space100 code-text copy-small">{inheritedExtensions}</pre>
+          </Disclosure>}
+        </div>
+      </Disclosure>
       {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
-      <div className="flex justify-end gap-2">
+      <div className="flex justify-end gap-space100">
         <Button variant="text" data-dialog-close="">Cancel</Button>
         <Button type="submit" disabled={!changedFiles.length}>Review metadata changes</Button>
       </div>

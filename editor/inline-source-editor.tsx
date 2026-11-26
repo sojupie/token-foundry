@@ -29,14 +29,14 @@ export function InlineSourceEditor({ text, file, write }: {
   const current = Math.min(page, last);
   const close = () => setDraft(undefined);
   return <>
-    <div className="flex flex-wrap items-center justify-between gap-2">
+    <div className="flex flex-wrap items-center justify-between gap-space100">
       <span className="copy-body">{graph.rows.length} {graph.rows.length === 1 ? 'token' : 'tokens'}</span>
       <Button size="xsmall" variant="text" onClick={() => {
         setError('');
         setDraft({ create: true, groupOnly: false, path: '', file, name: '', type: undefined, value: '', description: '' });
       }}>Add inline token</Button>
     </div>
-    <ul className="grid gap-1">
+    <ul className="grid gap-space50">
       {graph.rows.slice(current * pageSize, (current + 1) * pageSize).map(([path, token]) => <li key={path}>
         <Button type="button" size="xsmall" variant="text" onClick={() => {
           setError('');
@@ -46,7 +46,7 @@ export function InlineSourceEditor({ text, file, write }: {
         }}>{path}</Button>
       </li>)}
     </ul>
-    {last > 0 && <div className="flex justify-end gap-2">
+    {last > 0 && <div className="flex justify-end gap-space100">
       <Button size="xsmall" variant="text" disabled={current === 0} onClick={() => setPage(current - 1)}>Previous inline tokens</Button>
       <Button size="xsmall" variant="text" disabled={current === last} onClick={() => setPage(current + 1)}>Next inline tokens</Button>
     </div>}

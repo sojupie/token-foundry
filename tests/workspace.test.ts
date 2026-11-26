@@ -5,6 +5,22 @@ import { compileResolver, resolveResolver } from '../lib/resolver.ts';
 import { copyEntries, decodeClipboard, encodeClipboard } from '../lib/structure.ts';
 import { fieldDependsOn, referenceConsumers, referenceProblems } from '../lib/document.ts';
 import { diffFile, openWorkspace, reviewAgainstLatest, reviewBulkEdit, reviewDelete, reviewDuplicate, reviewEdit, reviewMove, reviewMoves, reviewMetadata, reviewPaste, reviewProposal, reviewRepositorySources, reviewRemoveOverride, reviewResolverStructure, reviewSource, reviewSourcePath, reviewWorkspace, workspaceChanges } from '../lib/workspace.ts';
+import type { BulkEdit } from '../lib/workspace.ts';
+
+await test('normal form and field edits preserve inline values, surrounding metadata and exact bytes on restoration', () => {
+  const path = 'tokens/reference.tokens.json';
+  const text = '\uFEFF{\r\n  "space":{"$type":"dimension","$value":{"value":8,"unit":"px"},"$description":"Avstånd"},\r\n  "other":{"$type":"number","$value":1e2}\r\n}\r\n';
+  const original = openWorkspace('Inline', [{ path, text }]);
+  const edits: BulkEdit[] = [{ kind: 'value', value: { value: 13, unit: 'px' } }, { kind: 'value', pointer: '/value', value: 13 }];
+  for (const edit of edits) {
+    const changed = reviewBulkEdit(original, ['space'], edit);
+    assert.equal(changed.next.files[0]?.text, text.replace('"value":8', '"value":13'));
+    const restored = reviewBulkEdit(changed.next, ['space'], { kind: 'value', value: { value: 8, unit: 'px' } });
+    assert.equal(restored.next.files[0]?.text, text);
+  }
+  const metadata = reviewMetadata(original, path, 'space', { $description: 'Utrymme' });
+  assert.equal(metadata.next.files[0]?.text, text.replace('Avstånd', 'Utrymme'));
+});
 
 await test('reviews an in-browser edit, preserves other files and exports a Git patch', async () => {
   const paths = ['reference.tokens.json', 'system.tokens.json'];
@@ -69,7 +85,7 @@ await test('moves a group across files and rebases inbound aliases and outbound 
   assert.equal(workspaceChanges(moved.next).length, 2);
 });
 
-await test('refreshing a review preserves unchanged inputs and rejects edits to the same file', () => {
+await test('refreshing a review preserves independent files and reports conflicting definitions', () => {
   const path = 'reference.tokens.json';
   const before = '{"reference":{"gap":{"$type":"number","$value":1}}}';
   const original = openWorkspace('Fixture', [{ path, text: before }]);

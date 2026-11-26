@@ -132,7 +132,7 @@ const GroupItem = memo(function GroupItem({ path, current, revealed, ...branch }
       aria-current={current === path ? 'page' : undefined}
       onDoubleClick={expandable ? toggle : undefined}
       title={inherited ? 'Inherited from ' + inherited.path + ' · ' + inherited.file : path}
-      onClick={() => branch.select(path)}>{leafName(path)}{inherited && <span aria-hidden="true" className="ms-2 copy-small tone-supporting">Inherited</span>}</ListItemButton>
+      onClick={() => branch.select(path)}>{leafName(path)}{inherited && <span aria-hidden="true" className="margin-start-space100 copy-small tone-supporting">Inherited</span>}</ListItemButton>
     {expandable && <List id={childrenId} hidden={!expanded} className="md-list-expand-content"
       data-variant="segmented" data-actions-layout="inline">
       {expanded && <GroupItems parent={path} childrenPaths={children} {...{ current, revealed }} {...branch} />}

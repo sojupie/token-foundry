@@ -3,8 +3,8 @@ import type { KeyboardEvent, ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { ActionDialog } from '@/components/ui/dialog';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { ChevronLeft, ChevronRight, Folder, Search } from 'lucide-react';
-import { ChipSelect, SelectOption, Button, IconButton, List, ListItemButton, SearchBar } from '@token-catalog/forge-react';
+import { ChevronLeft, ChevronRight, Folder, Search, X } from 'lucide-react';
+import { ChipSelect, SelectOption, Button, IconButton, List, ListItemButton, TextField } from '@token-catalog/forge-react';
 import { fieldDependsOn, leafName, parentPath } from '../lib/document.ts';
 import type { DocumentGraph } from '../lib/document.ts';
 import type { JsonValue } from '../lib/json.ts';
@@ -235,9 +235,19 @@ function ReferencePicker({ graph, source, sourceField, sourcePaths, type, target
   }
 
   return <section aria-label="Link a reference" className="reference-picker" hidden={hidden}>
-    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
-      <SearchBar ref={search} className="workspace-search" label="Search tokens" leading={<Search aria-hidden="true" />}
-        placeholder="Search tokens" data-reference-search data-initial-focus value={query}
+    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-space100">
+      <TextField
+        ref={search}
+        type="search"
+        containerClassName="search-fill"
+        label="Search tokens"
+        leading={<Search aria-hidden="true" />}
+        trailing={query ? (
+          <IconButton size="xsmall" label="Clear token search" onClick={() => { setQuery(''); setFieldToken(undefined); showPage(0); search.current?.focus(); }}>
+            <X aria-hidden="true" />
+          </IconButton>
+        ) : undefined}
+        data-reference-search data-initial-focus value={query}
         onChange={(event) => { setQuery(event.target.value); setFieldToken(undefined); showPage(0); }}
         onKeyDown={(event) => {
           if (event.key === 'ArrowDown') {
@@ -253,7 +263,8 @@ function ReferencePicker({ graph, source, sourceField, sourcePaths, type, target
               else showFields(path);
             }
           }
-        }} />
+        }}
+      />
       {flexible && type && <ChipSelect label="Reference type" selectedLabel={showAllTypes ? 'All types' : 'Compatible types'}
         value={showAllTypes ? 'all' : 'compatible'} onChange={event => { setShowAllTypes(event.target.value === 'all'); showPage(0); }}>
         <SelectOption value="compatible">Compatible types</SelectOption>
@@ -265,7 +276,7 @@ function ReferencePicker({ graph, source, sourceField, sourcePaths, type, target
         <FolderTree groups={graph.groups} current={current} select={browse} allowed={allowed} label="Reference groups" />
       </div>
       <div className="flex min-h-0 min-w-0 flex-col">
-        <div className="flex min-w-0 items-center gap-1 border-b picker-result-heading px-2 py-1">
+        <div className="flex min-w-0 items-center gap-space50 border-b picker-result-heading pad-inline-space100 pad-block-space50">
           {fields && <IconButton size="xsmall" label="Back to token results" onClick={() => { setFieldToken(undefined); search.current?.focus(); }}>
             <ChevronLeft aria-hidden="true" />
           </IconButton>}
@@ -273,7 +284,7 @@ function ReferencePicker({ graph, source, sourceField, sourcePaths, type, target
             {fields ? 'Fields in ' + fieldToken : terms.length ? 'Search results' : current || 'All tokens'}
           </h3>
         </div>
-        <div className="min-h-0 flex-1 overflow-auto p-1">
+        <div className="min-h-0 flex-1 overflow-auto pad-space50">
           <List ref={results} aria-label="Reference results" data-variant="segmented" data-surface="transparent">
             {fields && fieldToken && fields.map(({ field, value, type: fieldType }, index) => <li key={JSON.stringify(field)}>
               <ListItemButton ref={index === 0 ? focusFirstField : undefined} aria-pressed={equalChoice(target, fieldToken, field)}
@@ -304,11 +315,11 @@ function ReferencePicker({ graph, source, sourceField, sourcePaths, type, target
             })}
           </List>
           {!fields && !visible.length && (terms.length > 0 || !children.length) &&
-            <p className="p-2 copy-small tone-supporting">{terms.length ? 'No matching references.' : 'No compatible tokens in this group.'}</p>}
+            <p className="pad-space100 copy-small tone-supporting">{terms.length ? 'No matching references.' : 'No compatible tokens in this group.'}</p>}
         </div>
       </div>
     </div>
-    <div className="flex items-center justify-between gap-2">
+    <div className="flex items-center justify-between gap-space100">
       <p className="copy-small tone-supporting">{summary}</p>
       {!fields && count > limit && <div className="flex items-center">
         <IconButton size="xsmall" label="Previous references" disabled={page === 0} onClick={() => showPage(page - 1)}>

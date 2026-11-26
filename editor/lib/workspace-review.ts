@@ -22,7 +22,6 @@ export type WorkspaceReviewRequest =
   | { kind: 'source'; workspace: Workspace; file: string; text: string; scope: ResolverEditScope | undefined }
   | { kind: 'edit'; workspace: Workspace; file: string; change: TokenChange }
   | { kind: 'proposal'; workspace: Workspace; text: string }
-  | { kind: 'penpot'; workspace: Workspace; text: string; set: string }
   | { kind: 'restore-inherited'; workspace: Workspace; path: string }
   | { kind: 'move'; workspace: Workspace; moves: readonly Move[]; operation: 'move' | 'rename' | 'duplicate' }
   | { kind: 'delete'; workspace: Workspace; paths: readonly string[] }
@@ -68,10 +67,13 @@ interface WorkerSession {
 
 let session: WorkerSession | undefined;
 let serial = 0;
+const workers = import.meta.glob<new () => Worker>('./workspace-review.worker.ts', { eager: true, query: '?worker&inline', import: 'default' });
 
 function workspaceWorker(): WorkerSession {
   if (session) return session;
-  const worker = new Worker(new URL('./workspace-review.worker.ts', import.meta.url), { type: 'module' });
+  const ReviewWorker = workers['./workspace-review.worker.ts'];
+  if (!ReviewWorker) throw new Error('The workspace review worker is unavailable.');
+  const worker = new ReviewWorker();
   const ready: WorkerSession = { worker, workspaces: new WeakMap(), variants: new WeakMap(), reviews: new WeakMap(), pending: new Map() };
   session = ready;
   function failed(message: string) {

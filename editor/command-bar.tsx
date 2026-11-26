@@ -34,7 +34,7 @@ export function CommandBar({ menus, children }: { menus: readonly Menu[]; childr
     const selected = committedMenus.current.find(item => item.label === menu)?.sections.flat().find(item => item.label === command);
     if (selected && !selected.disabled) selected.run();
   }, []);
-  return <div role="toolbar" aria-label="Workspace commands" data-roving-buttons="commands" className="flex shrink-0 items-center gap-1">
+  return <div role="toolbar" aria-label="Workspace commands" data-roving-buttons="commands" className="flex shrink-0 items-center gap-space50">
     {menus.map(menu => <TopMenu key={menu.label} menu={menu} dispatch={dispatch} />)}
     {children}
   </div>;

@@ -6,6 +6,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Textarea } from '@/components/ui/textarea';
 import { errorMessage } from '../lib/json.ts';
 import type { ResolverEditScope, Review } from '../lib/workspace.ts';
+import { sourceText, textareaText } from '../lib/source-text.ts';
 
 export interface SourceLocation {
   file: string;
@@ -14,15 +15,17 @@ export interface SourceLocation {
   resolver?: ResolverEditScope;
 }
 
-export function SourceDialog({ location, original, reviewing, close, prepare, review }: {
+export function SourceDialog({ location, original, initialText, onDraftChange, reviewing, close, prepare, review }: {
   location: SourceLocation;
   original: string;
+  initialText?: string | undefined;
+  onDraftChange?: (text: string) => void;
   reviewing: boolean;
   close: () => void;
   prepare: (text: string, signal: AbortSignal) => Promise<Review>;
   review: (next: Review) => void;
 }) {
-  const [text, setText] = useState(original);
+  const [text, setText] = useState(() => sourceText(original, initialText ?? original));
   const [error, setError] = useState('');
   const [pending, setPending] = useState(false);
   const pendingReview = useRef<AbortController | null>(null);
@@ -52,8 +55,9 @@ export function SourceDialog({ location, original, reviewing, close, prepare, re
     }
     const offset = location.offset ?? node?.offset;
     if (offset === undefined) return;
-    input.setSelectionRange(offset, offset + (location.offset === undefined ? node?.length ?? 0 : 0));
-    const before = original.slice(0, offset);
+    const before = textareaText(original.slice(0, offset));
+    const selected = textareaText(original.slice(offset, offset + (location.offset === undefined ? node?.length ?? 0 : 0)));
+    input.setSelectionRange(before.length, before.length + selected.length);
     const lines = before.split('\n');
     const computed = getComputedStyle(input);
     input.scrollTop = (lines.length - 1) * Number.parseFloat(computed.lineHeight) - input.clientHeight / 2;
@@ -76,15 +80,15 @@ export function SourceDialog({ location, original, reviewing, close, prepare, re
         close();
       }
     }}>
-    <form className="grid min-w-0 gap-3" onSubmit={event => {
+    <form className="grid min-w-0 gap-space150" onSubmit={event => {
       event.preventDefault();
       void prepareReview();
     }}>
       <Textarea aria-label="Token source JSON" data-initial-focus
-        readOnly={pending} spellCheck={false} rows={16} className="min-w-0 resize-y whitespace-pre code-editor max-h-[50dvh]!"
-        value={text} onChange={event => setText(event.currentTarget.value)} />
+        readOnly={pending} spellCheck={false} rows={16} className="min-w-0 resize-y whitespace-pre code-editor scroll-pane-lg-force"
+        value={text} onChange={event => { const next = sourceText(original, event.currentTarget.value); setText(next); onDraftChange?.(next); }} />
       {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
-      <div className="flex justify-end gap-2">
+      <div className="flex justify-end gap-space100">
         <Button variant="text" data-dialog-close="">Cancel</Button>
         <Button type="submit" disabled={pending || text === original}>{pending ? 'Checking source…' : 'Review source changes'}</Button>
       </div>

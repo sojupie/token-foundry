@@ -1,5 +1,5 @@
 import { lazy, Suspense, useId, useMemo, useState } from 'react';
-import { Button, TextField, Select, SelectOption } from '@token-catalog/forge-react';
+import { Button, Disclosure, TextField, Select, SelectOption } from '@token-catalog/forge-react';
 import { ActionDialog } from '@/components/ui/dialog';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { FieldRow } from '@/components/ui/field-row';
@@ -17,10 +17,12 @@ import type { BulkEdit, ResolverBulkScope, Review, Workspace } from '../lib/work
 import { defaultValue, valueFieldEditorType, valueFieldLabel } from './lib/value-shape.ts';
 import { ReferenceDialog } from './reference-picker.tsx';
 import { TokenValue } from './token-value.tsx';
+import { FieldBoundary } from './field-boundary.tsx';
+import type { Dispatch, SetStateAction } from 'react';
+import type { BulkDraft, SelectionEdit } from './lib/bulk-draft.ts';
+export type { SelectionEdit } from './lib/bulk-draft.ts';
 
 const BulkValueInput = lazy(() => import('./typed-value.tsx').then(module => ({ default: module.BulkValueInput })));
-
-export type SelectionEdit = 'rename' | 'value' | 'type' | 'description';
 
 export const selectionEditLabels = {
   rename: 'Rename', value: 'Change value', type: 'Change type', description: 'Change description',
@@ -41,10 +43,12 @@ function valueAt(value: JsonValue | undefined, parts: readonly string[]) {
     isJsonObject(node) && Object.hasOwn(node, part) ? node[part] : undefined, value);
 }
 
-export function BulkEditDialog({ workspace, paths, action, scope, definitions, prepareRename, reviewing, close, review }: {
+export function BulkEditDialog({ workspace, paths, action, draft, setDraft, scope, definitions, prepareRename, reviewing, close, review }: {
   workspace: Workspace;
   paths: readonly string[];
   action: SelectionEdit;
+  draft: BulkDraft;
+  setDraft: Dispatch<SetStateAction<BulkDraft>>;
   scope?: ResolverBulkScope;
   definitions?: readonly string[];
   prepareRename?: ((moves: readonly Move[]) => Promise<Review>) | undefined;
@@ -52,16 +56,17 @@ export function BulkEditDialog({ workspace, paths, action, scope, definitions, p
   close: () => void;
   review: (next: Review) => void;
 }) {
-  const [field, setField] = useState('');
-  const [replaceLinks, setReplaceLinks] = useState(false);
-  const [value, setValue] = useState<JsonValue>();
-  const [type, setType] = useState('');
-  const [description, setDescription] = useState('');
-  const [renameMode, setRenameMode] = useState('replace');
-  const [find, setFind] = useState('');
-  const [name, setName] = useState('');
-  const [regex, setRegex] = useState(false);
-  const [raw, setRaw] = useState<string>();
+  const { field, replaceLinks, value, type, description, renameMode, find, name, regex, raw } = draft;
+  const setField = (next: string) => setDraft(previous => ({ ...previous, field: next }));
+  const setReplaceLinks = (next: boolean) => setDraft(previous => ({ ...previous, replaceLinks: next }));
+  const setValue = (next: JsonValue | undefined) => setDraft(previous => ({ ...previous, value: next }));
+  const setType = (next: string) => setDraft(previous => ({ ...previous, type: next }));
+  const setDescription = (next: string) => setDraft(previous => ({ ...previous, description: next }));
+  const setRenameMode = (next: string) => setDraft(previous => ({ ...previous, renameMode: next }));
+  const setFind = (next: string) => setDraft(previous => ({ ...previous, find: next }));
+  const setName = (next: string) => setDraft(previous => ({ ...previous, name: next }));
+  const setRegex = (next: boolean) => setDraft(previous => ({ ...previous, regex: next }));
+  const setRaw = (next: string | undefined) => setDraft(previous => ({ ...previous, raw: next }));
   const [linking, setLinking] = useState(false);
   const [error, setError] = useState('');
   const [checking, setChecking] = useState(false);
@@ -172,67 +177,58 @@ export function BulkEditDialog({ workspace, paths, action, scope, definitions, p
 
   return <ActionDialog open={!reviewing} busy={checking} title={selectionEditLabels[action] + ' · ' + count}
     onOpenChange={open => { if (!open && !reviewing && !checking) close(); }} style={{ inlineSize: '38rem' }}>
-    <form noValidate className="bulk-token-fields grid min-w-0 gap-3" onSubmit={event => { event.preventDefault(); submit(); }}>
+    <form noValidate className="bulk-token-fields grid min-w-0 gap-space150" onSubmit={event => { event.preventDefault(); submit(); }}>
       {!!definitions?.length && <p className="copy-body">Editing definitions in {definitions.join(', ')}.</p>}
       {action === 'rename' ? <>
-        <label className="grid gap-1 copy-body" htmlFor={id + '-rename'}>Rename method
-          <Select aria-label="Rename method" className="w-full" id={id + '-rename'} value={renameMode} data-initial-focus onChange={event => setRenameMode(event.target.value)}>
-            <SelectOption value="replace">Find and replace</SelectOption>
-            <SelectOption value="prefix">Add prefix</SelectOption>
-            <SelectOption value="suffix">Add suffix</SelectOption>
-          </Select>
-        </label>
+        <Select label="Rename method" className="w-full" id={id + '-rename'} value={renameMode} data-initial-focus onChange={event => setRenameMode(event.target.value)}>
+          <SelectOption value="replace">Find and replace</SelectOption>
+          <SelectOption value="prefix">Add prefix</SelectOption>
+          <SelectOption value="suffix">Add suffix</SelectOption>
+        </Select>
         <FieldRow>
           {renameMode === 'replace' && <TextField label="Find in token name" value={find} invalid={!!patternError}
             supporting={patternError || undefined} onChange={event => setFind(event.target.value)} />}
           <TextField label={renameMode === 'replace' ? 'Replace with' : renameMode === 'prefix' ? 'Prefix' : 'Suffix'} value={name} onChange={event => setName(event.target.value)} />
         </FieldRow>
-        {renameMode === 'replace' && <label className="flex items-center gap-2 copy-body">
+        {renameMode === 'replace' && <label className="flex items-center gap-space100 copy-body">
           <input type="checkbox" checked={regex} onChange={event => setRegex(event.target.checked)} />Use regular expression
         </label>}
-        <section aria-label="Rename preview" className="grid gap-1 copy-body">
+        <section aria-label="Rename preview" className="grid gap-space50 copy-body">
           <p>{moves.length} of {count} will change</p>
-          <ul className="max-h-40 overflow-auto code-text copy-small">
-            {moves.slice(0, 50).map(move => <li className="wrap-anywhere py-1" key={move.path}>{move.path} → {move.to}
+          <ul className="scroll-list-lg overflow-auto code-text copy-small">
+            {moves.slice(0, 50).map(move => <li className="wrap-anywhere pad-block-space50" key={move.path}>{move.path} → {move.to}
               {collisions.has(move) && <span className="tone-error"> · Name already in use</span>}</li>)}
           </ul>
           {moves.length > 50 && <p>Showing the first 50 changes.</p>}
         </section>
       </> : <>
-        {action === 'value' && fieldOptions.size > 0 && <label className="grid gap-1 copy-body" htmlFor={id + '-field'}>Part to change
-          <Select aria-label="Part to change" id={id + '-field'} className="w-full" value={field} onChange={event => { setField(event.target.value); resetValue(); }}>
-            <SelectOption value="">Entire value</SelectOption>
-            {[...fieldOptions].map(([key, part]) => <SelectOption key={key} value={key}>{part.label}</SelectOption>)}
-          </Select>
-        </label>}
-        {option && <div className="grid gap-1 copy-body">
+        {action === 'value' && fieldOptions.size > 0 && <Select label="Part to change" id={id + '-field'} className="w-full" value={field} onChange={event => { setField(event.target.value); resetValue(); }}>
+          <SelectOption value="">Entire value</SelectOption>
+          {[...fieldOptions].map(([key, part]) => <SelectOption key={key} value={key}>{part.label}</SelectOption>)}
+        </Select>}
+        {option && <div className="grid gap-space50 copy-body">
           <p>{eligible.length} eligible · {addedCount} missing this field · {paths.length - eligible.length} skipped</p>
-          {linkedCount > 0 && <label className="flex gap-2"><input type="checkbox" checked={replaceLinks}
-            onChange={event => setReplaceLinks(event.target.checked)} />Replace whole-value links with their resolved values before changing this part ({linkedCount})</label>}
+          {linkedCount > 0 && <label className="flex gap-space100"><input type="checkbox" checked={replaceLinks}
+            onChange={event => setReplaceLinks(event.target.checked)} />Replace whole-value links with resolved values before updating this field ({linkedCount})</label>}
         </div>}
-        <section aria-label="Current values" className="grid gap-1 rounded-lg border p-2 copy-body">
-          <h3 className="copy-emphasis">Current {action === 'type' ? 'type' : action === 'description' ? 'description' : 'value'}</h3>
-          {common ? <TokenValue value={current[0]} authored swatch wrap /> : <details>
-            <summary className="cursor-pointer">Mixed {action === 'type' ? 'types' : action === 'description' ? 'descriptions' : 'values'}</summary>
-            <ul className="mt-2 grid max-h-32 gap-2 overflow-auto">{paths.slice(0, 50).map((path, index) => <li key={path}>
-              <code className="wrap-anywhere copy-small">{path}</code><TokenValue value={current[index]} authored swatch wrap />
-            </li>)}</ul>
-          </details>}
+        <section aria-label="Current values" className="grid gap-space50 copy-body">
+          {common ? <div className="grid gap-space50 rounded-lg border pad-space100"><h3 className="copy-emphasis">Current {action === 'type' ? 'type' : action === 'description' ? 'description' : 'value'}</h3><TokenValue value={current[0]} authored swatch wrap /></div> :
+            <Disclosure compact label={`Mixed ${action === 'type' ? 'types' : action === 'description' ? 'descriptions' : 'values'}`}>
+              <ul className="margin-top-space100 grid scroll-list-sm gap-space100 overflow-auto">{paths.slice(0, 50).map((path, index) => <li key={path}>
+                <code className="wrap-anywhere copy-small">{path}</code><TokenValue value={current[index]} authored swatch wrap />
+              </li>)}</ul>
+            </Disclosure>}
         </section>
-        {(action === 'type' || action === 'value' && !commonType && !parts.length) && <label className="grid gap-1 copy-body" htmlFor={id + '-type'}>
-          {action === 'type' ? 'New token type' : 'Type of replacement value'}
-          <Select aria-label={action === 'type' ? 'New token type' : 'Type of replacement value'} id={id + '-type'} className="w-full" value={type} onChange={event => { setType(event.target.value); resetValue(); }}>
-            <SelectOption value="">Choose a type…</SelectOption>
-            {dtcgTypes.map(item => <SelectOption key={item} value={item}>{item}</SelectOption>)}
-          </Select>
-        </label>}
-        {incompatible.length > 0 && <details className="copy-body" open>
-          <summary className="cursor-pointer">{incompatible.length} need a replacement value</summary>
-          <ul className="max-h-28 overflow-auto copy-small">{incompatible.slice(0, 50).map(path => <li key={path}>{path}</li>)}</ul>
-        </details>}
+        {(action === 'type' || action === 'value' && !commonType && !parts.length) && <Select label={action === 'type' ? 'New token type' : 'Type of replacement value'} id={id + '-type'} className="w-full" value={type} onChange={event => { setType(event.target.value); resetValue(); }}>
+          <SelectOption value="">Choose a type…</SelectOption>
+          {dtcgTypes.map(item => <SelectOption key={item} value={item}>{item}</SelectOption>)}
+        </Select>}
+        {incompatible.length > 0 && <Disclosure compact open label={`${incompatible.length} need a replacement value`}>
+          <ul className="scroll-list-xs overflow-auto copy-small">{incompatible.slice(0, 50).map(path => <li key={path}>{path}</li>)}</ul>
+        </Disclosure>}
         {action === 'description' && <TextField label="New description" value={description} onChange={event => setDescription(event.target.value)} supporting="Leave blank to remove the descriptions." />}
         {showValue && targetType && <>
-          <div className="flex flex-wrap justify-end gap-2">
+          <div className="flex flex-wrap justify-end gap-space100">
             <Button size="xsmall" type="button" variant="text" onClick={() => {
               if (raw === undefined) setRaw(JSON.stringify(value ?? initial, null, 2) ?? '');
               else {
@@ -242,15 +238,15 @@ export function BulkEditDialog({ workspace, paths, action, scope, definitions, p
             }}>{raw === undefined ? 'Raw JSON' : 'Use typed editor'}</Button>
             <Button size="xsmall" type="button" variant="text" onClick={() => setLinking(true)}>Link a token</Button>
           </div>
-          {raw === undefined ? <Suspense fallback={<output>Loading value editor…</output>}>
+          {raw === undefined ? <FieldBoundary key={targetType}><Suspense fallback={<output>Loading value editor…</output>}>
             <BulkValueInput {...{ graph, file, paths }} field={parts} type={targetType}
               label="Replacement value" value={value ?? initial} write={next => { setValue(next); setError(''); }} />
-          </Suspense> :
+          </Suspense></FieldBoundary> :
             <Textarea aria-label="Replacement value JSON" rows={5} value={raw} onChange={event => setRaw(event.target.value)} />}
         </>}
       </>}
       {(error || patternError) && <Alert variant="destructive"><AlertDescription className="whitespace-pre-wrap">{error || patternError}</AlertDescription></Alert>}
-      <div className="flex justify-end gap-2">
+      <div className="flex justify-end gap-space100">
         <Button type="button" variant="text" data-dialog-close="" disabled={checking}>Cancel</Button>
         <Button type="submit" disabled={checking || collisions.size > 0 || !eligible.length}>Review edits</Button>
       </div>

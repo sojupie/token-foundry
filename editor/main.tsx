@@ -1,8 +1,7 @@
 import { startTransition, StrictMode, useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { ClipboardEvent, ComponentType } from 'react';
-import { errorMessage, isJsonObject, requireValue } from '../lib/json.ts';
+import { errorMessage, isJsonObject, isRecord, requireValue } from '../lib/json.ts';
 import type { JsonObject } from '../lib/json.ts';
-import { penpotSets } from '../lib/penpot-import.ts';
 import { diagnosticKey } from '../lib/document-diagnostics.ts';
 import type { DocumentGraph } from '../lib/document.ts';
 import type { TokenNode } from '../lib/token-types.ts';
@@ -15,7 +14,7 @@ import type { ClipboardEntry } from '../lib/structure.ts';
 import { PasteDialog } from './paste-dialog.tsx';
 import { ContextInputs, ResolverPane, VariantComparison, downloadEditableSources, downloadVariant, labelOrigin, originName, variantLabel } from './resolver-pane.tsx';
 import type { Inputs } from './resolver-pane.tsx';
-import { openWorkspace, reviewAgainstLatest, reviewCreateSource, reviewDelete, reviewDuplicate, reviewEdit, reviewMove, reviewMoves, reviewRenameWithEdit, reviewMetadataChanges, workspaceChanges } from '../lib/workspace.ts';
+import { openWorkspace, revertFileChange, revertTokenChange, reviewAgainstLatest, reviewCreateSource, reviewDelete, reviewDuplicate, reviewEdit, reviewMove, reviewMoves, reviewRenameWithEdit, reviewMetadataChanges, reviewWorkspace, workspaceChanges, workspaceTokenChanges } from '../lib/workspace.ts';
 import type { ResolverEditScope, Review, Workspace } from '../lib/workspace.ts';
 import { countTokenIssues, queryTokenRows, tokenRowIndex } from './lib/token-rows.ts';
 import { createGridSelection } from './lib/grid-selection.ts';
@@ -24,13 +23,39 @@ import { runWorkspaceReview } from './lib/workspace-review.ts';
 import type { ResolverEdit } from './lib/workspace-review.ts';
 import type { CellPosition, Draft, EditableColumn, GridColumn } from './lib/draft.ts';
 import type { WorkspaceConnection, WorkspaceConnectorProps } from './lib/connector.ts';
-import { OpenGitHub } from '../integrations/github/connect.tsx';
+import { OpenGitHub, snapshotConnection } from '../integrations/github/connect.tsx';
+import type { RepositorySnapshot } from '../integrations/github/contract.ts';
+import type { ConflictDraft } from '../integrations/figma/recovery.ts';
+import { conflictInputKind } from '../integrations/figma/recovery.ts';
+import { sameSourceValue } from '../integrations/figma/contract.ts';
+import { figmaBundle } from '../integrations/figma/projection.ts';
+import { changedValues, importedValue } from '../integrations/figma/merge.ts';
+import { parseVariableValue } from '../integrations/figma/conflict-review.tsx';
+import { sameIncomingReview } from './lib/figma-review.ts';
+import type { IncomingReviewRecovery, PreparedIncomingInput } from './lib/figma-review.ts';
+import { WorkspaceRecovery } from './workspace-recovery.tsx';
+import type { RecoveryHandle, RecoveryStatus } from './workspace-recovery.tsx';
+import { ReloadEditor } from './field-boundary.tsx';
+import { newBulkDraft } from './lib/bulk-draft.ts';
+import { useSharedWorkspace } from './lib/shared-workspace.ts';
+import { activeRecovery, navigateLocation, routeView, routeWorkspace, workspaceLocation } from './lib/workspace-location.ts';
+import type { WorkspaceDestination } from './lib/workspace-location.ts';
+import { FigmaWorkspace, SourceBrowser, WorkspaceChanges, WorkspaceList, WorkspaceName, WorkspaceStatus } from './workspace-pages.tsx';
+import { createSharedWorkspace, deleteSharedWorkspace, loadSharedWorkspace } from '../integrations/workspace/client.ts';
+import { isIdentity } from '../integrations/workspace/model.ts';
+import type { SharedRecovery, WorkspaceInput, WorkspaceView } from '../integrations/workspace/model.ts';
+import type { RecoveryWork } from './lib/recovery.ts';
 import { createRoot } from 'react-dom/client';
-import { AlertCircle, ArrowDownToLine, ArrowRightLeft, ArrowUpRight, ChevronLeft, ChevronRight, ClipboardPaste, Copy, FileText, FileUp, FolderOpen, GitPullRequest, Keyboard, Layers, Moon, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Pencil, Plus, Redo2, Search, Settings2, Shapes, SlidersHorizontal, Sun, TextCursorInput, Trash2, Undo2, X } from 'lucide-react';
+import { flushSync } from 'react-dom';
+import type { Root } from 'react-dom/client';
+import { AlertCircle, Archive, ArrowLeftRight, ArrowRightLeft, ArrowUpRight, BookOpen, ChevronLeft, ChevronRight, CirclePlus, ClipboardPaste, Command, Copy, Download, FileCode, FileDiff, FileInput, FileText, FolderOpen, FolderPlus, GitCompareArrows, History, Keyboard, Layers, Moon, Palette, PanelLeftClose, PanelLeftOpen, PanelRight, PanelRightClose, Pencil, Plus, Redo2, Search, Settings2, Shapes, SlidersHorizontal, Sun, TextCursorInput, Trash2, Undo2, X } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { ChipSelect, Disclosure, Button, ButtonLink, IconButton, NavigationRail, NavigationRailItem, SearchBar, SideSheet, Select, SelectOption } from '@token-catalog/forge-react';
+import { Card, ChipSelect, Disclosure, Button, ButtonLink, IconButton, NavigationBar, NavigationRail, NavigationItem, Progress, SideSheet, Select, SelectOption, TextField } from '@token-catalog/forge-react';
 import { BulkEditDialog, selectionEditLabels } from './bulk-edit-dialog.tsx';
 import { ReviewChanges } from './review-dialog.tsx';
+import { RepositoryConflictReview } from './repository-conflicts.tsx';
+import { RepositoryConflicts, repositoryChoiceKey, repositoryChoiceTarget } from '../lib/repository-merge.ts';
+import type { RepositoryChoice, RepositoryChoiceDraft, RepositoryConflict } from '../lib/repository-merge.ts';
 import type { SelectionEdit } from './bulk-edit-dialog.tsx';
 import { DiagnosticsDialog } from './diagnostics-dialog.tsx';
 import { VariantSetupDialog } from './variant-setup-dialog.tsx';
@@ -46,7 +71,7 @@ import { WorkspacePanes } from './pane-resize.tsx';
 import type { GridData } from './token-grid';
 import { RenderData, useRenderData } from './lib/render-data.ts';
 import { TokenGrid } from './token-grid';
-import { CommandBar, CommandMenu } from './command-bar.tsx';
+import { CommandBar } from './command-bar.tsx';
 import { KeyTips } from './key-tips.tsx';
 import { useWorkspaceRovingButtons } from './roving-buttons.ts';
 import type { KeyTipsHandle } from './key-tips.tsx';
@@ -113,8 +138,44 @@ function snapshot(workspace: Workspace): Snapshot {
 type SaveTarget = { kind: 'folder'; save: (workspace: Workspace) => Promise<void> } |
   { kind: 'pull-request'; connection: WorkspaceConnection };
 
+const viewTitles: Record<WorkspaceDestination, string> = {
+  tokens: 'Tokens',
+  variants: 'Variants',
+  workspace: 'Workspace',
+  changes: 'Changes',
+  figma: 'Figma',
+};
+
 function Editor({ Connector, proposalLink }: { Connector: ComponentType<WorkspaceConnectorProps> | null; proposalLink: string }) {
+  const recoveryHandle = useRef<RecoveryHandle>(null);
+  const reloadEditor = useCallback(async () => {
+    if (!await recoveryHandle.current?.flush()) return false;
+    window.location.reload();
+    return true;
+  }, []);
   const [workspace, setData] = useState(openExample);
+  const [workspaceId, setWorkspaceId] = useState<string>(() => crypto.randomUUID());
+  const [initialWorkspace] = useState(() => { const id = new URLSearchParams(window.location.search).get('workspace'); return (import.meta.env.DEV || import.meta.env.MODE === 'hosted') && isIdentity(id) ? id : undefined; });
+  const [startupRecord] = useState(activeRecovery);
+  const [startupReady, setStartupReady] = useState(!initialWorkspace);
+  const [loadingLinked, setLoadingLinked] = useState(!!initialWorkspace);
+  const initialNavigationHandled = useRef(false);
+  const workspaceOpen = useRef(0);
+  const startup = useMemo(() => initialWorkspace ? { workspace: initialWorkspace, record: startupRecord,
+    valid: () => !initialNavigationHandled.current, done: () => setStartupReady(true),
+    cancel: () => { initialNavigationHandled.current = true; workspaceLocation(); setStartupReady(true); setLoadingLinked(false); } } : undefined, [initialWorkspace, startupRecord]);
+  const [localSaves, setLocalSaves] = useState(new Map<string, RecoveryStatus>());
+  const setLocalSave = useCallback((saved: RecoveryStatus) => setLocalSaves(current => new Map(current).set(saved.id, saved)), []);
+  const localSave = localSaves.get(workspaceId);
+  const [sharedRecovery, setSharedRecovery] = useState<{ client: string; value?: SharedRecovery }>(() => ({ client: workspaceId }));
+  const [sharedWanted, setSharedWanted] = useState(new Set<string>());
+  const [showRecoveryAtStartup] = useState(() => !window.location.hash.includes('pair='));
+  useEffect(() => {
+    if ((import.meta.env.DEV || import.meta.env.MODE === 'hosted') && sharedRecovery.client === workspaceId && sharedRecovery.value?.origin === window.location.origin) workspaceLocation(sharedRecovery.value.id);
+  }, [sharedRecovery, workspaceId]);
+  const rememberShared = useCallback((value: SharedRecovery) => {
+    setSharedRecovery(previous => previous.client === workspaceId && !sameSourceValue(previous.value, value) ? { client: workspaceId, value } : previous);
+  }, [workspaceId]);
   const [initiallyExpanded, setInitiallyExpanded] = useState<string>();
   const [history, setHistory] = useState(emptyHistory);
   const [group, setGroup] = useState('');
@@ -128,10 +189,12 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
   const groupsTree = useRef<FolderTreeHandle>(null);
   const clipboard = useRef({ text: '', tabOnly: false });
   const [bulkEdit, setBulkEdit] = useState<{ paths: readonly string[]; action: SelectionEdit } | null>(null);
+  const [bulkDraft, setBulkDraft] = useState(newBulkDraft);
   const bulkTrigger = useRef<HTMLButtonElement>(null);
   const bulkFocusAfterReview = useRef(false);
   const [page, setPage] = useState(0);
   const [draft, setDraft] = useState<Draft | null>(null);
+  const [preparedIncoming, setPreparedIncoming] = useState<Draft>();
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [theme, setTheme] = useState(savedTheme);
   const systemPrefersDark = useSyncExternalStore(subscribeTheme, prefersDark);
@@ -143,7 +206,22 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
     localStorage.setItem(themeKey, next);
     setTheme(next);
   }
-  const [view, setView] = useState<'tokens' | 'workspace' | 'variants'>('tokens');
+  const [view, setViewState] = useState<WorkspaceDestination>(() => routeView(window.location));
+  const navigation = useRef({ version: 0, view });
+  const setView = useCallback((next: WorkspaceDestination, historyMode: 'push' | 'replace' | 'none' = 'push') => {
+    const changed = next !== navigation.current.view;
+    navigation.current = { version: navigation.current.version + 1, view: next };
+    setViewState(next);
+    if (historyMode !== 'none') navigateLocation(next, undefined, changed ? historyMode : 'replace');
+  }, []);
+  useEffect(() => {
+    navigateLocation(navigation.current.view, undefined, 'replace');
+  }, []);
+  const [workspacePickerOpen, setWorkspacePickerOpen] = useState(false);
+  const [sharedConflictOpen, setSharedConflictOpen] = useState(false);
+  const [sharedChoices, setSharedChoices] = useState<RepositoryChoiceDraft[]>([]);
+  const [incomingReview, setIncomingReview] = useState('');
+  const [incomingDrafts, setIncomingDrafts] = useState<IncomingReviewRecovery[]>([]);
   const [relocate, setRelocate] = useState<{ paths: string[]; operation: MoveOperation } | null>(null);
   const [showTree, setShowTree] = useState(true);
   const desktop = useSyncExternalStore(subscribeViewport, isDesktopViewport);
@@ -158,14 +236,16 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
   const [finalReview, setFinalReview] = useState<Review | null>(null);
   const [saveTarget, setSaveTarget] = useState<SaveTarget | null>(null);
   const [revisionReview, setRevisionReview] = useState<'current' | 'stale' | 'refreshed'>('current');
+  const [repositoryReview, setRepositoryReview] = useState<{ draft: Review; connection: WorkspaceConnection; conflicts: RepositoryConflict[]; choices: RepositoryChoiceDraft[] }>();
   const [submittedUrl, setSubmittedUrl] = useState('');
   const [linkedProposal, setLinkedProposal] = useState(proposalLink);
   const [importChanges, setImportChanges] = useState(false);
-  const [penpotOpen, setPenpotOpen] = useState(false);
-  const [penpotFile, setPenpotFile] = useState<{ name: string; text: string; sets: string[] } | null>(null);
-  const [penpotSet, setPenpotSet] = useState('');
+  const [recoveryOpen, setRecoveryOpen] = useState(false);
+  const [recoveredFolder, setRecoveredFolder] = useState(false);
+  const [offlineGit, setOfflineGit] = useState<RepositorySnapshot>();
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [replacePrompt, setReplacePrompt] = useState<{ proceed: () => void; cancel?: (() => void) | undefined }>();
   const keyTips = useRef<KeyTipsHandle>(null);
   const [metadataLocation, setMetadataLocation] = useState<MetadataLocation | null>(null);
   const variantsHeading = useRef<HTMLHeadingElement>(null);
@@ -173,19 +253,21 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
   const sourceFocusAfterReview = useRef<string | null>(null);
   const [sourceFileAction, setSourceFileAction] = useState<SourceFileAction | null>(null);
   const [sourceLocation, setSourceLocation] = useState<SourceLocation | null>(null);
+  const [sourceDraft, setSourceDraft] = useState<{ file: string; text: string }>();
   const [primary, setPrimary] = useState<Inputs>({});
   const [secondary, setSecondary] = useState<Inputs>({});
   const [comparing, setComparing] = useState(false);
   const [editingSet, setEditingSet] = useState<string>();
   const [variantDirty, setVariantDirty] = useState(false);
+  const [variantDraft, setVariantDraft] = useState<Draft>();
   const [variantEdit, setVariantEdit] = useState<{ path: string; origin: ResolverOrigin; insert?: true }>();
   const [resolverFile, setResolverFile] = useState('');
   const [newResolver, setNewResolver] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const folderInput = useRef<HTMLInputElement>(null);
   const proposalInput = useRef<HTMLInputElement>(null);
-  const penpotInput = useRef<HTMLInputElement>(null);
   const workspacePane = useRef<HTMLElement>(null);
+  const workspaceFooter = useRef<HTMLElement>(null);
   const detailsButton = useRef<HTMLButtonElement>(null);
   const [inspectorFooter, setInspectorFooter] = useState<HTMLDivElement | null>(null);
   const inspectorCloseButton = useRef<HTMLButtonElement>(null);
@@ -223,6 +305,7 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
   const setResolution = useVariantResolution(editModel, defaultVariantInputs, largeWorkspace);
   const current = editModel ? setResolution.value : resolution;
   const data = workspace;
+  const editingGeneration = useRef(0);
   const filesByPath = useMemo(() => new Map(data.files.map(file => [file.path, file])), [data.files]);
   const comparisonVariant = useVariantResolution(comparing ? model : undefined, secondary, largeWorkspace);
   const alternative = comparisonVariant.value;
@@ -285,8 +368,9 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
     return site && option !== undefined && Array.isArray(list) && (winner?.modifier !== modifier.name || winner.context !== option) ?
       [{ file: site.file, parts: [...site.parts, String(list.length)], modifier: modifier.name, context: option }] : [];
   }) : [];
-  const definitionEdit = variantEdit?.path === selected ? variantEdit :
-    editModel && winner && !inspected?.inheritedFrom ? { path: selected, origin: winner, insert: undefined } : undefined;
+  const definitionEdit = useMemo(() => variantEdit?.path === selected ? variantEdit :
+    editModel && winner && !inspected?.inheritedFrom ? { path: selected, origin: winner, insert: undefined } : undefined,
+  [editModel, inspected?.inheritedFrom, selected, variantEdit, winner]);
   const variantOriginal = definitionEdit && (definitionEdit.insert ? current?.graph.resolved.get(definitionEdit.path) :
     resolverValueAt(filesByPath.get(definitionEdit.origin.file)?.tree, definitionEdit.origin.parts));
   const authoredVariant = isJsonObject(variantOriginal) ? variantOriginal : undefined;
@@ -331,11 +415,100 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
   const selectionCount = checked.size.toLocaleString('en');
   const selectedTokenLabel = selectionCount + (checked.size === 1 ? ' token' : ' tokens');
   const hiddenChecked = checked.size - rows.filter(([path]) => checked.has(path)).length;
-  const saveStatus = busy ? 'Working…' : status || (dirty ? 'Unsaved changes' : '');
   const hasChanges = useMemo(() => workspaceChanges(data).length > 0, [data]);
+  const sourceDirty = !!sourceLocation && sourceDraft?.file === sourceLocation.file && sourceDraft.text !== data.files.find(file => file.path === sourceLocation.file)?.text;
+  useLayoutEffect(() => { editingGeneration.current++; }, [data, draft, bulkEdit, variantDirty, sourceDirty, review, finalReview, repositoryReview, sharedConflictOpen]);
+  const sharedInput = useMemo<WorkspaceInput>(() => {
+    const repository = saveTarget?.kind === 'pull-request' ? saveTarget.connection.snapshot : offlineGit;
+    return { name: data.name, files: snapshot(data).map(({ path, text }) => ({ path, text })),
+      baseline: (repository ? data.baseline : sharedRecovery.value?.checkpoint?.files ?? data.baseline).map(({ path, text }) => ({ path, text })),
+      ...(repository ? { repository: { repository: repository.repository, root: repository.root, revision: repository.revision,
+        ...(repository.branch ? { branch: repository.branch } : {}), ...(repository.pullRequest ? { pullRequest: repository.pullRequest } : {}) } } : {}) };
+  }, [data, offlineGit, saveTarget, sharedRecovery]);
+  function replaceShared(remote: WorkspaceView) {
+    const baseline = saveTarget?.kind === 'folder' && !remote.repository ? data.baseline : remote.baseline.files;
+    const next = { ...openWorkspace(remote.name, remote.draft.files), baseline };
+    setData(next); setDirty(workspaceChanges(next).length > 0);
+    if (remote.repository && Connector) setSaveTarget({ kind: 'pull-request', connection: snapshotConnection({ ...remote.repository, files: remote.baseline.files }) });
+  }
+  const shared = useSharedWorkspace({ client: workspaceId, snapshot: sharedInput, recovery: sharedRecovery.value,
+    enabled: !!sharedRecovery.value || sharedWanted.has(workspaceId) || saveTarget?.kind === 'pull-request',
+    canApplyRemote: !draft && !preparedIncoming && !bulkEdit && !relocate && !paste && !sourceFileAction && !variantDirty && !sourceDirty && !review && !finalReview && !repositoryReview && !sharedConflictOpen && !sharedChoices.length,
+    replace: replaceShared, remember: rememberShared });
+  const ensureShared = useCallback(async () => {
+    if (shared.view) return shared.view;
+    const created = await createSharedWorkspace(workspaceId, sharedInput);
+    setSharedWanted(wanted => new Set(wanted).add(workspaceId));
+    shared.adopt(created);
+    return created;
+  }, [shared, sharedInput, workspaceId]);
+  function restoreShared(remote: WorkspaceView, _openedAt = navigation.current.version, historyMode: 'push' | 'replace' | 'none' = 'push') {
+    confirmReplace(() => {
+      const destination = navigation.current.view;
+      const client = crypto.randomUUID();
+      const next = { ...openWorkspace(remote.name, remote.draft.files), baseline: remote.baseline.files };
+      activate(next, remote.repository && Connector ? { kind: 'pull-request', connection: snapshotConnection({ ...remote.repository, files: remote.baseline.files }) } : null, undefined, client,
+        { view: destination, sharedId: remote.id, historyMode });
+      setDirty(workspaceChanges(next).length > 0);
+      setSharedRecovery({ client, value: { id: remote.id, origin: window.location.origin, accepted: remote.draft, checkpoint: remote.baseline, ...(remote.repository ? { repository: remote.repository } : {}) } });
+      setRecoveryOpen(false); setWorkspacePickerOpen(false);
+    }, () => workspaceLocation(shared.current().view?.id ?? sharedRecovery.value?.id));
+  }
+  async function resumeShared(id: string, historyMode: 'push' | 'replace' | 'none' = 'push') {
+    initialNavigationHandled.current = true;
+    const request = ++workspaceOpen.current; const openedAt = navigation.current.version; const remote = await loadSharedWorkspace(id);
+    if (request === workspaceOpen.current) restoreShared(remote, openedAt, historyMode);
+  }
+  const openLinkedWorkspace = useEffectEvent((remote: WorkspaceView, openedAt: number) => restoreShared(remote, openedAt, 'replace'));
+  useEffect(() => {
+    if (!initialWorkspace || !startupReady || initialNavigationHandled.current) return undefined;
+    let active = true;
+    void loadSharedWorkspace(initialWorkspace).then(remote => { if (active && !initialNavigationHandled.current) openLinkedWorkspace(remote, 0); return undefined; }).catch((cause: unknown) => {
+      if (active && !initialNavigationHandled.current) { initialNavigationHandled.current = true; setLoadingLinked(false); setError(errorMessage(cause)); }
+    });
+    return () => { active = false; };
+  }, [initialWorkspace, startupReady]);
+  const recoveryEditor = useMemo<RecoveryWork['editor']>(() => incomingDrafts.length || sharedConflictOpen || sharedChoices.length || bulkEdit || draft || preparedIncoming || variantDirty && variantDraft && definitionEdit || sourceDirty && sourceLocation && sourceDraft ? {
+    group, selected, column: activeColumn, inspector: inspectorOpen, resolverFile, primary: { ...primary }, secondary: { ...secondary }, comparing,
+    ...(editingSet ? { editingSet } : {}), ...(draft ? { draft } : {}), ...(preparedIncoming ? { stagedFigmaDraft: preparedIncoming } : {}),
+    ...(variantDirty && variantDraft && definitionEdit ? { variant: { draft: variantDraft, target: { path: definitionEdit.path, origin: definitionEdit.origin, ...(definitionEdit.insert ? { insert: true as const } : {}) } } } : {}),
+    ...(sourceDirty && sourceLocation && sourceDraft ? { source: { location: sourceLocation, text: sourceDraft.text } } : {}),
+    ...(bulkEdit ? { bulk: { ...bulkEdit, form: bulkDraft } } : {}),
+    ...(sharedConflictOpen || sharedChoices.length ? { workspaceReview: { open: sharedConflictOpen, choices: sharedChoices } } : {}),
+    ...(incomingDrafts.length ? { figmaReviews: { open: incomingReview, entries: incomingDrafts } } : {}),
+  } : undefined, [activeColumn, bulkDraft, bulkEdit, comparing, definitionEdit, draft, editingSet, group, incomingDrafts, incomingReview, inspectorOpen, preparedIncoming, primary, resolverFile, secondary, selected, sharedChoices, sharedConflictOpen, sourceDirty, sourceDraft, sourceLocation, variantDirty, variantDraft]);
+  const recoveryWork = useMemo<RecoveryWork>(() => ({ name: data.name, files: snapshot(data).map(({ path, text }) => ({ path, text })),
+    baseline: data.baseline.map(({ path, text }) => ({ path, text })), folder: saveTarget?.kind === 'folder' || recoveredFolder,
+    ...(saveTarget?.kind === 'pull-request' && saveTarget.connection.snapshot ? { github: saveTarget.connection.snapshot } : offlineGit ? { github: offlineGit } : {}),
+    ...(recoveryEditor ? { editor: recoveryEditor } : {}),
+    ...(repositoryReview?.connection.snapshot ? { repositoryReview: { snapshot: repositoryReview.connection.snapshot, choices: repositoryReview.choices } } : {}),
+    ...(sharedRecovery.value ? { shared: sharedRecovery.value } : {}),
+  }), [data, offlineGit, recoveredFolder, recoveryEditor, repositoryReview, saveTarget, sharedRecovery]);
 
-  function activate(next: Workspace, target: SaveTarget | null = null, initialBranch?: string) {
-    setView('tokens');
+  function activate(
+    next: Workspace,
+    target: SaveTarget | null = null,
+    initialBranch?: string,
+    recoveryId?: string,
+    routing?: { view?: WorkspaceDestination; sharedId?: string | null; historyMode?: 'push' | 'replace' | 'none' },
+  ) {
+    const nextId = recoveryId ?? crypto.randomUUID();
+    const nextView = routing?.view ?? 'tokens';
+    const sharedId = routing?.sharedId === undefined ? null : routing.sharedId;
+    const historyMode = routing?.historyMode ?? 'push';
+    initialNavigationHandled.current = true; workspaceOpen.current++;
+    setLoadingLinked(false);
+    setWorkspaceId(nextId);
+    setSharedRecovery(previous => previous.client === nextId ? previous : { client: nextId });
+    setRecoveredFolder(false);
+    setOfflineGit(undefined);
+    setSourceLocation(null); setSourceDraft(undefined); setVariantDraft(undefined);
+    setBulkEdit(null); setBulkDraft(newBulkDraft());
+    setSharedChoices([]); setSharedConflictOpen(false);
+    setIncomingDrafts([]); setIncomingReview('');
+    setPreparedIncoming(undefined);
+    setView(nextView, 'none');
+    if (historyMode !== 'none') navigateLocation(nextView, sharedId, historyMode);
     setData(next);
     setInitiallyExpanded(initialBranch);
     setResolverFile('');
@@ -350,21 +523,17 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
     setDirty(false);
     setReview(null);
     setFinalReview(null);
+    setRepositoryReview(undefined);
     setSaveTarget(target);
     setRevisionReview('current');
-    setSubmittedUrl('');
+    setSubmittedUrl(target?.kind === 'pull-request' ? target.connection.pullRequest ?? '' : '');
     clearSelection();
     setStatus('');
     setError('');
   }
 
-  async function loadFolder() {
-    if (!window.showDirectoryPicker) {
-      folderInput.current?.setAttribute('webkitdirectory', '');
-      folderInput.current?.click();
-      return;
-    }
-    if (!canReplace()) return;
+  async function pickFolder() {
+    if (!window.showDirectoryPicker) return;
     setBusy(true);
     setError('');
     try {
@@ -378,8 +547,16 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
     }
   }
 
-  async function load(files: File[], isFolder: boolean) {
-    if (!files.length || !canReplace()) return;
+  function loadFolder() {
+    if (!window.showDirectoryPicker) {
+      folderInput.current?.setAttribute('webkitdirectory', '');
+      folderInput.current?.click();
+      return;
+    }
+    confirmReplace(() => { void pickFolder(); });
+  }
+
+  async function openSelectedFiles(files: File[], isFolder: boolean) {
     setBusy(true);
     setError('');
     try {
@@ -391,8 +568,12 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
     }
   }
 
-  async function loadMd3(benchmark = false) {
-    if (!canReplace()) return;
+  function load(files: File[], isFolder: boolean) {
+    if (!files.length) return;
+    confirmReplace(() => { void openSelectedFiles(files, isFolder); });
+  }
+
+  async function openMd3Sample(benchmark: boolean) {
     setBusy(true);
     setError('');
     try {
@@ -401,10 +582,18 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
         if (!response.ok) throw new Error('The Material 3 benchmark could not be loaded.');
         const file = new File([await response.blob()], 'md3-token-set.json', { type: 'application/json' });
         activate(await openFiles([file], false));
-      } else activate(await openMaterialExample(), null, 'md');
+      } else {
+        activate(await openMaterialExample(), null, 'md');
+      }
     } catch (failure) {
       setError(errorMessage(failure));
-    } finally { setBusy(false); }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function loadMd3(benchmark = false) {
+    confirmReplace(() => { void openMd3Sample(benchmark); });
   }
 
   async function loadProposal(file: File) {
@@ -419,30 +608,6 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
     } finally {
       setBusy(false);
     }
-  }
-
-  async function loadPenpot(file: File) {
-    setBusy(true);
-    setError('');
-    try {
-      const text = await file.text();
-      const sets = penpotSets(text);
-      setPenpotFile({ name: file.name, text, sets });
-      setPenpotSet(sets.length === 1 ? sets[0] ?? '' : '');
-    } catch (failure) { setPenpotFile(null); setError(errorMessage(failure)); }
-    finally { setBusy(false); }
-  }
-
-  async function reviewPenpotFile() {
-    if (!penpotFile || !penpotSet || busy) return;
-    setError('');
-    setBusy(true);
-    try {
-      setReview(await runWorkspaceReview({ kind: 'penpot', workspace: data, text: penpotFile.text, set: penpotSet }));
-      setPenpotOpen(false);
-      setPenpotFile(null);
-    } catch (failure) { setError(errorMessage(failure)); }
-    finally { setBusy(false); }
   }
 
   async function reviewLinkedProposal() {
@@ -471,7 +636,7 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
     return () => cancelAnimationFrame(frame);
   }, [focusRequest]);
 
-  const hasUnsavedWork = dirty || !!draft;
+  const hasUnsavedWork = dirty && !shared.draftSaved || !!draft || variantDirty || sourceDirty || !!review || !!finalReview || !!repositoryReview || sharedConflictOpen || !!sharedChoices.length || !!incomingDrafts.length || !!bulkEdit || !!relocate || !!paste;
   useEffect(() => {
     if (!hasUnsavedWork) return undefined;
     function warn(event: BeforeUnloadEvent) {
@@ -634,7 +799,7 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
   });
   const retainGridFocusOnBlankClick = useEffectEvent((event: MouseEvent) => {
     const target = event.target;
-    if (menuDisabled || !(target instanceof Element) ||
+    if (view !== 'tokens' || menuDisabled || !(target instanceof Element) ||
       target.closest('button, a, input, textarea, select, label, summary, [contenteditable], [role="separator"], [role="listbox"]') ||
       document.querySelector('dialog:modal') || window.getSelection()?.isCollapsed === false) return;
     const cell = workspacePane.current?.querySelector<HTMLElement>('#token-grid [data-token-row] [tabindex="0"]');
@@ -642,16 +807,19 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
   });
   useEffect(() => {
     const pane = workspacePane.current;
+    const footer = workspaceFooter.current;
     const onKeyDown = (event: KeyboardEvent) => handleGridShortcut(event);
     // Scope workspace shortcuts to the token pane alongside React Aria's grid shortcuts.
     const onPageKeyDown = (event: KeyboardEvent) => enterGridFromPage(event);
     const onPaneClick = (event: MouseEvent) => retainGridFocusOnBlankClick(event);
     pane?.addEventListener('keydown', onKeyDown);
     pane?.addEventListener('click', onPaneClick);
+    footer?.addEventListener('click', onPaneClick);
     window.addEventListener('keydown', onPageKeyDown);
     return () => {
       pane?.removeEventListener('keydown', onKeyDown);
       pane?.removeEventListener('click', onPaneClick);
+      footer?.removeEventListener('click', onPaneClick);
       window.removeEventListener('keydown', onPageKeyDown);
     };
   }, []);
@@ -692,6 +860,84 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
     setDraft({ path, name: leafName(path), column, mode, type: column === 'type' || mode === 'link' ? token.node.$type : token.type, original: token.value,
       value: displayInput(token.type, token.value), originalDescription: token.node.$description ?? '',
       description: token.node.$description ?? '', create: false });
+  }
+  async function resolveWorkspaceChoices(choices: RepositoryChoice[]) {
+    if (busy) return;
+    const operation = workspaceOpen.current;
+    setBusy(true);
+    try {
+      await shared.sync(choices);
+      if (workspaceOpen.current !== operation) return;
+      if (shared.current().phase === 'saved') { setSharedConflictOpen(false); setSharedChoices([]); }
+    } finally { if (workspaceOpen.current === operation) setBusy(false); }
+  }
+  function earlierWorkspaceInput(choice: RepositoryChoiceDraft): (() => void) | undefined {
+    const target = repositoryChoiceTarget(choice.id);
+    if (current || choice.keep !== 'custom' || target?.kind !== 'value' || target.parts.at(-1) !== '$value') return undefined;
+    const parent = target.parts.slice(0, -1).join('.');
+    const path = [parent || '$root', parent ? parent + '.$root' : '$root'].find(candidate => {
+      const token = graph.tokens.get(candidate); return token?.file === target.file && !token.inheritedFrom;
+    });
+    const token = path && graph.tokens.get(path); if (!path || !token) return undefined;
+    const value = (token.type === 'dimension' || token.type === 'duration') && isJsonObject(token.value) && typeof token.value['value'] === 'number' && typeof token.value['unit'] === 'string' &&
+      choice.text.trim() && Number.isFinite(Number(choice.text)) ? JSON.stringify({ ...token.value, value: Number(choice.text) }) : choice.text;
+    return () => {
+      setView('tokens'); setSharedConflictOpen(false);
+      setSharedChoices(savedChoices => savedChoices.filter(saved => repositoryChoiceKey(saved.id) !== repositoryChoiceKey(choice.id)));
+      jump(path); setFocusRequest(null); select(path, 'value');
+      setDraft({ path, name: leafName(path), column: 'value', mode: 'details', type: token.type, original: token.value, value,
+        originalDescription: token.node.$description ?? '', description: token.node.$description ?? '', create: false });
+    };
+  }
+
+  function rememberIncoming(entry: IncomingReviewRecovery) {
+    setIncomingDrafts(previous => [...previous.filter(saved => !sameIncomingReview(saved, entry)), ...(entry.drafts.length ? [entry] : [])]);
+  }
+  function forgetIncoming(entry: IncomingReviewRecovery) {
+    setIncomingDrafts(previous => previous.filter(saved => !sameIncomingReview(saved, entry)));
+  }
+  function prepareIncomingInput(entry: IncomingReviewRecovery, input: ConflictDraft): (() => Promise<PreparedIncomingInput>) | undefined {
+    const inputKind = conflictInputKind(input);
+    const token = graph.tokens.get(input.path);
+    if (current || !token || token.inheritedFrom || !inputKind) return undefined;
+    return async () => {
+      if (busy || draft || bulkEdit || variantDirty || sourceDirty || review || finalReview || repositoryReview || sharedConflictOpen) throw new Error('Finish the current edit before resuming this input.');
+      if (entry.workspace !== shared.view?.id) throw new Error('Open the matching workspace before resuming this input.');
+      const operation = workspaceOpen.current;
+      const generation = editingGeneration.current;
+      const source = await figmaBundle(data); const row = source.variables.find(item => item.path === input.path);
+      if (!row?.editable || row.file !== token.file) throw new Error('The current source mapping cannot resume this input. Your original input is retained.');
+      let value = input.text;
+      if (inputKind === 'alias') value = '{' + input.text.trim() + '}';
+      else if (input.review && input.review.beforeUnit !== row.unit) {
+        // Retain the entered quantity when the source mapping changes units.
+        // The ordinary editor validates it against the current definition.
+        value = input.text + (input.review.beforeUnit && input.text.trim() && Number.isFinite(Number(input.text)) ? ' ' + input.review.beforeUnit : '');
+      }
+      else {
+        try {
+          const values = new Map(source.variables.map(item => [item.path, importedValue(item)])); values.set(input.path, parseVariableValue(row, input.text));
+          const after = changedValues(source, values).changes.find(item => item.path === input.path)?.after ?? row.before;
+          value = row.type === 'COLOR' ? JSON.stringify(after) : displayInput(token.type, after);
+        } catch { /* Keep invalid text available in the ordinary source editor. */ }
+      }
+      const resumed: Draft = { path: input.path, name: leafName(input.path), column: 'value', mode: 'details', type: token.type, original: token.value,
+        value, originalDescription: token.node.$description ?? '', description: token.node.$description ?? '', create: false };
+      const release = () => setPreparedIncoming(previous => previous === resumed ? undefined : previous);
+      // The staged form belongs to the rendered recovery state, so a later
+      // autosave cannot replace the confirmed copy with an older work object.
+      flushSync(() => { rememberIncoming(entry); setPreparedIncoming(resumed); });
+      try {
+        if (!await recoveryHandle.current?.flush()) throw new Error('The recovery copy could not be saved. Your input is retained in Changes.');
+        if (workspaceOpen.current !== operation || editingGeneration.current !== generation) throw new Error('The editing context changed. Your input remains in its recovery copy.');
+      } catch (failure) { release(); throw failure; }
+      return { release, complete: () => {
+        if (workspaceOpen.current !== operation || editingGeneration.current !== generation) throw new Error('The editing context changed. Your input remains in its recovery copy.');
+        setIncomingDrafts(previous => previous.flatMap(saved => !sameIncomingReview(saved, entry) ? [saved] : saved.drafts.some(item => item.path !== input.path) ? [{ ...saved, drafts: saved.drafts.filter(item => item.path !== input.path) }] : []));
+        setIncomingReview(''); setView('tokens'); jump(input.path); setFocusRequest(null); select(input.path, 'value'); setDraft(resumed);
+        release();
+      } };
+    };
   }
 
   function create(groupOnly: boolean, name = '') {
@@ -1028,12 +1274,15 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
     catch (failure) { setError(errorMessage(failure)); }
   }
 
-  function canReplace() {
-    return !(dirty || draft || variantDirty) || window.confirm('Open different token files and discard your unsaved edits?');
+  function confirmReplace(proceed: () => void, onCancel?: () => void) {
+    if (!hasUnsavedWork) { proceed(); return; }
+    setReplacePrompt({ proceed, cancel: onCancel });
   }
 
   async function reviewForSave() {
     if (busy) return;
+    if (shared.phase === 'invalid') { setView('changes'); return; }
+    if (sharedConflictOpen || sharedChoices.length) { setView('changes'); setSharedConflictOpen(true); return; }
     setBusy(true);
     setError('');
     try {
@@ -1063,8 +1312,17 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
       } else {
         if (revisionReview === 'stale') {
           const connection = await saveTarget.connection.refresh();
-          const refreshed = reviewAgainstLatest(next, connection.workspace);
-          activate(refreshed?.next ?? connection.workspace, { kind: 'pull-request', connection });
+          let refreshed: Review | null;
+          try { refreshed = reviewAgainstLatest(next, connection.workspace); }
+          catch (failure) {
+            if (!(failure instanceof RepositoryConflicts)) throw failure;
+            setRepositoryReview({ draft: finalReview, connection, conflicts: failure.conflicts, choices: [] });
+            setFinalReview(null);
+            return;
+          }
+          const savedView = navigation.current.view;
+          activate(refreshed?.next ?? connection.workspace, { kind: 'pull-request', connection }, undefined, workspaceId,
+            { view: savedView, sharedId: shared.current().view?.id ?? sharedRecovery.value?.id ?? null, historyMode: 'replace' });
           if (refreshed) {
             setDirty(true);
             setFinalReview(refreshed);
@@ -1072,13 +1330,28 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
           } else setStatus('The latest revision already contains your changes.');
           return;
         }
-        const result = await saveTarget.connection.submit(workspaceChanges(next));
+        if (shared.hosted) {
+          await shared.sync();
+          if (shared.current().phase !== 'saved' && shared.current().phase !== 'updates') throw new Error('Save the shared draft before submitting the reviewed changes. Your review is retained.');
+        }
+        const result = await saveTarget.connection.submit(workspaceChanges(next), shared.current().view?.id);
         if (result.status === 'stale') {
           setRevisionReview('stale');
           return;
         }
         setSubmittedUrl(result.url);
-        setStatus('Pull request opened.');
+        if (result.shared) {
+          shared.adopt(result.shared);
+          setDirty(result.shared.draft.revision !== result.shared.baseline.revision);
+          setFinalReview(null); setRevisionReview('current');
+          setStatus('Reviewed changes saved to the merge request.');
+          return;
+        }
+        if (result.connection) {
+          setSaveTarget({ kind: 'pull-request', connection: result.connection });
+          setData({ ...next, baseline: next.files });
+        }
+        setStatus(saveTarget.connection.branch ? 'Changes saved to the open merge request.' : 'Merge request opened. The published version is unchanged.');
       }
       setFinalReview(null);
       setDirty(false);
@@ -1088,6 +1361,84 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
     } finally {
       setBusy(false);
     }
+  }
+
+  async function resumeRepositorySave() {
+    const remote = shared.current().view; const operation = remote?.repositorySave;
+    if (!remote || !operation || operation.result || !remote.repository || busy) return;
+    setBusy(true); setError('');
+    try {
+      const connection = snapshotConnection({ ...remote.repository, files: remote.baseline.files });
+      const result = await connection.submit(operation.request.changes, remote.id);
+      if (result.status === 'stale') throw new Error('The repository changed while this save was interrupted. Retain the reviewed save and review its repository checkpoint.');
+      if (!result.shared) throw new Error('The repository service did not return its shared checkpoint. Retry the reviewed save.');
+      shared.adopt(result.shared); setDirty(result.shared.draft.revision !== result.shared.baseline.revision); setSubmittedUrl(result.url);
+      setStatus('Reviewed changes saved to the merge request.');
+    } catch (failure) { setError(errorMessage(failure)); } finally { setBusy(false); }
+  }
+
+  function reconcileRepository(choices: RepositoryChoice[]) {
+    if (!repositoryReview) return;
+    try {
+      const { draft: pending, connection } = repositoryReview;
+      const refreshed = reviewAgainstLatest(pending.next, connection.workspace, choices);
+      const savedView = navigation.current.view;
+      activate(refreshed?.next ?? connection.workspace, Connector ? { kind: 'pull-request', connection } : null, undefined, workspaceId,
+        { view: savedView, sharedId: shared.current().view?.id ?? sharedRecovery.value?.id ?? null, historyMode: 'replace' });
+      if (!Connector) setOfflineGit(connection.snapshot);
+      if (refreshed) { setDirty(true); setFinalReview(refreshed); setRevisionReview('refreshed'); }
+      else setStatus('The repository already contains the chosen definitions.');
+    } catch (failure) { setError(errorMessage(failure)); }
+  }
+
+  function applySelectiveRevert(restored: Workspace, message: string, preserveSelection = false) {
+    setHistory({ past: [...history.past.slice(-49), snapshot(data)], future: [] });
+    setData(restored);
+    setDirty(workspaceChanges(restored).length > 0);
+    setReview(null);
+    setFinalReview(null);
+    setRepositoryReview(undefined);
+    setSharedChoices([]);
+    setSharedConflictOpen(false);
+    selectGroup(current ? group : nearestGroup(restored.graph, group));
+    if (!preserveSelection || selected && !restored.graph.tokens.has(selected)) clearSelection();
+    setError('');
+    setStatus(message);
+  }
+
+  function discardAllChanges() {
+    if (editingBlocked) return;
+    const baseline = data.baseline.map(({ path, text }) => ({ path, text }));
+    applySelectiveRevert({ ...openWorkspace(data.name, baseline), baseline }, 'Changes discarded.');
+  }
+
+  function discardFile(filePath: string) {
+    if (editingBlocked) return;
+    try { applySelectiveRevert(revertFileChange(data, filePath), 'File changes discarded.', true); }
+    catch (failure) { setError(errorMessage(failure)); }
+  }
+
+  function discardToken(filePath: string, tokenPath: string) {
+    if (editingBlocked) return;
+    try { applySelectiveRevert(revertTokenChange(data, filePath, tokenPath), 'Token change reverted.', true); }
+    catch (failure) { setError(errorMessage(failure)); }
+  }
+
+  async function deleteWorkspace(id: string) {
+    const activeSharedId = shared.current().view?.id ?? sharedRecovery.value?.id;
+    const activeLocalId = workspaceId;
+    await deleteSharedWorkspace(id);
+    if (id === activeSharedId) {
+      setSharedWanted(wanted => {
+        const next = new Set(wanted);
+        next.delete(activeLocalId);
+        return next;
+      });
+      activate(openExample(), null, undefined, undefined, { view: navigation.current.view, sharedId: null, historyMode: 'replace' });
+      await recoveryHandle.current?.remove(activeLocalId).catch(() => undefined);
+      setStatus('Workspace deleted.');
+    }
+    await recoveryHandle.current?.removeShared(id).catch(() => undefined);
   }
 
   const suggestedEdit: SelectionEdit = activeColumn === 'name' ? 'rename' : activeColumn === 'resolved' ? 'value' : activeColumn;
@@ -1102,7 +1453,7 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
     ['description', 'Description', FileText],
   ] as const).map(([action, caption, Icon]) => ({
     action, caption, icon: <Icon aria-hidden="true" />, label: selectionEditLabels[action],
-    run: () => setBulkEdit({ paths: [...checked], action }),
+    run: () => { setBulkDraft(newBulkDraft()); setBulkEdit({ paths: [...checked], action }); },
   }));
   const structureActions = [
     { caption: 'Move', label: 'Move selected tokens', icon: <ArrowRightLeft aria-hidden="true" />,
@@ -1113,10 +1464,41 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
       run: () => deletePaths([...checked]) },
   ];
   const editingBlocked = busy || !!draft || variantDirty;
-  const menuDisabled = editingBlocked || resolvingVariant;
+  const navigationDisabled = editingBlocked || resolvingVariant;
+  const menuDisabled = navigationDisabled || loadingLinked;
+  const changedTokens = useMemo(() => view === 'changes' ? workspaceTokenChanges(data) : [], [data, view]);
+  const saveMode = saveTarget?.kind === 'pull-request' ? (saveTarget.connection.branch ? 'pull-request-update' : 'pull-request')
+    : saveTarget?.kind === 'folder' ? 'folder' : 'patch';
+  useEffect(() => {
+    document.title = `${viewTitles[view]} · ${loadingLinked ? 'Opening workspace…' : data.name} · Token Foundry`;
+  }, [data.name, loadingLinked, view]);
+  const handlePopState = useEffectEvent(() => {
+    const currentSharedId = shared.current().view?.id ?? sharedRecovery.value?.id;
+    if (navigationDisabled) {
+      navigateLocation(view, currentSharedId ?? null, 'replace');
+      return;
+    }
+    const nextView = routeView(window.location);
+    const nextWorkspace = routeWorkspace(window.location);
+    setView(nextView, 'none');
+    if (nextView === 'variants') requestAnimationFrame(() => variantsHeading.current?.focus());
+    if (shared.hosted && nextWorkspace && nextWorkspace !== currentSharedId) {
+      void resumeShared(nextWorkspace, 'none').catch((cause: unknown) => {
+        setError(errorMessage(cause));
+        workspaceLocation(currentSharedId);
+      });
+    } else if (!nextWorkspace && currentSharedId) {
+      workspaceLocation(currentSharedId);
+    }
+  });
+  useEffect(() => {
+    const listener = () => handlePopState();
+    window.addEventListener('popstate', listener);
+    return () => window.removeEventListener('popstate', listener);
+  }, []);
   const treeVisible = desktop ? showTree : mobileTree;
   const treeLabel = treeVisible ? 'Hide groups sidebar' : 'Show groups sidebar';
-  const inspectorLabel = inspectorOpen ? 'Close token editor' : 'Edit token';
+  const inspectorLabel = inspectorOpen ? 'Hide token details' : 'Show token details';
   const treeIcon = treeVisible ? <PanelLeftClose aria-hidden="true" /> : <PanelLeftOpen aria-hidden="true" />;
   const themeLabel = dark ? 'Switch to light mode' : 'Switch to dark mode';
   function toggleTree() {
@@ -1127,14 +1509,14 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
     }
   }
   const reviewLabel = saveTarget?.kind === 'folder' ? 'Review and save' :
-    saveTarget?.kind === 'pull-request' ? 'Review pull request' : 'Review changes';
+    saveTarget?.kind === 'pull-request' ? 'Review merge request' : 'Review changes';
   const canCreate = !menuDisabled && (current ? sourceChoices.size > 0 : folder.files.size > 0);
-  const rovingButtons = useWorkspaceRovingButtons(view, menuDisabled, !!checked.size && bulkable, canCreate);
+  const rovingButtons = useWorkspaceRovingButtons(view, menuDisabled, !!checked.size && bulkable, canCreate, desktop);
   const canAddGroupValue = canCreate && !!displayedGroup && !graph.tokens.has(displayedGroup + '.$root');
+  const canCompare = !!model?.modifiers.size && !!resolution;
   function setUpVariants() {
     setNewResolver(true);
   }
-  const canCompare = !!model?.modifiers.size && !!resolution;
   function manageVariants() {
     setView('variants');
     requestAnimationFrame(() => variantsHeading.current?.focus());
@@ -1147,39 +1529,44 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
   const menus: Menu[] = [
     { label: 'File', sections: [
       [
-        { label: 'Open token files…', icon: <FileUp aria-hidden="true" />, run: () => fileInput.current?.click(), disabled: busy },
-        { label: 'Open token folder…', icon: <FolderOpen aria-hidden="true" />, run: () => { void loadFolder(); }, disabled: busy },
-        { label: 'Open built-in example', icon: <FolderOpen aria-hidden="true" />, run: () => { if (canReplace()) activate(openExample()); }, disabled: busy },
-        { label: 'Open Material 3 sample', icon: <FolderOpen aria-hidden="true" />, run: () => { void loadMd3(); }, disabled: busy },
-        ...(showMd3Benchmark ? [{ label: 'Open Material 3 benchmark', icon: <FolderOpen aria-hidden="true" />,
-          run: () => { void loadMd3(true); }, disabled: busy }] : []),
-        { label: 'Import proposal…', icon: <FileUp aria-hidden="true" />,
-          run: () => { setError(''); setImportChanges(true); }, disabled: !!activeResolver || menuDisabled },
-        { label: 'Import Penpot tokens…', icon: <FileUp aria-hidden="true" />,
-          run: () => { setError(''); setPenpotFile(null); setPenpotOpen(true); }, disabled: !!activeResolver || menuDisabled },
+        { label: 'Open files…', icon: <FileCode aria-hidden="true" />, run: () => fileInput.current?.click(), disabled: busy },
+        { label: 'Open folder…', icon: <FolderOpen aria-hidden="true" />, run: () => { loadFolder(); }, disabled: busy },
+        ...(shared.hosted ? [{ label: 'Switch workspace…', icon: <ArrowLeftRight aria-hidden="true" />,
+          run: () => setWorkspacePickerOpen(true), disabled: menuDisabled }] : []),
+        { label: 'Recover local work…', icon: <History aria-hidden="true" />, run: () => setRecoveryOpen(true), disabled: busy },
       ],
       [
-        { label: reviewLabel + '…', icon: <ArrowDownToLine aria-hidden="true" />,
+        { label: 'Open example', icon: <BookOpen aria-hidden="true" />, run: () => confirmReplace(() => activate(openExample())), disabled: busy },
+        { label: 'Open Material 3 sample', icon: <Palette aria-hidden="true" />, run: () => { loadMd3(); }, disabled: busy },
+        ...(showMd3Benchmark ? [{ label: 'Open Material 3 benchmark', icon: <Palette aria-hidden="true" />,
+          run: () => { loadMd3(true); }, disabled: busy }] : []),
+      ],
+      [
+        { label: 'Import token changes…', icon: <FileInput aria-hidden="true" />,
+          run: () => { setError(''); setImportChanges(true); }, disabled: !!activeResolver || menuDisabled },
+      ],
+      [
+        { label: reviewLabel + '…', icon: <GitCompareArrows aria-hidden="true" />,
           disabled: menuDisabled || !dirty || !hasChanges, run: () => { void reviewForSave(); } },
         {
-          label: 'Download token JSON', icon: <ArrowDownToLine aria-hidden="true" />, disabled: menuDisabled || data.files.length !== 1,
-          title: data.files.length === 1 ? undefined : 'Open a single token file to download it as JSON.',
+          label: 'Export patch (.patch)', icon: <FileDiff aria-hidden="true" />, disabled: menuDisabled || !hasChanges,
+          title: 'Apply the .patch file in your repository with git apply.',
+          run: () => { downloadPatch(data); },
+        },
+        {
+          label: 'Export token JSON', icon: <Download aria-hidden="true" />, disabled: menuDisabled || data.files.length !== 1,
+          title: data.files.length === 1 ? undefined : 'Open a single token file to export it as JSON.',
           run: () => {
             const file = requireValue(data.files[0], 'open file');
             download(file.path, file.text, 'application/json');
             if (!saveTarget) setDirty(false);
           },
         },
-        {
-          label: 'Download patch', icon: <ArrowDownToLine aria-hidden="true" />, disabled: menuDisabled || !hasChanges,
-          title: 'Apply the .patch file in your repository with git apply.',
-          run: () => { downloadPatch(data); },
-        },
       ],
       model ? [
-        { label: 'Download editable sources (.zip)', icon: <ArrowDownToLine aria-hidden="true" />, disabled: menuDisabled,
+        { label: 'Export sources (.zip)', icon: <Archive aria-hidden="true" />, disabled: menuDisabled,
           run: () => { void downloadEditableSources(data, model).catch((failure: unknown) => setError(errorMessage(failure))); } },
-        { label: resolution ? 'Download resolved tokens · ' + variantLabel(resolution) : 'Download resolved tokens', icon: <ArrowDownToLine aria-hidden="true" />,
+        { label: resolution ? 'Export resolved JSON · ' + variantLabel(resolution) : 'Export resolved JSON', icon: <Download aria-hidden="true" />,
           disabled: menuDisabled || !resolution || !!resolution.errors.length || model.issues.some(issue => issue.severity === 'error'),
           run: () => { if (resolution) try { downloadVariant(resolution); } catch (failure) { setError(errorMessage(failure)); } } },
       ] : [],
@@ -1191,39 +1578,46 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
         { label: 'Redo', icon: <Redo2 aria-hidden="true" />, disabled: menuDisabled || !history.future.length,
           run: () => stepHistory('redo') },
       ],
-      [{ label: 'New token', icon: <Plus aria-hidden="true" />, disabled: !canCreate || view !== 'tokens', run: () => create(false) },
-        { label: 'New group', icon: <Plus aria-hidden="true" />, disabled: !canCreate || view !== 'tokens', run: () => create(true) },
-        { label: 'Add group value', icon: <Plus aria-hidden="true" />, disabled: !canAddGroupValue || view !== 'tokens', run: () => create(false, '$root') },
+      [
+        { label: 'New token', icon: <Plus aria-hidden="true" />, disabled: !canCreate || view !== 'tokens', run: () => create(false) },
+        { label: 'New group', icon: <FolderPlus aria-hidden="true" />, disabled: !canCreate || view !== 'tokens', run: () => create(true) },
+        { label: 'Add group value', icon: <CirclePlus aria-hidden="true" />, disabled: !canAddGroupValue || view !== 'tokens', run: () => create(false, '$root') },
+      ],
+      [
         { label: 'Edit token', icon: <Pencil aria-hidden="true" />, disabled: !inspected || menuDisabled || view !== 'tokens', run: showInspector },
-        ...[...editActions, ...structureActions].map(command => ({
+        ...structureActions.map(command => ({
           label: command.label + '…', icon: command.icon, run: command.run,
           disabled: !bulkable || !checked.size || menuDisabled || view !== 'tokens',
           destructive: 'destructive' in command && command.destructive,
-        }))],
+        })),
+      ],
       [
-      { label: 'Copy selected tokens', icon: <Copy aria-hidden="true" />,
-        disabled: !!activeResolver || view !== 'tokens' || menuDisabled || !checked.size && !selected,
-        run: () => copyPaths(checked.size ? [...checked] : [selected]) },
-      { label: 'Paste into group…', icon: <ClipboardPaste aria-hidden="true" />,
-        disabled: !!activeResolver || view !== 'tokens' || menuDisabled || !folder.files.size,
-        run: () => { void pasteIntoGroup(group); } },
-    ]] },
-    { label: 'View', sections: [[
-      { label: 'Workspace issues', icon: <AlertCircle aria-hidden="true" />,
-        disabled: menuDisabled || diagnosticsCount === 0, run: () => setDiagnosticsOpen(true) },
-      { label: treeLabel, icon: treeIcon, disabled: view !== 'tokens' || menuDisabled, run: toggleTree },
-      { label: inspectorLabel, icon: inspectorOpen ? <X aria-hidden="true" /> : <Pencil aria-hidden="true" />, disabled: view !== 'tokens' || menuDisabled, run: toggleInspector },
-      { label: 'Source files', icon: <FolderOpen aria-hidden="true" />, disabled: menuDisabled, run: () => setView('workspace') },
-    ]] },
-    { label: 'Variants', sections: [[
-      activeResolver ? { label: 'Manage variants', icon: <Settings2 aria-hidden="true" />, disabled: menuDisabled, run: manageVariants } :
-        { label: 'Set up variants…', icon: <Settings2 aria-hidden="true" />, disabled: menuDisabled, run: setUpVariants },
-      { label: 'Compare variants', icon: <ArrowRightLeft aria-hidden="true" />,
-        disabled: !canCompare || menuDisabled, run: toggleComparison },
-    ]] },
+        { label: 'Copy tokens', icon: <Copy aria-hidden="true" />,
+          disabled: !!activeResolver || view !== 'tokens' || menuDisabled || !checked.size && !selected,
+          run: () => copyPaths(checked.size ? [...checked] : [selected]) },
+        { label: 'Paste into group…', icon: <ClipboardPaste aria-hidden="true" />,
+          disabled: !!activeResolver || view !== 'tokens' || menuDisabled || !folder.files.size,
+          run: () => { void pasteIntoGroup(group); } },
+      ],
+    ] },
+    { label: 'View', sections: [
+      [
+        { label: treeLabel, icon: treeIcon, disabled: view !== 'tokens' || menuDisabled, run: toggleTree },
+        { label: inspectorLabel, icon: inspectorOpen ? <PanelRightClose aria-hidden="true" /> : <PanelRight aria-hidden="true" />, disabled: view !== 'tokens' || menuDisabled, run: toggleInspector },
+      ],
+      [
+        { label: 'Compare variants', icon: <GitCompareArrows aria-hidden="true" />,
+          disabled: !canCompare || menuDisabled, run: toggleComparison },
+        { label: 'Workspace issues', icon: <AlertCircle aria-hidden="true" />,
+          disabled: menuDisabled || diagnosticsCount === 0, run: () => setDiagnosticsOpen(true) },
+      ],
+      [
+        { label: themeLabel, icon: dark ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />, run: toggleTheme },
+      ],
+    ] },
     { label: 'Help', sections: [[
       { label: 'Keyboard shortcuts', icon: <Keyboard aria-hidden="true" />, run: () => setShortcutsOpen(true) },
-      { label: 'Show key tips', icon: <Keyboard aria-hidden="true" />, disabled: menuDisabled, run: () => keyTips.current?.show() },
+      { label: 'Show key tips', icon: <Command aria-hidden="true" />, disabled: menuDisabled, run: () => keyTips.current?.show() },
     ]] },
   ];
 
@@ -1308,7 +1702,40 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
     return true;
   }
 
-  return <div data-component-assets className="workspace" {...rovingButtons}>
+  const changeAlert = shared.phase === 'conflict' || shared.phase === 'invalid' || !!sharedChoices.length || !!(shared.view?.incoming.length);
+  const pendingChangesCount = shared.view?.incoming.length ? shared.view.incoming.length : workspaceChanges(data).length;
+  const navigationItems = <>
+      <NavigationItem data-key-tip="T" label="Tokens" icon={<Layers />} aria-current={view === 'tokens' ? 'page' : undefined}
+        disabled={navigationDisabled} onClick={() => focusTokenArea('token-grid')} />
+      <NavigationItem data-key-tip="V" label="Variants" icon={<SlidersHorizontal />} aria-current={view === 'variants' ? 'page' : undefined}
+        disabled={navigationDisabled} onClick={manageVariants} />
+      <NavigationItem data-key-tip="W" label="Workspace" icon={<Settings2 />} aria-current={view === 'workspace' ? 'page' : undefined}
+        disabled={navigationDisabled} onClick={() => {
+          setView('workspace');
+          requestAnimationFrame(() => document.getElementById('workspace-management')?.focus());
+        }} />
+      <NavigationItem data-key-tip="4" label="Changes" icon={<FileText />} aria-current={view === 'changes' ? 'page' : undefined}
+        {...(changeAlert ? { badge: 'small' as const } : pendingChangesCount > 0 ? { badge: 'labeled' as const, badgeText: pendingChangesCount } : {})}
+        disabled={navigationDisabled} onClick={() => {
+          setView('changes');
+          requestAnimationFrame(() => document.getElementById('workspace-changes')?.focus());
+        }} />
+      <NavigationItem data-key-tip="5" label="Figma" icon={<Shapes />} aria-current={view === 'figma' ? 'page' : undefined}
+        disabled={navigationDisabled} onClick={() => {
+          setView('figma');
+          requestAnimationFrame(() => document.getElementById('workspace-figma')?.focus());
+        }} />
+  </>;
+
+  const managementSkip = view === 'variants'
+    ? { href: '#workspace-variants', label: 'Skip to variants' }
+    : view === 'changes'
+      ? { href: '#workspace-changes', label: 'Skip to changes' }
+      : view === 'figma'
+        ? { href: '#workspace-figma', label: 'Skip to Figma' }
+        : { href: '#workspace-management', label: 'Skip to workspace' };
+
+  return <ReloadEditor value={reloadEditor}><div data-component-assets className="workspace" {...rovingButtons}>
     <KeyTips ref={keyTips} blocked={menuDisabled} jump={jumpByKeyTip} />
     <div className="workspace-top">
       <nav aria-label="Skip links" className="workspace-skip-links sr-only focus-within:not-sr-only">
@@ -1319,19 +1746,18 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
         {view === 'tokens' ? <>
           {treeVisible && <ButtonLink size="small" href="#groups">Skip to groups</ButtonLink>}
           {inspectorOpen && <ButtonLink size="small" href="#token-inspector">Skip to token details</ButtonLink>}
-        </> : <ButtonLink size="small" href={view === 'variants' ? '#workspace-variants' : '#workspace-management'}>
-          Skip to {view === 'variants' ? 'variants' : 'workspace'}
+        </> : <ButtonLink size="small" href={managementSkip.href}>
+          {managementSkip.label}
         </ButtonLink>}
       </nav>
       <header className="workspace-header">
         <CommandBar menus={menus} />
-        <span className="workspace-document" data-workspace-name title={data.name}>{data.name}</span>
         <input ref={fileInput} type="file" accept=".json,.tokens,application/json" hidden multiple onChange={(event) => {
-          void load(Array.from(event.target.files ?? []), false);
+          load(Array.from(event.target.files ?? []), false);
           event.target.value = '';
         }} />
         <input ref={folderInput} type="file" hidden onChange={(event) => {
-          void load(Array.from(event.target.files ?? []), true);
+          load(Array.from(event.target.files ?? []), true);
           event.target.value = '';
         }} />
         <input ref={proposalInput} type="file" accept=".json,application/json" hidden onChange={(event) => {
@@ -1339,113 +1765,133 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
           if (file) void loadProposal(file);
           event.target.value = '';
         }} />
-        <input ref={penpotInput} type="file" accept=".json,application/json" hidden onChange={(event) => {
-          const file = event.target.files?.[0];
-          if (file) void loadPenpot(file);
-          event.target.value = '';
-        }} />
         <div className="workspace-review">
           {submittedUrl && !dirty ? <ButtonLink href={submittedUrl} target="_blank" rel="noreferrer"
-            aria-label="View pull request">View PR</ButtonLink> :
+            aria-label="View merge request">View merge request</ButtonLink> :
             <Button size="small" disabled={menuDisabled || !dirty || !hasChanges} onClick={() => { void reviewForSave(); }}
               data-key-tip="R" aria-label={reviewLabel}>Review changes</Button>}
         </div>
       </header>
+      <WorkspaceRecovery ref={recoveryHandle} id={workspaceId} startup={startup} showOnStart={showRecoveryAtStartup} work={recoveryWork} enabled={dirty || saveTarget !== null || !!recoveryEditor || !!sharedRecovery.value} open={recoveryOpen} setOpen={setRecoveryOpen} reportStatus={setLocalSave} statusNotice={status} clearStatusNotice={() => setStatus('')}
+        canReplace={confirmReplace} resume={record => {
+          const restored = { ...openWorkspace(record.name, record.files), baseline: record.baseline };
+          const connection = record.github && Connector ? snapshotConnection(record.github) : undefined;
+          if (record.editor?.source && !restored.files.some(file => file.path === record.editor?.source?.location.file)) throw new Error('The recovered source form has no matching file. Download this copy before repairing it.');
+          if (record.editor?.bulk && !restored.files.some(isResolverFile) && record.editor.bulk.paths.some(path => !restored.graph.tokens.has(path))) throw new Error('The recovered selection contains tokens absent from its source. Download this copy before repairing it.');
+          let pendingRepository: typeof repositoryReview;
+          if (record.repositoryReview) {
+            const latestConnection = snapshotConnection(record.repositoryReview.snapshot);
+            try { reviewAgainstLatest(restored, latestConnection.workspace); }
+            catch (failure) {
+              if (!(failure instanceof RepositoryConflicts)) throw failure;
+              pendingRepository = { draft: reviewWorkspace(restored), connection: latestConnection, conflicts: failure.conflicts, choices: record.repositoryReview.choices };
+            }
+          }
+          const resumeView: WorkspaceDestination = record.editor?.workspaceReview || record.editor?.figmaReviews && !record.editor.draft ? 'changes' : record.editor?.draft ? 'tokens' : navigation.current.view;
+          activate(restored, connection ? { kind: 'pull-request', connection } : null, undefined, record.id,
+            { view: resumeView, sharedId: record.shared?.id ?? null, historyMode: 'replace' });
+          setSharedRecovery({ client: record.id, ...(record.shared ? { value: record.shared } : {}) });
+          setRecoveredFolder(record.folder);
+          setOfflineGit(Connector ? undefined : record.github);
+          if (record.editor) {
+            const saved = record.editor;
+            setGroup(saved.group); setSelected(saved.selected); setActiveColumn(saved.column); setInspectorOpen(saved.inspector);
+            setResolverFile(saved.resolverFile); setPrimary(saved.primary); setSecondary(saved.secondary); setComparing(saved.comparing); setEditingSet(saved.editingSet);
+            setDraft(saved.draft ?? null); setVariantDraft(saved.variant?.draft); setVariantEdit(saved.variant?.target); setVariantDirty(!!saved.variant);
+            setSourceLocation(saved.source?.location ?? null); setSourceDraft(saved.source ? { file: saved.source.location.file, text: saved.source.text } : undefined);
+            setBulkEdit(saved.bulk ? { paths: saved.bulk.paths, action: saved.bulk.action } : null); setBulkDraft(saved.bulk?.form ?? newBulkDraft());
+            setSharedChoices(saved.workspaceReview?.choices ?? []); setSharedConflictOpen(saved.workspaceReview?.open === true); if (saved.workspaceReview) setView('changes');
+            setIncomingDrafts(saved.figmaReviews?.entries ?? []); setIncomingReview(saved.figmaReviews?.open ?? ''); if (saved.figmaReviews && !saved.draft) setView('changes');
+          }
+          setDirty(workspaceChanges(restored).length > 0);
+          if (pendingRepository) { setRepositoryReview(pendingRepository); setRevisionReview('stale'); }
+          setStatus(record.folder ? 'Sources recovered. Reopen the original folder before saving to disk.' : connection ? 'Local work recovered. GitHub checks the saved revision when you submit.' : record.github ? 'Sources recovered. GitHub is unavailable here; its pinned revision remains in your recovery copy.' : 'Source edits recovered from this browser.');
+        }} />
       {linkedProposal && <div className="workspace-proposal">
         <p className="me-auto">Linked changes apply to matching tokens in this workspace.</p>
         <Button variant="text" disabled={busy} onClick={() => setLinkedProposal('')}>Dismiss</Button>
         <Button size="small" disabled={busy || !!draft} onClick={() => { void reviewLinkedProposal(); }}>Review linked changes</Button>
       </div>}
       {error && !draft && !review && !finalReview && !importChanges && <Alert variant="destructive" className="shrink-0 rounded-none border-x-0">
-        <AlertDescription className="max-h-32 overflow-auto whitespace-pre-wrap">{error}</AlertDescription>
+        <AlertDescription className="scroll-list-sm overflow-auto whitespace-pre-wrap">{error}</AlertDescription>
       </Alert>}
     </div>
-    <NavigationRail label="Foundry" className="workspace-rail" width="default"
+    {desktop ? <NavigationRail label="Foundry" className="workspace-rail" width="default"
       footer={<IconButton label={themeLabel} title={themeLabel} onClick={toggleTheme}>
         {dark ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
-      </IconButton>}>
-      <NavigationRailItem data-key-tip="T" label="Tokens" icon={<Layers />} aria-current={view === 'tokens' ? 'page' : undefined}
-        disabled={menuDisabled} onClick={() => focusTokenArea('token-grid')} />
-      <NavigationRailItem data-key-tip="V" label="Variants" icon={<SlidersHorizontal />} aria-current={view === 'variants' ? 'page' : undefined}
-        disabled={menuDisabled} onClick={manageVariants} />
-      <NavigationRailItem data-key-tip="W" label="Workspace" icon={<Settings2 />} aria-current={view === 'workspace' ? 'page' : undefined}
-        disabled={menuDisabled} onClick={() => {
-          setView('workspace');
-          requestAnimationFrame(() => document.getElementById('workspace-management')?.focus());
-        }} />
-    </NavigationRail>
+      </IconButton>}>{navigationItems}</NavigationRail> :
+      <NavigationBar label="Foundry" className="workspace-rail">{navigationItems}</NavigationBar>}
+    {loadingLinked && view !== 'workspace' && <main aria-label="Opening workspace" aria-busy="true" className="workspace-management"><div className="workspace-management-content"><Progress label="Opening workspace" /></div></main>}
     {view === 'workspace' && <main id="workspace-management" tabIndex={-1} className="workspace-management" aria-label="Workspace management">
-      <h2>Workspace</h2>
-      <section aria-label="Changes">
-        <div className="flex flex-wrap items-start justify-between gap-2">
-          <div><h3>Changes</h3><p>{dirty && hasChanges ? 'Unsaved changes' : 'No pending changes'}</p></div>
-          <Button size="small" variant="tonal" disabled={menuDisabled || !dirty || !hasChanges}
-            onClick={() => { void reviewForSave(); }}>Review pending changes</Button>
-        </div>
-      </section>
-      <section aria-label="Integrations">
-        <h3>Integrations</h3>
-        {Connector ? <Connector disabled={menuDisabled} canReplace={canReplace} connect={(connection) =>
-          activate(connection.workspace, { kind: 'pull-request', connection })} /> :
-          <CommandMenu label="Manage integrations" sections={[[{
-            label: 'Open GitHub repository…', icon: <GitPullRequest aria-hidden="true" />, disabled: true,
-            title: 'GitHub integration is available in the hosted editor.', run: () => undefined,
-          }]]} />}
-      </section>
-      <section aria-label="Source" ref={sourceManagement}>
-        <div className="flex flex-wrap items-start justify-between gap-2">
+      <div className="workspace-management-content">
+        <header className="workspace-management-header">
           <div>
-            <h3>Source files</h3>
-            <p>{data.name} · {saveTarget?.kind === 'pull-request' ? 'GitHub repository' :
-              saveTarget?.kind === 'folder' ? 'Local folder' : 'Local workspace'}</p>
+            <h2>Workspace</h2>
+            <div className="flex items-center gap-space50">
+              <p className="copy-body tone-supporting">{loadingLinked ? 'Opening workspace…' : data.name}</p>
+              {shared.view && <WorkspaceName shared={shared} disabled={menuDisabled} />}
+            </div>
           </div>
-          <Button size="small" variant="tonal" data-new-source data-key-tip="N" disabled={menuDisabled} onClick={() => setSourceFileAction({ kind: 'create' })}>
-            <Plus aria-hidden="true" /> New source file
-          </Button>
+          {shared.hosted && <Button variant="outlined" size="small" onClick={() => setWorkspacePickerOpen(true)}>Switch workspace</Button>}
+        </header>
+        <div className="card-group">
+          {loadingLinked ? <Progress label="Opening workspace" /> : <WorkspaceStatus shared={shared} saveMode={saveMode} repository={sharedInput.repository} disabled={menuDisabled} start={() => setSharedWanted(wanted => new Set(wanted).add(workspaceId))} remove={shared.view ? () => deleteWorkspace(shared.view?.id ?? '') : undefined} />}
+          {sharedInput.repository && (
+            <Card variant="outlined" as="section" aria-label="Repository" headline="Repository" headlineAs="h3"
+              supporting={`${sharedInput.repository.repository} · ${sharedInput.repository.branch ?? 'Default branch'} · ${sharedInput.repository.revision.slice(0, 8)}`}
+              actions={sharedInput.repository.pullRequest ? (
+                <ButtonLink size="small" variant="text" href={sharedInput.repository.pullRequest} target="_blank" rel="noreferrer">Open merge request in GitHub</ButtonLink>
+              ) : undefined}
+            />
+          )}
+          {Connector
+            ? <Connector presentation="workspace" disabled={menuDisabled} canReplace={confirmReplace} connect={connection => activate(connection.workspace, { kind: 'pull-request', connection })} />
+            : <Card variant="outlined" as="section" headline="GitHub" headlineAs="h3" supporting="GitHub accounts are available in the hosted editor." />}
+          {!loadingLinked && <section ref={sourceManagement}><SourceBrowser data={data} disabled={menuDisabled} open={file => setSourceLocation({ file, path: [] })} action={setSourceFileAction} /></section>}
         </div>
-        <ul className="mt-2 grid max-w-2xl gap-0.5">{data.files.map(file => <li key={file.path} className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-1">
-          <Button variant="text" size="xsmall" className="min-w-0 justify-self-start" data-source-file={file.path} disabled={menuDisabled}
-            onClick={() => setSourceLocation({ file: file.path, path: [] })}><code className="truncate" title={file.path}>{file.path}</code></Button>
-          <CommandMenu label={'Actions for ' + file.path} icon={<MoreHorizontal aria-hidden="true" />} disabled={menuDisabled}
-            sections={[[{
-              label: 'Rename or move…', icon: <Pencil aria-hidden="true" />, run: () => setSourceFileAction({ kind: 'relocate', file: file.path }),
-            }], [{
-              label: 'Remove file…', icon: <Trash2 aria-hidden="true" />, destructive: true, disabled: data.files.length < 2,
-              run: () => setSourceFileAction({ kind: 'remove', file: file.path }),
-            }]]} />
-        </li>)}</ul>
-      </section>
-
+      </div>
     </main>}
-    {view === 'variants' && <main id="workspace-variants" tabIndex={-1} className="workspace-management" aria-labelledby="workspace-variants-title">
+    <ActionDialog title="Open workspace" open={workspacePickerOpen} onOpenChange={setWorkspacePickerOpen} style={{ inlineSize: '36rem' }}>
+      {workspacePickerOpen && <WorkspaceList current={shared.view?.id} repository={shared.view?.repository?.repository} open={resumeShared} onDelete={deleteWorkspace} />}
+    </ActionDialog>
+    {view === 'figma' && !loadingLinked && <FigmaWorkspace key={'figma:' + workspaceId} shared={shared} resume={resumeShared} onDelete={deleteWorkspace} disabled={menuDisabled} ensureShared={ensureShared} changes={() => setView('changes')} downloadSnapshot={async () => {
+      const bundle = await figmaBundle(data);
+      download('foundry-figma.json', JSON.stringify(bundle, null, 2), 'application/json');
+      setStatus('Open foundry-figma.json in the Figma plugin.');
+    }} />}
+    {view === 'changes' && !loadingLinked && <WorkspaceChanges key={'changes:' + workspaceId} shared={shared} saveMode={saveMode} repositoryName={sharedInput.repository?.repository} hasReview={!!sharedChoices.length} files={workspaceChanges(data)} tokens={changedTokens} totalFiles={data.files.length} disabled={menuDisabled} review={() => { void reviewForSave(); }} discard={discardAllChanges} discardFile={discardFile} discardToken={discardToken} reconcile={() => setSharedConflictOpen(true)} resumeSave={() => { void resumeRepositorySave(); }}
+      incoming={incomingReview} setIncoming={setIncomingReview} retained={incomingDrafts} remember={rememberIncoming} forget={forgetIncoming} prepareInput={prepareIncomingInput} />}
+    {sharedConflictOpen && shared.view && <RepositoryConflictReview busy={busy || shared.phase === 'saving'} conflicts={shared.conflicts ?? []} drafts={sharedChoices}
+      saveDraft={choice => setSharedChoices(savedChoices => [...savedChoices.filter(item => repositoryChoiceKey(item.id) !== repositoryChoiceKey(choice.id)), choice])}
+      discardDraft={choice => setSharedChoices(savedChoices => savedChoices.filter(item => repositoryChoiceKey(item.id) !== repositoryChoiceKey(choice.id)))}
+      resumeInput={earlierWorkspaceInput} error={shared.problem ?? ''} close={() => setSharedConflictOpen(false)} apply={choices => { void resolveWorkspaceChoices(choices); }} title="Resolve workspace changes" remoteLabel="Workspace" />}
+    {view === 'variants' && !loadingLinked && <main id="workspace-variants" tabIndex={-1} className="workspace-management" aria-labelledby="workspace-variants-title">
       <div className="workspace-variant-management">
-        <header className="flex flex-wrap items-center justify-between gap-2">
+        <header className="flex flex-wrap items-center justify-between gap-space100">
           <h2 id="workspace-variants-title" tabIndex={-1} ref={variantsHeading}>Variants</h2>
           <Button size="xsmall" variant="text" disabled={menuDisabled} onClick={() => {
             setView('tokens');
             requestAnimationFrame(() => workspacePane.current?.querySelector<HTMLElement>('[data-workspace-group-title]')?.focus());
           }}>Back to tokens</Button>
         </header>
-        {!activeResolver && <section className="grid justify-items-start gap-2">
+        {!activeResolver && <section className="grid justify-items-start gap-space100">
           <p className="copy-body tone-supporting">Set up variants to resolve different values for the same tokens, such as light and dark.</p>
           <Button size="small" data-key-tip="C" disabled={menuDisabled} onClick={setUpVariants}>Set up variants</Button>
         </section>}
-        {activeResolver && resolvers.length > 1 && <label className="variant-field">Variant configuration
-          <Select aria-label="Variant configuration" disabled={editingBlocked} value={activeResolver.path} onChange={event => { setResolverFile(event.target.value); setPrimary({}); setSecondary({}); setEditingSet(undefined); setComparing(false); setVariantEdit(undefined); clearSelection(); }}>
-            {resolvers.map(resolver => <SelectOption key={resolver.path} value={resolver.path}>{resolver.path}</SelectOption>)}
-          </Select>
-        </label>}
-        {!resolution && activeVariant.pending && <output className="copy-body tone-supporting">Loading variant configuration…</output>}
+        {activeResolver && resolvers.length > 1 && <Select label="Variant configuration" disabled={editingBlocked} value={activeResolver.path} onChange={event => { setResolverFile(event.target.value); setPrimary({}); setSecondary({}); setEditingSet(undefined); setComparing(false); setVariantEdit(undefined); clearSelection(); }}>
+          {resolvers.map(resolver => <SelectOption key={resolver.path} value={resolver.path}>{resolver.path}</SelectOption>)}
+        </Select>}
+        {!resolution && activeVariant.pending && <Progress label="Loading variant configuration" />}
         {!resolution && activeVariant.error && <Alert variant="destructive"><AlertDescription>{activeVariant.error}</AlertDescription></Alert>}
         {model && resolution && resolutionData && !!model.modifiers.size && <section aria-label="Compare variants" className="resolver-section">
-          <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-space100">
             <h3>Variant comparison</h3>
             <Button size="xsmall" variant="text" data-key-tip="C" disabled={menuDisabled} onClick={() => setComparing(!comparing)}>
               {comparing ? 'Close comparison' : 'Compare variants'}
             </Button>
           </div>
           {comparing && <>
-            <div className="flex flex-wrap gap-4">
+            <div className="flex flex-wrap gap-space200">
               <ContextInputs model={model} disabled={editingBlocked} label="Preview" inputs={primary} update={setPrimary} />
               <ContextInputs model={model} disabled={editingBlocked} label="Compare with" inputs={secondary} update={setSecondary} />
             </div>
@@ -1459,7 +1905,7 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
               resetScroll();
               setView('tokens');
               openInspector(path);
-            }} /> : <output>Preparing comparison…</output>}
+            }} /> : <Progress label="Preparing comparison" />}
           </>}
         </section>}
         {activeResolver && modelData && resolutionData && variantScope && <ResolverPane key={activeResolver.path} workspace={workspaceData} file={activeResolver.path} disabled={menuDisabled} current={resolutionData} model={modelData} alternative={alternativeData}
@@ -1481,7 +1927,7 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
           }} />}
       </div>
     </main>}
-    <WorkspacePanes hidden={view !== 'tokens'} groupsOpen={treeVisible} inspectorOpen={inspectorOpen} grid={grid} groups={
+    <WorkspacePanes hidden={view !== 'tokens' || loadingLinked} groupsOpen={treeVisible} inspectorOpen={inspectorOpen} grid={grid} groups={
       <aside id="groups" tabIndex={-1} aria-label="Groups" hidden={!treeVisible} className="workspace-sidebar" onCopy={event => copySelection(event, true)} onPaste={pasteSelection}>
         <div className="workspace-sidebar-heading">
           <h2 className="me-auto min-w-0 truncate copy-body copy-emphasis" title="Token groups"><span data-key-tip="G">Groups</span></h2>
@@ -1503,12 +1949,12 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
         title="Token details" onKeyDown={event => { if (event.key === 'Escape' && !event.defaultPrevented) closeInspector(); }}
         footer={inspectorOpen && inspectorInitial && <div ref={setInspectorFooter} />}
         headerAction={<IconButton ref={inspectorCloseButton} size="xsmall" label="Close inspector" disabled={busy} onClick={closeInspector}><X aria-hidden="true" /></IconButton>}>
-        {inspectorOpen && resolution && alternative && selected && <section aria-label="Compared values" className="mb-4 grid min-w-0 gap-2">
+        {inspectorOpen && resolution && alternative && selected && <section aria-label="Compared values" className="margin-bottom-space200 grid min-w-0 gap-space100">
           <h3 className="copy-body copy-emphasis">Compared values</h3>
           {[{ label: variantLabel(resolution), result: resolution, side: 'Active' },
             { label: variantLabel(alternative), result: alternative, side: 'Compared' }].map(({ label, result, side }) => {
             const origin = winningOrigins(result, selected).at(-1);
-            return <div key={side} className="grid min-w-0 gap-1 rounded-md border p-2 copy-body">
+            return <div key={side} className="grid min-w-0 gap-space50 rounded-md border pad-space100 copy-body">
               <span>{side} · {label}</span>
               {result.graph.tokens.has(selected) ? <TokenValue value={result.graph.resolved.get(selected)} swatch wrap /> : <span>Token absent</span>}
               {origin && <span className="wrap-anywhere copy-small tone-supporting">{labelOrigin(origin)}</span>}
@@ -1518,15 +1964,15 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
             setPrimary(secondary); setSecondary(primary); setVariantEdit(undefined);
           }}>{editModel ? 'Make compared variant active' : 'Edit compared variant'}</Button>}
         </section>}
-        {inspectorOpen && (inspectorInitial ? <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4" key={selected}>
-          <div className="flex min-w-0 items-center justify-between gap-2">
+        {inspectorOpen && (inspectorInitial ? <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-space200" key={selected}>
+          <div className="flex min-w-0 items-center justify-between gap-space100">
             <code title={selected} className="wrap-anywhere">{tokenDisplayName(selected)}</code>
             <IconButton size="xsmall" label="Copy token path" title="Copy token path" onClick={() => copyTokenPath(selected)}><Copy aria-hidden="true" /></IconButton>
           </div>
           {current && (definitionEdit?.origin ?? winner) && <p className="copy-body copy-emphasis">
             {definitionEdit?.insert ? 'Adding override for ' : 'Editing '}{variantEdit ? originName(variantEdit.origin) : editingLabel ?? originName(requireValue(winner, 'token definition'))}
           </p>}
-          {inspected?.inheritedFrom && <div className="grid gap-1 copy-small tone-supporting">
+          {inspected?.inheritedFrom && <div className="grid gap-space50 copy-small tone-supporting">
             <p className="wrap-anywhere">Inherited from {inspected.inheritedFrom.path} · {inspected.inheritedFrom.file}</p>
             <Button variant="text" size="xsmall" className="justify-self-start" disabled={menuDisabled}
               onClick={() => { if (inspected.inheritedFrom) jump(inspected.inheritedFrom.path); }}>Go to source token</Button>
@@ -1536,7 +1982,7 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
           </p>}
           {inspected?.deprecated && <p className="wrap-anywhere copy-small">Deprecated{typeof inspected.deprecated === 'string' ? ' · ' + inspected.deprecated : ''}</p>}
           {current ? <>
-            <div className="grid gap-1 copy-body">
+            <div className="grid gap-space50 copy-body">
               {!editModel && <>
                 <p className="copy-emphasis">{winner?.modifier ? winner.context + ' override' : 'Shared value'}</p>
                 <TokenValue value={graph.resolved.get(selected)} swatch={inspected?.type === 'color'} wrap />
@@ -1547,7 +1993,7 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
               </div>}
             </div>
             {editModel && winner && !definitionEdit && <p className="wrap-anywhere copy-small tone-supporting">Defined in {originName(winner)}</p>}
-            <div className="flex flex-wrap gap-1">
+            <div className="flex flex-wrap gap-space50">
               {sharedOrigin && (!editModel || !!inspected?.inheritedFrom) && <Button size="xsmall" variant="tonal" disabled={menuDisabled}
                 onClick={() => { setError(''); setVariantEdit({ path: selected, origin: sharedOrigin }); }}>{editModel ? 'Edit definition' : 'Edit shared value'}</Button>}
               {!editModel && winner?.modifier && <Button size="xsmall" variant="tonal" disabled={menuDisabled}
@@ -1561,15 +2007,15 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
                 <code className="wrap-anywhere">{serializeTokenPointer(definitionEdit.origin.file, definitionEdit.origin.file, definitionEdit.origin.parts)}</code>
               </Disclosure>
               <TokenEditForm footer={inspectorFooter} key={JSON.stringify(definitionEdit)} valueOnly={!editModel} definition={!!editModel}
-                initialDraft={{ ...inspectorInitial, type: editModel ? declaredType : variantType,
+                initialDraft={variantDirty && variantDraft ? variantDraft : { ...inspectorInitial, type: editModel ? declaredType : variantType,
                   original: variantValue, value: displayInput(variantType, variantValue),
                   originalDescription: definitionDescription, description: definitionDescription }}
-              graph={referenceGraph ?? graph} inspectorActive={variantDirty} busy={busy || resolvingVariant || definitionResolution.pending} onEdit={() => setVariantDirty(true)}
+              graph={referenceGraph ?? graph} inspectorActive={variantDirty} busy={busy || resolvingVariant || definitionResolution.pending} onEdit={() => setVariantDirty(true)} onDraftChange={setVariantDraft}
               cancel={() => { setVariantEdit(undefined); setVariantDirty(false); setError(''); }} error={error} commit={commitVariant} /></>}
             {!!origins.length && <Disclosure label="Where this value comes from" className="copy-small">
-              <ul className="mt-1 grid gap-1">{origins.toReversed().map((origin, index) => {
+              <ul className="margin-top-space50 grid gap-space50">{origins.toReversed().map((origin, index) => {
                 const label = (index === 0 ? 'Current value' : 'Earlier value') + ' · ' + labelOrigin(origin);
-                return <li key={JSON.stringify([origin, index])} className="flex min-w-0 items-center justify-between gap-1">
+                return <li key={JSON.stringify([origin, index])} className="flex min-w-0 items-center justify-between gap-space50">
                   <span className="min-w-0 wrap-anywhere">{label}</span>
                   <IconButton size="xsmall" label={'Open source for ' + label} title="Open source" disabled={busy} className="shrink-0"
                     onClick={() => setSourceLocation({ file: origin.file, path: origin.parts, ...(variantScope ? { resolver: variantScope } : {}) })}>
@@ -1580,7 +2026,7 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
             </Disclosure>}
           </> : <>
             {inspected && <p className="wrap-anywhere copy-small">Definition in {inspected.file}</p>}
-            <TokenEditForm footer={inspectorFooter} initialDraft={inspectorInitial} graph={graph} busy={busy || resolvingVariant || !!draft && !inspectorDraft}
+            <TokenEditForm footer={inspectorFooter} initialDraft={inspectorDraft ?? inspectorInitial} graph={graph} busy={busy || resolvingVariant || !!draft && !inspectorDraft} onDraftChange={setDraft}
             inspectorActive={!!inspectorDraft} onEdit={() => setDraft(inspectorInitial)} cancel={() => cancel(false)} error={inspectorDraft ? error : ''}
             commit={commit} />
           </>}
@@ -1590,7 +2036,7 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
     }>
       <main ref={workspacePane} id="token-library" tabIndex={-1} aria-label="Token library" className="workspace-main @container/grid" onCopy={copySelection} onPaste={pasteSelection}>
         <section aria-label="Token commands" className="workspace-tools">
-          {resolvingVariant && <output className="block px-3 py-1 copy-body tone-supporting">Resolving variant…</output>}
+          {resolvingVariant && <output className="block pad-inline-space150 pad-block-space50 copy-body tone-supporting">Resolving variant…</output>}
           {(activeVariant.error || comparisonVariant.error || setResolution.error) && <Alert variant="destructive"><AlertDescription>
             {activeVariant.error || comparisonVariant.error || setResolution.error}
           </AlertDescription></Alert>}
@@ -1598,7 +2044,7 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
           <section id="token-controls" tabIndex={-1} aria-label="Token controls" className="workspace-heading">
             <IconButton size="xsmall" label={treeLabel} title={treeLabel} data-key-tip={treeVisible ? undefined : "G"} data-key-tip-label="Show Groups" aria-controls="groups" aria-expanded={treeVisible}
               disabled={menuDisabled} onClick={toggleTree}>{treeIcon}</IconButton>
-            <div className="workspace-path flex min-w-0 items-center gap-1">
+            <div className="workspace-path flex min-w-0 items-center gap-space50">
               <h2 data-workspace-group-title data-key-tip="C" data-key-tip-label="Token controls" tabIndex={-1} title={displayedGroup || 'All tokens'}>
                 {parentPath(displayedGroup) && <span className="workspace-ancestors">{parentPath(displayedGroup).split('.').join(' / ')} / </span>}
                 <span className="workspace-group-name">{leafName(displayedGroup) || editingLabel || 'All tokens'}</span>
@@ -1625,19 +2071,29 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
               {!!(resolution?.errors.length || model.issues.length || alternative?.errors.length) &&
                 <Button size="xsmall" variant="text" disabled={menuDisabled} onClick={manageVariants}>Variant issues</Button>}
             </div>}
-            <SearchBar ref={tokenSearch} data-key-tip="S" label="Search tokens in group" placeholder="Search tokens" leading={<Search aria-hidden="true" />}
-              className="workspace-search" title={group ? 'Search in ' + group : 'Search all tokens'}
-              action={<IconButton className={query ? "md-search-action" : "md-search-action invisible"} size="xsmall" label="Clear token search"
-                disabled={menuDisabled || !query}
-                onClick={() => {
-                  if (tokenSearch.current) tokenSearch.current.value = '';
-                  searchTokens('');
-                  tokenSearch.current?.focus();
-                }}><X aria-hidden="true" /></IconButton>}
-              disabled={menuDisabled} onChange={event => searchTokens(event.currentTarget.value)} />
+            <TextField
+              ref={tokenSearch}
+              type="search"
+              data-key-tip="S"
+              label="Search tokens"
+              aria-label="Search tokens in group"
+              leading={<Search aria-hidden="true" />}
+              containerClassName="workspace-search"
+              title={group ? 'Search in ' + group : 'Search all tokens'}
+              trailing={query ? (
+                <IconButton size="xsmall" label="Clear token search" disabled={menuDisabled}
+                  onClick={() => {
+                    if (tokenSearch.current) tokenSearch.current.value = '';
+                    searchTokens('');
+                    tokenSearch.current?.focus();
+                  }}><X aria-hidden="true" /></IconButton>
+              ) : undefined}
+              disabled={menuDisabled}
+              onChange={event => searchTokens(event.currentTarget.value)}
+            />
           </section>
           <div className="workspace-command-row">
-            <div className="workspace-filters flex min-w-0 gap-1">
+            <div className="workspace-filters flex min-w-0 gap-space50">
               {diagnosticsCount > 0 && <Button size="xsmall" variant="text" className="numeric-text"
                 disabled={menuDisabled} onClick={() => setDiagnosticsOpen(true)}>
                 <AlertCircle aria-hidden="true" /> Issues ({diagnosticsCount})
@@ -1682,35 +2138,56 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
           </div>
         </section>
         <div ref={grid} aria-busy={busy || resolvingVariant} className="min-h-0 flex-1 [&>[data-slot=table-container]]:h-full [&>[data-slot=table-container]]:overflow-auto">
-          {editModel && !current ? <output className="block p-4 copy-body">{setResolution.error ?? 'Loading token definitions…'}</output> :
+          {editModel && !current ? <output className="block pad-space200 copy-body">{setResolution.error ?? 'Loading token definitions…'}</output> :
           <TokenGrid narrow={!desktop} variant={!!current} data={gridData}
             {...{ previewLabel, resolvedHeading }} group={displayedGroup}
             {...{ gridSelection, draft, setDraft, error }} {...gridActions} busy={busy || resolvingVariant} />}
         </div>
-        <footer className="workspace-footer">
-          <span>{rowCount.toLocaleString('en')} {rowCount === 1 ? 'token' : 'tokens'}</span>
-          {draft && !draft.create && draft.mode === 'inline' && error ?
-            <output id="inline-edit-error" role="alert" className="tone-error">{error}</output> :
-            <output>{saveStatus}</output>}
-          <div className="workspace-footer-end">
-            {pages > 1 && !alternative && <div className="workspace-pagination">
-              <IconButton size="xsmall" label="Previous page" disabled={shownPage === 0 || !!draft}
-                onClick={() => { setPage(shownPage - 1); select(''); resetScroll(); }}><ChevronLeft aria-hidden="true" /></IconButton>
-              <span>Page {shownPage + 1} of {pages}</span>
-              <IconButton size="xsmall" label="Next page" disabled={shownPage + 1 === pages || !!draft}
-                onClick={() => { setPage(shownPage + 1); select(''); resetScroll(); }}><ChevronRight aria-hidden="true" /></IconButton>
-            </div>}
-            <div className="workspace-selection-count">
-              <span aria-live="polite" className="numeric-text">
-                {checked.size > 0 && <>{selectionCount} selected{hiddenChecked > 0 && ` · ${hiddenChecked} not shown`}</>}
-              </span>
-              {checked.size > 0 && <IconButton size="xsmall" label="Clear selection" title="Clear selection" disabled={menuDisabled}
-                onClick={clearCheckedSelection}><X aria-hidden="true" /></IconButton>}
-            </div>
-          </div>
-        </footer>
       </main>
     </WorkspacePanes>
+    <footer ref={workspaceFooter} className="workspace-footer">
+      <div className="workspace-footer-identity">
+        <button
+          type="button"
+          className="workspace-document"
+          data-workspace-name
+          title={loadingLinked ? 'Opening workspace…' : data.name}
+          disabled={menuDisabled}
+          onClick={() => {
+            if (shared.hosted) setWorkspacePickerOpen(true);
+            else setView('workspace');
+          }}
+        >
+          {loadingLinked ? 'Opening workspace…' : data.name}
+        </button>
+        <span aria-hidden="true">·</span>
+        <span className="workspace-save-state copy-small" aria-live="polite">{shared.phase === 'saved' ? 'Saved to workspace' : shared.phase === 'saving' ? 'Saving to workspace…' : shared.phase === 'conflict' ? 'Conflicts need review' : shared.phase === 'invalid' ? 'Draft needs attention' : shared.phase === 'updates' ? 'Updates available' :
+          localSave?.id === workspaceId ? localSave.state === 'saved' ? 'Saved locally' : localSave.state === 'saving' ? 'Saving locally…' : 'Recovery needs attention' : 'Local draft'}</span>
+        {busy && <span>Working…</span>}
+      </div>
+      {view === 'tokens' && draft && !draft.create && draft.mode === 'inline' && error && (
+        <output id="inline-edit-error" role="alert" className="tone-error">{error}</output>
+      )}
+      {view === 'tokens' && !loadingLinked && (
+        <div className="workspace-footer-end">
+          <span>{rowCount.toLocaleString('en')} {rowCount === 1 ? 'token' : 'tokens'}</span>
+          {pages > 1 && !alternative && <div className="workspace-pagination">
+            <IconButton size="xsmall" label="Previous page" disabled={shownPage === 0 || !!draft}
+              onClick={() => { setPage(shownPage - 1); select(''); resetScroll(); }}><ChevronLeft aria-hidden="true" /></IconButton>
+            <span>Page {shownPage + 1} of {pages}</span>
+            <IconButton size="xsmall" label="Next page" disabled={shownPage + 1 === pages || !!draft}
+              onClick={() => { setPage(shownPage + 1); select(''); resetScroll(); }}><ChevronRight aria-hidden="true" /></IconButton>
+          </div>}
+          <div className="workspace-selection-count">
+            <span aria-live="polite" className="numeric-text">
+              {checked.size > 0 && <>{selectionCount} selected{hiddenChecked > 0 && ` · ${hiddenChecked} not shown`}</>}
+            </span>
+            {checked.size > 0 && <IconButton size="xsmall" label="Clear selection" title="Clear selection" disabled={menuDisabled}
+              onClick={clearCheckedSelection}><X aria-hidden="true" /></IconButton>}
+          </div>
+        </div>
+      )}
+    </footer>
     {newResolver && <VariantSetupDialog workspace={data} files={librarySources.map(file => file.path)}
       root={saveTarget?.kind === 'pull-request' ? saveTarget.connection.root : undefined}
       reviewing={!!review} close={() => setNewResolver(false)} create={(file, text) => {
@@ -1720,41 +2197,35 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
         };
         setReview(next);
       }} />}
-    <ActionDialog open={importChanges} busy={busy} title="Import proposal" onOpenChange={(open) => {
+    <ActionDialog open={importChanges} busy={busy} title="Import token changes" onOpenChange={(open) => {
       if (!busy && !open) { setImportChanges(false); setError(''); }
     }} description="Choose a file with edits to the tokens you have open. You’ll review the changes before applying them."
       actions={<Button disabled={busy} onClick={() => proposalInput.current?.click()}>Choose file…</Button>}>
-      {importChanges && error && <Alert variant="destructive"><AlertDescription className="max-h-36 overflow-auto whitespace-pre-wrap">{error}</AlertDescription></Alert>}
+      {importChanges && error && <Alert variant="destructive"><AlertDescription className="scroll-list-md overflow-auto whitespace-pre-wrap">{error}</AlertDescription></Alert>}
     </ActionDialog>
-    <ActionDialog open={penpotOpen} busy={busy} title="Import Penpot tokens" onOpenChange={(open) => {
-      if (!busy && !open) { setPenpotOpen(false); setPenpotFile(null); setError(''); }
-    }} description="Compare a Penpot token export with the open tokens. Review the changes before applying them."
-      actions={<><Button variant="text" disabled={busy} onClick={() => penpotInput.current?.click()}>{penpotFile ? 'Choose another file…' : 'Choose file…'}</Button>
-        <Button disabled={busy || !penpotFile || !penpotSet} onClick={() => { void reviewPenpotFile(); }}>Review changes</Button></>}>
-      {penpotFile && <div className="grid gap-2 copy-body"><p>{penpotFile.name}</p>
-        <label htmlFor="penpot-token-set">Token set</label>
-        <Select id="penpot-token-set" value={penpotSet} onChange={event => setPenpotSet(event.target.value)}>
-          <SelectOption value="">Select a token set</SelectOption>
-          {penpotFile.sets.map(set => <SelectOption key={set} value={set}>{set}</SelectOption>)}
-        </Select>
-        <p>Only existing token values are imported. Check changes carefully if the export is older than the workspace.</p></div>}
-      {penpotOpen && error && <Alert variant="destructive"><AlertDescription className="max-h-36 overflow-auto whitespace-pre-wrap">{error}</AlertDescription></Alert>}
-    </ActionDialog>
+    <ActionDialog open={!!replacePrompt} title="Leave this workspace?"
+      description="You have unfinished edits in this workspace. Save or download a recovery copy before continuing."
+      onOpenChange={open => { if (!open && replacePrompt) { const cancelFn = replacePrompt.cancel; setReplacePrompt(undefined); cancelFn?.(); } }}
+      actions={<>
+        <Button variant="text" onClick={() => { const cancelFn = replacePrompt?.cancel; setReplacePrompt(undefined); cancelFn?.(); }}>Keep editing</Button>
+        <Button onClick={() => { const proceed = replacePrompt?.proceed; setReplacePrompt(undefined); proceed?.(); }}>Discard changes</Button>
+      </>}
+    />
     <ActionDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} title="Keyboard shortcuts"
       description="Tap Alt, then press the letters shown on screen. Use Command in place of Ctrl on macOS.">
-      <div className="grid gap-4 copy-body">
-        <section className="grid gap-2">
+      <div className="grid gap-space200 copy-body">
+        <section className="grid gap-space100">
           <h3 className="token-editor-section-title">Workspace</h3>
-          <dl className="shortcut-list grid gap-2">
-            <div><dt className="copy-emphasis">Alt, then T / V / W</dt><dd>Open Tokens, Variants, or Workspace.</dd></div>
+          <dl className="shortcut-list grid gap-space100">
+            <div><dt className="copy-emphasis">Alt, then T / V / W / 4 / 5</dt><dd>Open Tokens, Variants, Workspace, Changes, or Figma.</dd></div>
             <div><dt className="copy-emphasis">Alt, then C / G / S</dt><dd>Focus token controls, groups, or token search from Tokens.</dd></div>
-            <div><dt className="copy-emphasis">Alt, then F / E / I / A / K</dt><dd>Open File, Edit, View, Variants, or Help.</dd></div>
+            <div><dt className="copy-emphasis">Alt, then F / E / I / K</dt><dd>Open File, Edit, View, or Help.</dd></div>
             <div><dt className="copy-emphasis">Alt, then B / M / D / N / R / H</dt><dd>Show bulk edit or move and delete commands, edit or create a token, review changes, or open group actions. Available keys follow the current view.</dd></div>
           </dl>
         </section>
-        <section className="grid gap-2">
+        <section className="grid gap-space100">
           <h3 className="token-editor-section-title">Menus and toolbars</h3>
-          <dl className="shortcut-list grid gap-2">
+          <dl className="shortcut-list grid gap-space100">
             <div><dt className="copy-emphasis">Tab / Shift + Tab</dt><dd>Move to the next or previous control group.</dd></div>
             <div><dt className="copy-emphasis">Left / Right</dt><dd>Move across a toolbar or the top menus.</dd></div>
             <div><dt className="copy-emphasis">Up / Down</dt><dd>Move through menu items or the navigation rail. Down also opens a focused top menu.</dd></div>
@@ -1763,9 +2234,9 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
             <div><dt className="copy-emphasis">Escape from Tokens controls</dt><dd>Return to the last focused grid cell.</dd></div>
           </dl>
         </section>
-        <section className="grid gap-2">
+        <section className="grid gap-space100">
           <h3 className="token-editor-section-title">Token grid</h3>
-          <dl className="shortcut-list grid gap-2">
+          <dl className="shortcut-list grid gap-space100">
             <div><dt className="copy-emphasis">Arrows / Ctrl + Arrows</dt><dd>Move between cells or jump to an edge of the visible grid.</dd></div>
             <div><dt className="copy-emphasis">Home / End</dt><dd>Jump to the first or last column. Add Ctrl to jump to the first or last cell on the page.</dd></div>
             <div><dt className="copy-emphasis">Space / Ctrl + Space / Shift + Space</dt><dd>Toggle the row with Space or Ctrl + Space. Shift + Space checks just that row.</dd></div>
@@ -1778,9 +2249,9 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
             <div><dt className="copy-emphasis">Ctrl + Z / Y</dt><dd>Undo or redo. Ctrl + Shift + Z also redoes.</dd></div>
           </dl>
         </section>
-        <section className="grid gap-2">
+        <section className="grid gap-space100">
           <h3 className="token-editor-section-title">Link picker and panes</h3>
-          <dl className="shortcut-list grid gap-2">
+          <dl className="shortcut-list grid gap-space100">
             <div><dt className="copy-emphasis">Up / Down</dt><dd>Move between the link picker’s search field and results.</dd></div>
             <div><dt className="copy-emphasis">Enter / Ctrl + Enter</dt><dd>Choose the first matching result from search or apply the selected link.</dd></div>
             <div><dt className="copy-emphasis">Left / Right or Home / End</dt><dd>Adjust a focused pane divider or set it to its minimum or maximum.</dd></div>
@@ -1809,7 +2280,7 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
         setError('');
         setReview(next);
       }} />}
-    {bulkEdit && <BulkEditDialog workspace={data} {...bulkEdit} prepareRename={current ? moves => prepareStructure('rename', moves) : undefined}
+    {bulkEdit && (!model || current) && <BulkEditDialog workspace={data} {...bulkEdit} draft={bulkDraft} setDraft={setBulkDraft} prepareRename={current ? moves => prepareStructure('rename', moves) : undefined}
       {...(variantScope && current ? { scope: { review: variantScope, resolution: current },
         definitions: editingLabel ? [editingLabel] : [...new Set(bulkEdit.paths.flatMap(path => {
           const origin = winningOrigins(current, path).at(-1);
@@ -1839,7 +2310,8 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
         setError('');
         setReview(next);
       }} />}
-    {sourceLocation && <SourceDialog location={sourceLocation} reviewing={!!review} close={() => setSourceLocation(null)}
+    {sourceLocation && <SourceDialog location={sourceLocation} reviewing={!!review} close={() => { setSourceLocation(null); setSourceDraft(undefined); }}
+      initialText={sourceDraft?.file === sourceLocation.file ? sourceDraft.text : undefined} onDraftChange={text => setSourceDraft({ file: sourceLocation.file, text })}
       original={requireValue(data.files.find(file => file.path === sourceLocation.file), 'source file').text}
       prepare={(text, signal) => runWorkspaceReview({
         kind: 'source', workspace: data, file: sourceLocation.file, scope: sourceLocation.resolver, text,
@@ -1868,7 +2340,7 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
       }} />}
     {draft?.create && <ActionDialog open={!review} busy={busy} title={draft.groupOnly ? 'New group' : draft.name === '$root' ? 'Add group value' : 'New token'}
       description={displayedGroup || 'All tokens'} onOpenChange={(open) => { if (!open && !busy) cancel(); }}>
-      <TokenEditForm initialDraft={draft} {...{ graph, busy, cancel, error, commit }} {...(current && model ? { sourceChoices, referenceFile: model.file } : {})} />
+      <TokenEditForm initialDraft={draft} onDraftChange={setDraft} {...{ graph, busy, cancel, error, commit }} {...(current && model ? { sourceChoices, referenceFile: model.file } : {})} />
     </ActionDialog>}
     <ReviewChanges data={reviewData} {...{ busy, error }} close={closeReview} save={saveReview} onClosed={() => {
       resolverFocusAfterApply.current?.focus();
@@ -1892,12 +2364,16 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
       refocusAfterReview.current = false;
       setFocusRequest(request => request && { ...request });
     }} />
+    {repositoryReview && <RepositoryConflictReview busy={busy} key={repositoryReview.connection.snapshot?.revision ?? 'repository-review'} conflicts={repositoryReview.conflicts} drafts={repositoryReview.choices}
+      saveDraft={choice => setRepositoryReview(pending => pending ? { ...pending, choices: [...pending.choices.filter(saved => repositoryChoiceKey(saved.id) !== repositoryChoiceKey(choice.id)), choice] } : pending)}
+      discardDraft={choice => setRepositoryReview(pending => pending ? { ...pending, choices: pending.choices.filter(saved => repositoryChoiceKey(saved.id) !== repositoryChoiceKey(choice.id)) } : pending)} error={error}
+      close={() => { setFinalReview(repositoryReview.draft); setRepositoryReview(undefined); setError(''); }} apply={reconcileRepository} />}
     <ReviewChanges data={finalReviewData} busy={busy} error={error}
-      notice={revisionReview === 'stale' ? 'The default branch changed. Review the latest revision before opening a pull request.' :
+      notice={revisionReview === 'stale' ? 'The repository changed. Review its latest revision before saving.' :
         revisionReview === 'refreshed' ? 'This diff and its resolved values use the latest revision.' : ''}
-      confirm={revisionReview === 'stale' ? 'Review latest revision' : saveTarget?.kind === 'folder' ? 'Save to folder' : saveTarget ? 'Create pull request' : 'Download patch'}
+      confirm={revisionReview === 'stale' ? 'Review latest revision' : saveTarget?.kind === 'folder' ? 'Save to folder' : saveTarget?.kind === 'pull-request' ? saveTarget.connection.branch ? 'Update merge request' : 'Create merge request' : 'Export patch'}
       close={() => { setFinalReview(null); setError(''); }} save={() => { void saveFinalReview(); }} />
-  </div>;
+  </div></ReloadEditor>;
 }
 
 const app = document.getElementById('app');
@@ -1905,6 +2381,11 @@ if (!app) throw new Error('Missing editor root.');
 const fragment = location.hash;
 const proposalLink = fragment.startsWith('#proposal=') && fragment.length <= 8010 ? new URLSearchParams(fragment.slice(1)).get('proposal') ?? '' : '';
 if (fragment.startsWith('#proposal=')) history.replaceState(history.state, '', location.pathname + location.search);
-createRoot(app).render(<StrictMode>
+const rootCache: unknown = import.meta.hot?.data;
+const cachedRoot = isRecord(rootCache) ? rootCache['root'] : undefined;
+const isReactRoot = (value: unknown): value is Root => isRecord(value) && typeof value['render'] === 'function' && typeof value['unmount'] === 'function';
+const editorRoot = isReactRoot(cachedRoot) ? cachedRoot : createRoot(app);
+if (isRecord(rootCache)) rootCache['root'] = editorRoot;
+editorRoot.render(<StrictMode>
   <Editor Connector={import.meta.env.MODE === 'hosted' ? OpenGitHub : null} proposalLink={proposalLink} />
 </StrictMode>);

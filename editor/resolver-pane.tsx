@@ -1,6 +1,6 @@
 import { useDeferredValue, useEffect, useId, useMemo, useRef, useState } from 'react';
-import { ChipSelect, Button, IconButton, SearchBar, TextField, Select, SelectOption } from '@token-catalog/forge-react';
-import { ArrowDown, ArrowRightLeft, ArrowUp, MoreHorizontal, Pencil, Plus, Search, Trash2 } from 'lucide-react';
+import { ChipSelect, Button, Card, Disclosure, IconButton, Progress, TextField, Select, SelectOption } from '@token-catalog/forge-react';
+import { ArrowDown, ArrowRightLeft, ArrowUp, MoreHorizontal, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
 import { ActionDialog } from '@/components/ui/dialog';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -113,7 +113,7 @@ function AuthorDialog({ target, tree, file, files, author, close, reviewing, che
   const report = (failure: unknown) => setError(errorMessage(failure));
   const title = kind === 'entry' ? target.index === undefined ? 'Add to override order' : 'Edit override order entry' : (originalName ? 'Edit ' : 'New ') + (kind === 'set' ? 'token set' : 'variant dimension');
   return <ActionDialog open={!reviewing} busy={checking} onKeyDown={event => { if (checking && event.key === 'Escape') event.preventDefault(); }} title={title} description={originalName} onOpenChange={open => { if (!open && !checking) close(); }}>
-    <form className="grid min-w-0 gap-3" onSubmit={event => {
+    <form className="grid min-w-0 gap-space150" onSubmit={event => {
       event.preventDefault();
       if (checking) return;
       setError('');
@@ -149,53 +149,50 @@ function AuthorDialog({ target, tree, file, files, author, close, reviewing, che
     }}>
       {kind !== 'entry' && !originalName && <TextField label={kind === 'set' ? 'Set name' : 'Variant name'} data-initial-focus required value={name}
         onChange={event => setName(event.target.value)} />}
-      {kind === 'entry' && <div className="grid gap-1 copy-body">
-        <label htmlFor={id + '-entry'}>Entry</label>
-        <Select id={id + '-entry'} value={reference} onChange={event => setReference(event.target.value)}>
-          <SelectOption value="">Inline entry (advanced)</SelectOption>
-          {reference && !options.some(option => option.reference === reference) &&
-            <SelectOption value={reference}>{orderEntryLabel({ $ref: reference }, file, target.index ?? 0)}</SelectOption>}
-          {options.map(option => <SelectOption key={option.reference} value={option.reference}>{option.label}</SelectOption>)}
-        </Select>
-      </div>}
-      {kind === 'entry' && !reference && <label htmlFor={id} className="grid gap-1 copy-body">Inline entry JSON
+      {kind === 'entry' && <Select id={id + '-entry'} label="Entry" value={reference} onChange={event => setReference(event.target.value)}>
+        <SelectOption value="">Inline entry (advanced)</SelectOption>
+        {reference && !options.some(option => option.reference === reference) &&
+          <SelectOption value={reference}>{orderEntryLabel({ $ref: reference }, file, target.index ?? 0)}</SelectOption>}
+        {options.map(option => <SelectOption key={option.reference} value={option.reference}>{option.label}</SelectOption>)}
+      </Select>}
+      {kind === 'entry' && !reference && <label htmlFor={id} className="grid gap-space50 copy-body">Inline entry JSON
         <Textarea id={id} rows={6} value={json} spellCheck={false} className="code-editor" onChange={event => setJson(event.target.value)} />
       </label>}
       {kind === 'set' && <ResolverSourceFields {...{ sources, setSources, file }} options={sourceOptions} />}
       {kind === 'modifier' && <>
-        {contexts.map((context, index) => (
-          <section key={context.id} aria-label={'Option ' + (index + 1)} className="grid gap-2 rounded-lg border p-3">
-            <TextField required label={'Option ' + (index + 1) + ' name'} value={context.name}
-              onChange={event => setContexts(contexts.map(item => item.id === context.id ? { ...item, name: event.target.value } : item))}
-              trailing={<IconButton type="button" size="xsmall" label={'Remove option ' + (index + 1)}
-                onClick={() => {
-                  addContext.current?.focus();
-                  if (defaultContext === context.id) setDefault(-1);
-                  setContexts(contexts.filter(item => item.id !== context.id));
-                }}><Trash2 aria-hidden="true" /></IconButton>} />
-            <details className="grid gap-2">
-              <summary className="cursor-pointer copy-body">{context.sources.length} {context.sources.length === 1 ? 'source' : 'sources'}</summary>
-              <ResolverSourceFields sources={context.sources} options={sourceOptions} file={file}
-                setSources={next => setContexts(contexts.map(item => item.id === context.id ? { ...item, sources: next } : item))} />
-            </details>
-          </section>
-        ))}
+        {contexts.length > 0 && <div className="card-group">
+          {contexts.map((context, index) => (
+            <Card key={context.id} variant="outlined" as="section" aria-label={'Option ' + (index + 1)}>
+              <div className="grid gap-space100">
+                <TextField required label={'Option ' + (index + 1) + ' name'} value={context.name}
+                  onChange={event => setContexts(contexts.map(item => item.id === context.id ? { ...item, name: event.target.value } : item))}
+                  trailing={<IconButton type="button" size="xsmall" label={'Remove option ' + (index + 1)}
+                    onClick={() => {
+                      addContext.current?.focus();
+                      if (defaultContext === context.id) setDefault(-1);
+                      setContexts(contexts.filter(item => item.id !== context.id));
+                    }}><Trash2 aria-hidden="true" /></IconButton>} />
+                <Disclosure compact label={`${context.sources.length} ${context.sources.length === 1 ? 'source' : 'sources'}`}>
+                  <ResolverSourceFields sources={context.sources} options={sourceOptions} file={file}
+                    setSources={next => setContexts(contexts.map(item => item.id === context.id ? { ...item, sources: next } : item))} />
+                </Disclosure>
+              </div>
+            </Card>
+          ))}
+        </div>}
         <Button ref={addContext} type="button" size="small" variant="tonal" className="justify-self-start" onClick={() => {
           const contextId = 1 + Math.max(-1, ...contexts.map(context => context.id));
           setContexts([...contexts, { id: contextId, name: '', sources: [] }]);
         }}>Add option</Button>
-        {!!contexts.length && <div className="grid gap-1 copy-body">
-          <label htmlFor={id + '-default'}>Default option</label>
-          <Select id={id + '-default'} value={String(defaultContext)} onChange={event => setDefault(Number(event.target.value))}>
-            <SelectOption value="-1">No default</SelectOption>
-            {contexts.map((context, index) => <SelectOption key={context.id} value={String(context.id)}>
-              {context.name || 'Option ' + (index + 1)}
-            </SelectOption>)}
-          </Select>
-        </div>}
+        {!!contexts.length && <Select id={id + '-default'} label="Default option" value={String(defaultContext)} onChange={event => setDefault(Number(event.target.value))}>
+          <SelectOption value="-1">No default</SelectOption>
+          {contexts.map((context, index) => <SelectOption key={context.id} value={String(context.id)}>
+            {context.name || 'Option ' + (index + 1)}
+          </SelectOption>)}
+        </Select>}
       </>}
       {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
-      <div className="flex justify-end gap-2">
+      <div className="flex justify-end gap-space100">
         <Button type="button" variant="text" disabled={checking} data-dialog-close="">Cancel</Button>
         <Button type="submit" disabled={checking}>{checking ? 'Checking contexts…' : 'Review changes'}</Button>
       </div>
@@ -224,26 +221,23 @@ function SetPathDialog({ action, destinations, reviewing, checking, close, submi
   const removing = action.kind === 'remove';
   return <ActionDialog open={!reviewing} busy={checking} onKeyDown={event => { if (checking && event.key === 'Escape') event.preventDefault(); }} title={moving ? 'Move set' : removing ? 'Remove set' : 'Rename set'} description={action.name}
     onOpenChange={open => { if (!open && !reviewing && !checking) close(); }}>
-    <form className="grid gap-3" onSubmit={event => {
+    <form className="grid gap-space150" onSubmit={event => {
       event.preventDefault();
       if (checking) return;
       setError('');
       try { void submit(removing ? undefined : name, moving ? target : undefined).catch((failure: unknown) => setError(errorMessage(failure))); }
       catch (failure) { setError(errorMessage(failure)); }
     }}>
-      {moving && <div className="grid gap-1 copy-body">
-        <label htmlFor={id}>Destination Resolver</label>
-        <Select id={id} required data-initial-focus value={target} onChange={event => {
-          setTarget(event.target.value); setError('');
-        }}>
-          <SelectOption value="">Choose a Resolver…</SelectOption>
-          {destinations.map(file => <SelectOption key={file} value={file}>{file}</SelectOption>)}
-        </Select>
-      </div>}
+      {moving && <Select id={id} label="Destination Resolver" required data-initial-focus value={target} onChange={event => {
+        setTarget(event.target.value); setError('');
+      }}>
+        <SelectOption value="">Choose a Resolver…</SelectOption>
+        {destinations.map(file => <SelectOption key={file} value={file}>{file}</SelectOption>)}
+      </Select>}
       {!removing && <TextField label="Set name" required data-initial-focus={!moving ? '' : undefined} value={name}
         onChange={event => { setName(event.target.value); setError(''); }} />}
       {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
-      <div className="flex justify-end gap-2">
+      <div className="flex justify-end gap-space100">
         <Button variant="text" type="button" disabled={checking} data-dialog-close="" data-initial-focus={removing ? '' : undefined}>Cancel</Button>
         <Button type="submit" disabled={checking}>{checking ? 'Checking contexts…' : moving ? 'Review move' : removing ? 'Review removal' : 'Review rename'}</Button>
       </div>
@@ -310,7 +304,7 @@ export function ResolverPane({ workspace: workspaceData, file, model: modelData,
     const name = orderEntryLabel(item, file, index);
     const observed = seenEntries.get(name) ?? 0;
     seenEntries.set(name, observed + 1);
-    return { name, id: JSON.stringify([name, observed]) };
+    return { name, id: `${name}:${String(observed)}` };
   });
   const errors = [...new Set([...current.errors, ...(alternative?.errors ?? [])])];
   const issueCount = model.issues.length + errors.length;
@@ -349,7 +343,7 @@ export function ResolverPane({ workspace: workspaceData, file, model: modelData,
 
   return <div className="resolver-workspace">
     {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
-    <div className="flex flex-wrap items-center justify-between gap-2">
+    <div className="flex flex-wrap items-center justify-between gap-space100">
       <p className="wrap-anywhere copy-body copy-emphasis">{typeof tree['name'] === 'string' && tree['name'] ? tree['name'] : file}</p>
       <Button className="ms-auto" size="xsmall" variant="text" disabled={disabled}
         onClick={() => editSource({ file, path: [], resolver: scope })}><Pencil aria-hidden="true" /> Edit resolver JSON</Button>
@@ -364,7 +358,7 @@ export function ResolverPane({ workspace: workspaceData, file, model: modelData,
             : 'Define the choices people can preview, such as Light and Dark.'}</p>
           {section === 'modifiers' && sharedSets.length > 0 && <p className="wrap-anywhere copy-body">Shared sets: {sharedSets.join(', ')}</p>}
           <ul>{(section === 'sets' ? [...model.sets.keys()] : [...model.modifiers.keys()]).map(name => <li key={name} className="min-w-0">
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-space50">
             <Button size="xsmall" variant="text" disabled={disabled} onClick={() => {
               if (isJsonObject(members) && Object.hasOwn(members, name)) {
                 if (hasStructuredSources(members[name], section)) setAuthoring({ kind: section === 'sets' ? 'set' : 'modifier', name });
@@ -384,11 +378,11 @@ export function ResolverPane({ workspace: workspaceData, file, model: modelData,
                   run: () => setSetPath({ kind: 'move', name }) }],
                 [{ label: 'Remove set…', icon: <Trash2 aria-hidden="true" />, destructive: true, run: () => setSetPath({ kind: 'remove', name }) }]]} />}
             </div>
-            {section === 'modifiers' && <dl className="mb-2 ms-3 grid gap-1 copy-body">
+            {section === 'modifiers' && <dl className="margin-bottom-space100 margin-start-space150 grid gap-space50 copy-body">
               {[...model.modifiers.get(name)?.contexts ?? []].map(([option, contributions]) => {
                 const names = [...new Set(contributions.map(({ origin }) => origin.set ?? origin.file))];
-                return <div key={option} className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-2">
-                  <dt className="wrap-anywhere">{option}{model.modifiers.get(name)?.defaultContext === option && <span className="ms-2 copy-small tone-supporting">Default</span>}</dt>
+                return <div key={option} className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-space100">
+                  <dt className="wrap-anywhere">{option}{model.modifiers.get(name)?.defaultContext === option && <span className="margin-start-space100 copy-small tone-supporting">Default</span>}</dt>
                   <dd className="wrap-anywhere tone-supporting">{names.length ? names.join(', ') : 'Shared sets only'}</dd>
                 </div>;
               })}
@@ -403,8 +397,8 @@ export function ResolverPane({ workspace: workspaceData, file, model: modelData,
     <section aria-label="Order of overrides" className="resolver-section">
       <h3>Order of overrides</h3>
       <p className="copy-body tone-supporting">Add sets and dimensions here to include them in the preview. If two entries define the same token, the last one wins.</p>
-      <ol className="grid gap-1">{orderRows.map(({ name, id }, index) => {
-        return <li key={id} className="flex min-w-0 items-center justify-between gap-1">
+      <ol className="grid gap-space50">{orderRows.map(({ name, id }, index) => {
+        return <li key={id} className="flex min-w-0 items-center justify-between gap-space50">
           <span className="wrap-anywhere copy-body">{name}</span>
           <div className="flex shrink-0">
             <IconButton size="xsmall" label={'Edit ' + name} disabled={disabled}
@@ -420,24 +414,23 @@ export function ResolverPane({ workspace: workspaceData, file, model: modelData,
     </section>
     {(issueCount > 0 || contextDiagnostics.length > 0) && <section aria-label="Variant issues" className="resolver-section">
       <h3>Variant issues</h3>
-      {!!issueCount && <ul className="grid gap-1 copy-body" aria-label="Resolver diagnostics">
-        {model.issues.map(issue => <li key={JSON.stringify([issue.file, issue.parts, issue.message])}>
+      {!!issueCount && <ul className="grid gap-space50 copy-body" aria-label="Resolver diagnostics">
+        {model.issues.map((issue, index) => <li key={`${issue.file}:${issue.parts.join('/')}:${String(index)}`}>
           <Button size="xsmall" variant="text" disabled={disabled} onClick={() => editSource({ file: issue.file, path: issue.parts, resolver: scope })}>
             {issue.parts.join(' / ')} · {issue.message}
           </Button>
         </li>)}
         {errors.map(message => <li key={message}>{message}</li>)}
       </ul>}
-      {contextDiagnostics.length > 0 && <details className="rounded-lg border px-3 py-2 copy-body">
-        <summary className="cursor-pointer">Context source diagnostics ({contextDiagnostics.length})</summary>
-        <ul className="mt-1 grid gap-1">
-          {contextDiagnostics.map(({ label, issue, source }) => <li key={JSON.stringify([label, issue.path, issue.field, issue.message])} className="min-w-0">
+      {contextDiagnostics.length > 0 && <Disclosure compact label={`Context source diagnostics (${contextDiagnostics.length})`}>
+        <ul className="margin-top-space50 grid gap-space50">
+          {contextDiagnostics.map(({ label, issue, source }, index) => <li key={`${label}:${issue.path}:${issue.field ?? ''}:${String(index)}`} className="min-w-0">
             <Button size="xsmall" variant="text" disabled={disabled} onClick={() => editSource({ ...source, resolver: scope })}>
               <span className="wrap-anywhere text-start">{[label, issue.path, issue.field, issue.message].filter(Boolean).join(' · ')}</span>
             </Button>
           </li>)}
         </ul>
-      </details>}
+      </Disclosure>}
     </section>}
     {authoring && <AuthorDialog target={authoring} files={workspace.files} {...{ tree, file, reviewing, checking }} author={(target, path, next, insert) => author(target, path, next, insert, () => setAuthoring(undefined))} close={() => setAuthoring(undefined)} />}
     {setPath && <SetPathDialog action={setPath} destinations={destinations} reviewing={reviewing} checking={checking} close={() => setSetPath(undefined)}
@@ -487,8 +480,19 @@ export function VariantComparison({ current: currentData, alternative: alternati
   const size = 50;
   const currentPage = Math.min(page, Math.max(0, Math.ceil(changes.length / size) - 1));
   return <>
-    <SearchBar className="workspace-search comparison-search" label="Search compared tokens" placeholder="Search compared tokens" leading={<Search aria-hidden="true" />}
-      value={query} onChange={event => { setQuery(event.currentTarget.value); setPage(0); }} />
+    <TextField
+      type="search"
+      containerClassName="search-fill comparison-search"
+      label="Search compared tokens"
+      leading={<Search aria-hidden="true" />}
+      trailing={query ? (
+        <IconButton size="xsmall" label="Clear compared search" onClick={() => { setQuery(''); setPage(0); }}>
+          <X aria-hidden="true" />
+        </IconButton>
+      ) : undefined}
+      value={query}
+      onChange={event => { setQuery(event.currentTarget.value); setPage(0); }}
+    />
     <Table aria-label="Variant comparison" aria-busy={pending}>
     <TableHeader><TableRow><TableHead>Token</TableHead><TableHead>Change</TableHead>
       <TableHead>{variantLabel(current)}</TableHead><TableHead>{variantLabel(alternative)}</TableHead>
@@ -503,11 +507,11 @@ export function VariantComparison({ current: currentData, alternative: alternati
     </TableRow>)}
       {changes.length === 0 && <TableRow><TableCell colSpan={4}>
         {!valid ? 'Choose the options for both variants to compare them.' :
-          pending ? <output>Comparing variants…</output> : matching?.error ?? 'No differences in these tokens.'}
+          pending ? <Progress label="Comparing variants" /> : matching?.error ?? 'No differences in these tokens.'}
       </TableCell></TableRow>}
     </TableBody>
   </Table>
-    {changes.length > size && <div className="flex items-center justify-end gap-2 p-2">
+    {changes.length > size && <div className="flex items-center justify-end gap-space100 pad-space100">
       <Button size="xsmall" variant="text" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>Previous differences</Button>
       <span className="copy-small">{currentPage * size + 1}–{Math.min((currentPage + 1) * size, changes.length)} of {changes.length}</span>
       <Button size="xsmall" variant="text" disabled={(currentPage + 1) * size >= changes.length}

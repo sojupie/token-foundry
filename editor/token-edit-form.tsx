@@ -19,6 +19,7 @@ import { TokenValue } from './token-value.tsx';
 import { canEditType, defaultValue } from './lib/value-shape.ts';
 import type { JsonValue } from '../lib/json.ts';
 import { tokenValueIssues, validateTokenValue } from '../lib/validate-token.ts';
+import { FieldBoundary } from './field-boundary.tsx';
 
 const TypedEditorPanel = lazy(() => import('./typed-value.tsx'));
 
@@ -26,6 +27,7 @@ interface Props {
   initialDraft: Draft;
   graph: DocumentGraph;
   onEdit?: () => void;
+  onDraftChange?: (draft: Draft) => void;
   inspectorActive?: boolean;
   footer?: HTMLDivElement | null | undefined;
   valueOnly?: boolean;
@@ -61,7 +63,7 @@ function RawValueForm({ id, initialType, draft, authored, apply, close, graph, f
   const value = literal ?? (typed ? defaultValue(type) : undefined);
   const edit = { graph, file, source: draft.create ? '' : draft.path, busy: false };
   const [error, setError] = useState('');
-  return <form id={id} className="grid self-start gap-4" onSubmit={event => {
+  return <form id={id} className="grid self-start gap-space200" onSubmit={event => {
     event.preventDefault();
     event.stopPropagation();
     setError('');
@@ -77,8 +79,8 @@ function RawValueForm({ id, initialType, draft, authored, apply, close, graph, f
     <TokenTypeField value={type} {...{ authored }} onChange={next => {
       setType(next); setLiteral(undefined); setText(''); setShowJson(false); setError('');
     }} selectRef={focusType} required />
-    <section aria-labelledby={valueHeading} className="token-editor-section grid min-w-0 gap-3">
-      <header className="flex flex-wrap items-center justify-between gap-1">
+    <section aria-labelledby={valueHeading} className="token-editor-section grid min-w-0 gap-space150">
+      <header className="flex flex-wrap items-center justify-between gap-space50">
         <h3 id={valueHeading} className="token-editor-section-title">Value</h3>
         {typed && <Button type="button" size="xsmall" variant={showJson ? 'tonal' : 'text'} pressed={showJson} onClick={() => {
           if (!showJson) { setText(JSON.stringify(value, null, 2)); setShowJson(true); }
@@ -88,9 +90,9 @@ function RawValueForm({ id, initialType, draft, authored, apply, close, graph, f
           }
         }}>{showJson ? 'Use fields' : 'Raw JSON'}</Button>}
       </header>
-      {typed && !showJson ? <Suspense fallback={<p className="copy-small">Loading value editor…</p>}>
+      {typed && !showJson ? <FieldBoundary key={type}><Suspense fallback={<p className="copy-small">Loading value editor…</p>}>
         <TypedEditorPanel key={type} {...{ edit, type, value }} resolved={undefined} original={false} write={setLiteral} />
-      </Suspense> : <ValueInput value={text} setValue={setText} format={showJson ? 'json' : inputFormat(type)} required />}
+      </Suspense></FieldBoundary> : <ValueInput value={text} setValue={setText} format={showJson ? 'json' : inputFormat(type)} required />}
     </section>
     {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
   </form>;
@@ -205,10 +207,10 @@ function ValueField({ draft, graph, setDraft, busy, type, referenceFile }: Pick<
   }
   const inlineLink = inspector && linked && !raw && format !== 'json';
   const typed = knownType && !referenceLabel(draft.original) && !referenceLabel(value) && !parseError;
-  const panel = !raw && typed ? <Suspense fallback={<p className="copy-small tone-supporting">Loading value editor…</p>}>
+  const panel = !raw && typed ? <FieldBoundary key={type}><Suspense fallback={<p className="copy-small tone-supporting">Loading value editor…</p>}>
     <TypedEditorPanel key={type + ':' + JSON.stringify(draft.original)} {...{ edit, type, resolved }} value={authored}
       original={valueIsOriginal} write={next => setDraft({ ...draft, value: next === undefined ? '' : JSON.stringify(next) })} />
-  </Suspense> :
+  </Suspense></FieldBoundary> :
     <ValueInput value={draft.value} {...{ format, busy, resolved }}
       trailing={inlineLink ? <IconButton ref={linkButton} size="xsmall" label="Link token" aria-haspopup="dialog" disabled={busy} onClick={openLink}>
         <Link2 aria-hidden="true" />
@@ -217,10 +219,10 @@ function ValueField({ draft, graph, setDraft, busy, type, referenceFile }: Pick<
       if (draft.create && format !== 'json' && next.startsWith('{')) setReferenceSeed(next.slice(1).replace(/\}$/u, ''));
     }} />;
 
-  return <section aria-labelledby={valueHeading} className={'grid min-w-0 gap-3' + (inspector ? ' token-editor-section' : '')}>
-    <header className="grid min-w-0 gap-1">
+  return <section aria-labelledby={valueHeading} className={'grid min-w-0 gap-space150' + (inspector ? ' token-editor-section' : '')}>
+    <header className="grid min-w-0 gap-space50">
       <h3 id={valueHeading} className="token-editor-section-title">Value</h3>
-      <div className="flex flex-wrap items-center gap-1">
+      <div className="flex flex-wrap items-center gap-space50">
         {referenceLabel(value) && <Button type="button" size="xsmall" variant="text" disabled={busy} onClick={() => {
           setEnterLiteral(true); setReferenceSeed('');
         }}>Enter a value</Button>}
@@ -231,7 +233,7 @@ function ValueField({ draft, graph, setDraft, busy, type, referenceFile }: Pick<
         </Button>}
       </div>
     </header>
-    {raw ? <div className="grid gap-1">
+    {raw ? <div className="grid gap-space50">
       <Textarea data-primary-editor aria-label="Token value JSON" aria-invalid={!!jsonIssue || !!issues.length}
         rows={7} spellCheck={false} className="min-w-0 resize-y code-editor" disabled={busy} value={json}
         ref={input => input?.setCustomValidity(jsonIssue)}
@@ -241,14 +243,14 @@ function ValueField({ draft, graph, setDraft, busy, type, referenceFile }: Pick<
           setDraft({ ...draft, value: text });
         }} />
       {jsonIssue && <p className="copy-small tone-error" role="alert">{jsonIssue}</p>}
-      {!!issues.length && <ul className="grid gap-1 copy-small tone-error" aria-label="Value diagnostics">
+      {!!issues.length && <ul className="grid gap-space50 copy-small tone-error" aria-label="Value diagnostics">
         {issues.map(problem => <li key={problem}>{problem}</li>)}
       </ul>}
     </div> : panel}
     {referenceSeed !== null && <TokenReferenceDialog {...{ draft, graph, type, referenceFile }} seed={referenceSeed} initialRaw={enterLiteral}
       choose={next => setDraft({ ...draft, value: next })}
       applyRawValue={setDraft} close={closeLink} />}
-    {inspector && valueIsOriginal && linked && <div className="token-editor-support flex min-w-0 items-center gap-2">
+    {inspector && valueIsOriginal && linked && <div className="token-editor-support flex min-w-0 items-center gap-space100">
       <span>Resolved</span><TokenValue value={resolved} swatch wrap />
     </div>}
   </section>;
@@ -265,7 +267,7 @@ function TokenTypeField({ value, automatic, authored, onChange, disabled, select
 }) {
   const id = useId();
   const types = [...new Set([...dtcgTypes, ...[authored, value].filter(Boolean)])];
-  return <div className="grid min-w-0 gap-1.5">
+  return <div className="grid min-w-0 gap-space75">
     <label className="token-editor-label" htmlFor={id}>Token type</label>
     <Select ref={selectRef} id={id} data-primary-editor className="w-full" disabled={disabled} required={required} value={value}
       onChange={(event) => onChange(event.target.value)}>
@@ -277,8 +279,8 @@ function TokenTypeField({ value, automatic, authored, onChange, disabled, select
   </div>;
 }
 
-export function TokenEditForm({ initialDraft, graph, onEdit, inspectorActive, footer, valueOnly, definition, sourceChoices, referenceFile, commit, cancel, error, busy }: Props) {
-  const [edit, setEdit] = useState<Draft | null>(null);
+export function TokenEditForm({ initialDraft, graph, onEdit, onDraftChange, inspectorActive, footer, valueOnly, definition, sourceChoices, referenceFile, commit, cancel, error, busy }: Props) {
+  const [edit, setEdit] = useState<Draft | null>(() => inspectorActive ? initialDraft : null);
   const [valuesByType, setValuesByType] = useState(() => new Map<string, string>());
   const localDraft = inspectorActive === false ? null : edit;
   const draft = localDraft ?? initialDraft;
@@ -288,6 +290,7 @@ export function TokenEditForm({ initialDraft, graph, onEdit, inspectorActive, fo
       onEdit?.();
     }
     setEdit(next);
+    onDraftChange?.(next);
   }
   const inspector = !draft.create && draft.mode === 'inspector';
   const token = graph.tokens.get(draft.path);
@@ -305,16 +308,16 @@ export function TokenEditForm({ initialDraft, graph, onEdit, inspectorActive, fo
   const changed = !inspector || localDraft !== null;
 
   const formId = useId();
-  const actions = <div className="flex justify-end gap-2">
+  const actions = <div className="flex justify-end gap-space100">
       <Button type="button" variant="text" disabled={busy || !changed && !valueOnly} onClick={() => { setEdit(null); cancel(); }}>{inspector && !valueOnly ? 'Reset' : 'Cancel'}</Button>
       <Button type="submit" form={formId} disabled={busy || !changed}>{draft.create || valueOnly || definition ? 'Review changes' : 'Apply to workspace'}</Button>
     </div>;
 
-  return <form id={formId} className="grid min-w-0 gap-3" onSubmit={(event) => { event.preventDefault(); commit(draft); }}>
+  return <form id={formId} className="grid min-w-0 gap-space150" onSubmit={(event) => { event.preventDefault(); commit(draft); }}>
     {showName && !valueOnly && !definition && !(initialDraft.create && initialDraft.name === '$root') && <TextField label={draft.groupOnly ? 'Group name' : 'Token name'}
       data-initial-focus data-primary-editor readOnly={!!token?.inheritedFrom} disabled={busy} value={draft.name}
       onChange={(event) => setDraft({ ...draft, name: event.target.value })} />}
-    {draft.create && files.length > 1 && <div className="grid gap-1.5">
+    {draft.create && files.length > 1 && <div className="grid gap-space75">
       <label className="copy-body copy-emphasis" htmlFor="token-edit-file">Source file</label>
       <Select id="token-edit-file" className="w-full" value={draft.file} disabled={busy}
         onChange={(event) => setDraft({ ...draft, file: event.target.value })}>
@@ -322,7 +325,7 @@ export function TokenEditForm({ initialDraft, graph, onEdit, inspectorActive, fo
         {files.map((file) => <SelectOption key={file} value={file}>{sourceChoices?.get(file) ?? file}</SelectOption>)}
       </Select>
     </div>}
-    {showType && !valueOnly && <div className="grid min-w-0 gap-1">
+    {showType && !valueOnly && <div className="grid min-w-0 gap-space50">
       <TokenTypeField value={draft.type ?? ''} automatic={automatic ? automatic[0]?.toUpperCase() + automatic.slice(1) : 'Automatic'}
         authored={token?.node.$type} disabled={busy} onChange={nextType => {
           const resolvedType = nextType || automatic;

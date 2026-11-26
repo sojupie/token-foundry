@@ -63,7 +63,7 @@ export function DiagnosticsDialog({ graph, close, jump, editSource, sourceFor, r
       <IconButton size="xsmall" label="Next diagnostics" disabled={end === diagnostics.length}
         onClick={() => turn(page + 1)}><ChevronRight aria-hidden="true" /></IconButton>
     </>}>
-    <div className="max-h-[55dvh] overflow-auto">
+    <div className="scroll-pane-lg overflow-auto">
       <List ref={list} aria-label="Document diagnostics" data-variant="segmented" data-surface="transparent">
         {diagnostics.slice(start, end).map(issue => {
           const token = graph.tokens.get(issue.path);
@@ -84,7 +84,7 @@ export function DiagnosticsDialog({ graph, close, jump, editSource, sourceFor, r
               if (sourceOnly || issue.target.kind === 'source') revealSource(issue);
               else { target.current = issue.target; setOpen(false); }
             }}>
-              <span className="grid min-w-0 gap-1 text-start">
+              <span className="grid min-w-0 gap-space50 text-start">
                 <code className="wrap-anywhere">{tokenDisplayName(issue.path) || (issue.target.kind === 'source' ? issue.file : 'Top level')}</code>
                 <span className="wrap-anywhere copy-small tone-supporting">
                   {issue.severity === 'error' ? 'Error' : 'Warning'} · {issue.file}{field && ' · ' + field} · {issue.message}

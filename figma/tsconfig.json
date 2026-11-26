@@ -1,0 +1,6 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": { "lib": ["ES2024"], "types": ["@figma/plugin-typings"] },
+  "include": ["code.ts"],
+  "exclude": []
+}

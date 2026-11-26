@@ -1,0 +1,16 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "token-foundry-figma-state-staging",
+  "main": "worker/figma-state.ts",
+  "compatibility_date": "2026-11-01",
+  "workers_dev": false,
+  "preview_urls": false,
+  "durable_objects": {
+    "bindings": [{ "name": "WORKSPACE_INDEX", "class_name": "WorkspaceRegistry" }],
+    // Staging verification must exercise the uploaded code in active objects.
+    "code_update_strategy": { "mode": "immediate" }
+  },
+  "migrations": [{ "tag": "figma-sync-v1", "new_sqlite_classes": ["FigmaSession"] },
+    { "tag": "shared-workspaces-v1", "new_sqlite_classes": ["SharedWorkspaceStore", "WorkspaceRegistry"] },
+    { "tag": "figma-sync-v2", "deleted_classes": ["FigmaSession"] }]
+}

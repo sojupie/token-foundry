@@ -1,0 +1,12 @@
+.easing-field { border: 0; margin: 0; padding: 0; min-inline-size: 0; display: grid; gap: var(--md-sys-measurement-space100); }
+.easing-field legend { padding: 0; margin-block-end: var(--md-sys-measurement-space100); }
+.easing-points { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--md-sys-measurement-space100); }
+.easing-preview { display: flex; align-items: center; gap: var(--md-sys-measurement-space200); }
+.easing-preview figure { margin: 0; inline-size: 160px; max-inline-size: 50%; flex-shrink: 0; }
+.easing-preview svg { inline-size: 100%; display: block; fill: none; stroke-width: 2; }
+.easing-guide { stroke: var(--md-sys-color-outline-variant); }
+.easing-handle { stroke: var(--md-sys-color-outline); stroke-dasharray: 3 3; }
+.easing-curve { stroke: var(--md-sys-color-primary); }
+.easing-playback { flex: 1; min-inline-size: 0; }
+.easing-track { margin-inline-end: var(--md-sys-measurement-space200); position: relative; block-size: var(--md-sys-measurement-space300); }
+.easing-track span { position: absolute; left: 0; inline-size: var(--md-sys-measurement-space200); block-size: var(--md-sys-measurement-space200); border-radius: var(--md-sys-shape-corner-full); background: var(--md-sys-color-primary); }

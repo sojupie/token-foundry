@@ -1,0 +1,273 @@
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--md-sys-color-surface);
+  color: var(--md-sys-color-on-surface);
+}
+
+body {
+  font: var(--md-sys-typescale-body-medium);
+  letter-spacing: var(--md-sys-typescale-body-medium-tracking);
+}
+
+.copy-small {
+  font: var(--md-sys-typescale-body-small);
+  letter-spacing: var(--md-sys-typescale-body-small-tracking);
+}
+
+.copy-body {
+  font: var(--md-sys-typescale-body-medium);
+  letter-spacing: var(--md-sys-typescale-body-medium-tracking);
+}
+
+.copy-emphasis {
+  font-weight: var(--md-ref-typeface-weight-medium);
+}
+
+.code-text {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+.tone-supporting {
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.tone-error {
+  color: var(--md-sys-color-error);
+}
+
+.sr-only {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.plugin-shell {
+  --forge-field-padding-block: var(--md-sys-measurement-space100);
+  --forge-field-icon-size: 20px;
+  --forge-field-icon-padding-inline: var(--md-sys-measurement-space150);
+  --forge-field-gap: var(--md-sys-measurement-space150);
+  block-size: 100dvh;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  background: var(--md-sys-color-surface);
+}
+
+.plugin-shell :is(p, h1, h2, h3, h4) {
+  margin: 0;
+}
+
+.plugin-appbar {
+  --_appbar-height: auto;
+  --_appbar-title-font: var(--md-sys-typescale-title-medium);
+  --_appbar-title-tracking: var(--md-sys-typescale-title-medium-tracking);
+  border-block-end: 1px solid var(--md-sys-color-outline-variant);
+}
+
+.plugin-appbar .md-appbar-row {
+  block-size: auto;
+  min-block-size: var(--md-sys-measurement-space600);
+  padding-block: var(--md-sys-measurement-space150);
+  padding-inline: var(--md-sys-measurement-space200) var(--md-sys-measurement-space100);
+}
+
+.plugin-appbar .md-appbar-copy {
+  padding-inline: 0;
+  gap: var(--md-sys-measurement-space25);
+}
+
+.plugin-status-pill {
+  padding: var(--md-sys-measurement-space50) var(--md-sys-measurement-space150);
+  border-radius: var(--md-sys-shape-corner-full);
+  background: var(--md-sys-color-surface-container-high);
+  color: var(--md-sys-color-on-surface-variant);
+  font-family: var(--md-sys-typescale-label-medium-font);
+  font-size: var(--md-sys-typescale-label-medium-size);
+  font-weight: var(--md-sys-typescale-label-medium-weight);
+  line-height: var(--md-sys-typescale-label-medium-line-height);
+  letter-spacing: var(--md-sys-typescale-label-medium-tracking);
+  white-space: nowrap;
+}
+
+.plugin-status-pill[data-tone="attention"] {
+  background: var(--md-sys-color-error-container);
+  color: var(--md-sys-color-on-error-container);
+}
+
+.plugin-status-pill[data-tone="saved"] {
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+}
+
+.plugin-progress-slot {
+  block-size: 4px;
+  overflow: hidden;
+}
+
+.plugin-progress {
+  inline-size: 100%;
+}
+
+.plugin-main {
+  min-block-size: 0;
+  overflow: auto;
+  padding: var(--md-sys-measurement-space200);
+  display: flex;
+  flex-direction: column;
+  gap: var(--md-sys-measurement-space200);
+}
+
+.plugin-nav {
+  border-block-start: 1px solid var(--md-sys-color-outline-variant);
+}
+
+.plugin-section,
+.plugin-stack {
+  display: grid;
+  gap: var(--md-sys-measurement-space150);
+  min-inline-size: 0;
+}
+
+.plugin-tokens-browse {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--md-sys-measurement-space150);
+  min-block-size: 0;
+}
+
+.plugin-group,
+.plugin-card-group {
+  display: grid;
+  gap: var(--md-sys-measurement-space100);
+  min-inline-size: 0;
+}
+
+.plugin-section-heading {
+  font: var(--md-sys-typescale-title-small);
+  letter-spacing: var(--md-sys-typescale-title-small-tracking);
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.plugin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--md-sys-measurement-space100);
+}
+
+.plugin-filters {
+  display: grid;
+  gap: var(--md-sys-measurement-space100);
+}
+
+.plugin-search-field {
+  inline-size: 100%;
+}
+
+.plugin-filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--md-sys-measurement-space100);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-inline-size: 0;
+}
+
+.plugin-token-list {
+  max-block-size: 18rem;
+  overflow: auto;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-sys-shape-corner-medium);
+}
+
+.plugin-tokens-browse .plugin-token-list {
+  flex: 1 1 0;
+  min-block-size: 10rem;
+  max-block-size: none;
+}
+
+.plugin-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--md-sys-measurement-space100);
+}
+
+.plugin-selection-node {
+  display: grid;
+  gap: var(--md-sys-measurement-space100);
+}
+
+.plugin-plain-list {
+  margin: 0;
+  padding-inline-start: var(--md-sys-measurement-space250);
+  display: grid;
+  gap: var(--md-sys-measurement-space50);
+  max-block-size: 14rem;
+  overflow: auto;
+}
+
+.plugin-main pre {
+  margin: 0;
+  max-block-size: 14rem;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.token-name,
+.token-value {
+  overflow-wrap: anywhere;
+}
+
+.token-color-value {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--md-sys-measurement-space100);
+}
+
+.token-swatch {
+  inline-size: var(--md-sys-measurement-space200);
+  block-size: var(--md-sys-measurement-space200);
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-sys-shape-corner-extra-small);
+}
+
+.plugin-back-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--md-sys-measurement-space100);
+}
+
+.plugin-color-input-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--md-sys-measurement-space150);
+}
+
+.plugin-color-input-row > :last-child {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+}
+
+.plugin-color-picker {
+  inline-size: var(--md-sys-measurement-space500, 2.5rem);
+  block-size: var(--md-sys-measurement-space500, 2.5rem);
+  margin-block-start: var(--md-sys-measurement-space100);
+  padding: 2px;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-sys-shape-corner-small);
+  background: var(--md-sys-color-surface-container);
+  cursor: pointer;
+}

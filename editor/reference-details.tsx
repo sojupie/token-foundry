@@ -42,9 +42,9 @@ function References({ path, data, jump, disabled }: ReferenceDetailsProps) {
   const [referencePage, setReferencePage] = useState(1);
   const [directPage, setDirectPage] = useState(1);
   const [indirectPage, setIndirectPage] = useState(1);
-  return <section aria-label="Token references" className="token-editor-section grid min-w-0 gap-2">
+  return <section aria-label="Token references" className="token-editor-section grid min-w-0 gap-space100">
     <h3 className="token-editor-section-title">Token relationships</h3>
-    {problems?.length ? <ul className="grid gap-1 copy-body tone-error">
+    {problems?.length ? <ul className="grid gap-space50 copy-body tone-error">
       {problems.map(issue => <li key={issue} className="wrap-anywhere">{issue}</li>)}
     </ul> : null}
     {links?.size ? <Disclosure compact label="References" summary={links.size + ' linked ' + (links.size === 1 ? 'value' : 'values')} open>
@@ -55,12 +55,12 @@ function References({ path, data, jump, disabled }: ReferenceDetailsProps) {
             <RelationshipRow path={target} disabled={disabled} jump={jump} detail={fieldLabel(path, link.field) + ' links to'}>
               {target ? tokenDisplayName(target) : link.text}
             </RelationshipRow>
-            {link.value !== undefined && <div className="flex flex-wrap items-center gap-x-2">
+            {link.value !== undefined && <div className="flex flex-wrap items-center gap-x-space100">
               <span className="token-editor-support">Resolved value</span>
               <TokenValue value={link.value} swatch wrap />
             </div>}
-            {(!target || link.text !== '{' + target + '}') && <Disclosure compact label="Link details" className="mt-2">
-              <dl className="token-editor-support grid gap-1">
+            {(!target || link.text !== '{' + target + '}') && <Disclosure compact label="Link details" className="margin-top-space100">
+              <dl className="token-editor-support grid gap-space50">
                 <div className="wrap-anywhere"><dt>Authored link</dt><dd><code>{link.text}</code></dd></div>
                 {link.parts.length > 0 && <div className="wrap-anywhere"><dt>Target location</dt>
                   <dd><code>{link.file ? link.file + ' · ' : ''}{link.parts.join(' / ')}</code></dd>
@@ -76,7 +76,7 @@ function References({ path, data, jump, disabled }: ReferenceDetailsProps) {
       [direct.size ? direct.size + ' direct' : '', downstream.size ? downstream.size + ' indirect' : ''].filter(Boolean).join(' · ')
     }>
       {([['Used by', direct, directPage, setDirectPage], ['Indirectly used by', downstream, indirectPage, setIndirectPage]] as const)
-        .map(([label, paths, page, setPage]) => paths.size > 0 && <section key={label} className="grid min-w-0 gap-1">
+        .map(([label, paths, page, setPage]) => paths.size > 0 && <section key={label} className="grid min-w-0 gap-space50">
           {label === 'Indirectly used by' && <h4 className="token-editor-label">Indirect uses</h4>}
           <ul aria-label={label} className="token-relationship-list">
             {pageItems(paths, page).map(item => {
@@ -100,7 +100,7 @@ function References({ path, data, jump, disabled }: ReferenceDetailsProps) {
 function RelationshipRow({ path, disabled, jump, detail, children }: {
   path: string | undefined; disabled: boolean; jump: (path: string) => void; detail: string; children: string;
 }) {
-  return <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-1">
+  return <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-space50">
     <div className="min-w-0">
       <code className="token-relationship-path wrap-anywhere">{children}</code>
       {detail && <div className="token-editor-support">{detail}</div>}
@@ -111,7 +111,7 @@ function RelationshipRow({ path, disabled, jump, detail, children }: {
 }
 
 function More({ total, page, setPage, label }: { total: number; page: number; setPage: (page: number) => void; label: string }) {
-  return total > pageSize && <div className="flex items-center justify-between gap-1 copy-small">
+  return total > pageSize && <div className="flex items-center justify-between gap-space50 copy-small">
     <Button type="button" size="xsmall" variant="text" disabled={page === 1}
       aria-label={'Previous ' + label} onClick={() => setPage(page - 1)}>Previous</Button>
     <span>{((page - 1) * pageSize + 1).toLocaleString()}–{Math.min(page * pageSize, total).toLocaleString()} of {total.toLocaleString()}</span>

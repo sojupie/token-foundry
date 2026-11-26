@@ -26,7 +26,7 @@ export function VariantSetupDialog({ workspace, files, root, reviewing, close, c
   const [error, setError] = useState('');
 
   return <ActionDialog open={!reviewing} title="Set up variants" onOpenChange={open => { if (!open && !reviewing) close(); }}>
-    <form className="grid gap-3" onSubmit={event => {
+    <form className="grid gap-space150" onSubmit={event => {
       event.preventDefault();
       setError('');
       try {
@@ -61,9 +61,9 @@ export function VariantSetupDialog({ workspace, files, root, reviewing, close, c
       }
     }}>
       <TextField label="Configuration name" required data-initial-focus value={name} onChange={event => setName(event.target.value)} />
-      <fieldset className="grid gap-1">
+      <fieldset className="grid gap-space50">
         <legend className="copy-body copy-emphasis">Shared source files</legend>
-        {files.map(file => <label key={file} className="flex items-center gap-2 copy-body">
+        {files.map(file => <label key={file} className="flex items-center gap-space100 copy-body">
           <Checkbox checked={base.has(file)} onChange={event => {
             const next = new Set(base);
             if (event.target.checked) next.add(file);
@@ -75,10 +75,10 @@ export function VariantSetupDialog({ workspace, files, root, reviewing, close, c
       <TextField label="First variant dimension" placeholder="Appearance" supporting="Optional. You can add more in Manage variants."
         value={dimension} onChange={event => setDimension(event.target.value)} />
       {dimension.trim() && <>
-        <FieldRow>{choices.map((choice, index) => <div key={choiceLabels[index]} className="grid gap-2">
+        <FieldRow>{choices.map((choice, index) => <div key={choiceLabels[index]} className="grid gap-space100">
           <TextField label={choiceLabels[index] ?? 'Choice'} required value={choice}
             onChange={event => setChoices(choices.with(index, event.target.value))} />
-          <label className="grid gap-1 copy-body">{index === 0 ? 'First choice source' : 'Second choice source'}
+          <label className="grid gap-space50 copy-body">{index === 0 ? 'First choice source' : 'Second choice source'}
             <Select aria-label={index === 0 ? 'First choice source' : 'Second choice source'} value={overrides[index]} onChange={event => {
               const file = event.target.value;
               setOverrides(overrides.with(index, file));
@@ -89,7 +89,7 @@ export function VariantSetupDialog({ workspace, files, root, reviewing, close, c
             </Select>
           </label>
         </div>)}</FieldRow>
-        <label className="grid gap-1 copy-body">Default choice
+        <label className="grid gap-space50 copy-body">Default choice
           <Select aria-label="Default choice" value={preferred} onChange={event => setPreferred(event.target.value)}>
             <SelectOption value="">Ask when previewing</SelectOption>
             {choices.map((choice, index) => <SelectOption key={choiceLabels[index]} value={String(index)}>{choice || (choiceLabels[index] ?? 'Choice')}</SelectOption>)}
@@ -98,7 +98,7 @@ export function VariantSetupDialog({ workspace, files, root, reviewing, close, c
         <p className="copy-body">The selected choice overrides matching tokens from the shared files.</p>
       </>}
       {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
-      <div className="flex justify-end gap-2">
+      <div className="flex justify-end gap-space100">
         <Button type="button" variant="text" data-dialog-close="">Cancel</Button>
         <Button type="submit" disabled={!name.trim()}>Set up variants</Button>
       </div>

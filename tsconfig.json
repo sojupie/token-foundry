@@ -53,6 +53,10 @@
     "**/*.cjs"
   ],
   "exclude": [
+    "figma/code.ts",
+    "figma/library-adapter.ts",
+    "figma/dist",
+    "test-results",
     "dist",
     "node_modules"
   ]

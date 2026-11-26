@@ -3,14 +3,17 @@ import { useEffect, useRef, useState } from 'react';
 import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { GitPullRequest } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Button, ButtonLink, Select, SelectOption } from '@token-catalog/forge-react';
+import { Button, ButtonLink, Card, Progress, Select, SelectOption } from '@token-catalog/forge-react';
 import { ActionDialog } from '@/components/ui/dialog';
 import type { WorkspaceConnection, WorkspaceConnectorProps } from '../../editor/lib/connector.ts';
 import { errorMessage, isRecord, isUnknownArray } from '../../lib/json.ts';
 import { openWorkspace } from '../../lib/workspace.ts';
-import { baseChanged, isSnapshot, repositoryName } from './contract.ts';
+import { baseChanged, commitOid, isSnapshot, proposalBranch, proposalUnavailable, repositoryName } from './contract.ts';
+import type { RepositorySnapshot } from './contract.ts';
+import { isWorkspaceView } from '../workspace/model.ts';
 
 const staleRevision = Symbol('stale revision');
+const unavailableProposal = Symbol('unavailable proposal');
 const sessionKey = ['github', 'session'] as const;
 
 async function post(action: 'open' | 'propose', data: object): Promise<unknown> {
@@ -21,32 +24,52 @@ async function post(action: 'open' | 'propose', data: object): Promise<unknown> 
     redirect: 'manual',
   });
   if (response.type === 'opaqueredirect' || response.status === 401) throw new Error('Your GitHub session needs to be renewed.');
-  if (!response.headers.get('Content-Type')?.includes('application/json')) throw new Error('The hosted Git service is unavailable or requires an invitation.');
+  if (!response.headers.get('Content-Type')?.includes('application/json')) throw new Error('The hosted Git service is unavailable. Your draft is retained.');
   const payload: unknown = await response.json();
   if (!response.ok) {
+    if (response.status === 409 && isRecord(payload) && payload['code'] === proposalUnavailable) return unavailableProposal;
     if (action === 'propose' && response.status === 409 && isRecord(payload) && payload['code'] === baseChanged) return staleRevision;
     throw new Error(isRecord(payload) && typeof payload['message'] === 'string' ? payload['message'] : 'The Git request failed.');
   }
   return payload;
 }
 
-async function openConnection(repository: string): Promise<WorkspaceConnection> {
-  const response = await post('open', { repository });
+async function openConnection(repository: string, branch?: string): Promise<WorkspaceConnection> {
+  let response = await post('open', { repository, ...(branch ? { branch } : {}) });
+  if (response === unavailableProposal && branch) response = await post('open', { repository });
   if (!isSnapshot(response) || response.repository !== repository) throw new Error('The repository snapshot could not be read.');
+  return snapshotConnection(response);
+}
+
+export function snapshotConnection(response: RepositorySnapshot): WorkspaceConnection {
+  const { repository } = response;
   return {
     workspace: openWorkspace(repository, response.files),
     root: response.root,
-    refresh: () => openConnection(repository),
-    submit: async (changes) => {
-      const result = await post('propose', { repository, revision: response.revision, changes });
-      if (result === staleRevision) return { status: 'stale' };
-      if (!isRecord(result) || typeof result['url'] !== 'string') throw new Error('GitHub did not return a pull request.');
+    snapshot: response,
+    ...(response.branch ? { branch: response.branch } : {}),
+    ...(response.pullRequest ? { pullRequest: response.pullRequest } : {}),
+    refresh: () => openConnection(repository, response.branch),
+    submit: async (changes, workspace) => {
+      const result = await post('propose', { repository, revision: response.revision, changes, ...(response.branch ? { branch: response.branch } : {}), ...(workspace ? { workspace } : {}) });
+      if (result === staleRevision || result === unavailableProposal) return { status: 'stale' };
+      if (!isRecord(result) || typeof result['url'] !== 'string') throw new Error('GitHub did not return a merge request.');
       const url = new URL(result['url']);
       const prefix = '/' + repository + '/pull/';
       if (url.origin !== 'https://github.com' || !url.pathname.startsWith(prefix) || !/^\d+$/u.test(url.pathname.slice(prefix.length))) {
-        throw new Error('GitHub did not return a pull request.');
+        throw new Error('GitHub did not return a merge request.');
       }
-      return { status: 'submitted', url: url.href };
+      if (typeof result['branch'] !== 'string' || !proposalBranch.test(result['branch']) || typeof result['revision'] !== 'string' || !commitOid.test(result['revision'])) {
+        return { status: 'submitted', url: url.href };
+      }
+      const files = new Map(response.files.map(file => [file.path, file.text]));
+      for (const change of changes) {
+        if (change.after === null) files.delete(change.path);
+        else files.set(change.path, change.after);
+      }
+      if (result['workspace'] !== undefined && !isWorkspaceView(result['workspace'])) throw new Error('The repository result has an invalid shared checkpoint. Retry this reviewed save.');
+      return { status: 'submitted', url: url.href, ...(isWorkspaceView(result['workspace']) ? { shared: result['workspace'] } : {}), connection: snapshotConnection({ ...response, revision: result['revision'], branch: result['branch'], pullRequest: url.href,
+        files: [...files].map(([path, text]) => ({ path, text })) }) };
     },
   };
 }
@@ -60,7 +83,7 @@ async function getSession(signal: AbortSignal): Promise<Session> {
   if (response.type === 'opaqueredirect' || response.status === 401) return { state: 'signed-out' };
   if (response.status === 403) return { state: 'forbidden' };
   if (!response.ok || !response.headers.get('Content-Type')?.includes('application/json')) {
-    throw new Error('The hosted Git service is unavailable or requires an invitation.');
+    throw new Error('The hosted Git service is unavailable. Your draft is retained.');
   }
   const data: unknown = await response.json();
   if (!isRecord(data) || typeof data['login'] !== 'string' || !isUnknownArray(data['repositories'])) {
@@ -75,7 +98,7 @@ export function OpenGitHub(props: WorkspaceConnectorProps) {
   return <QueryClientProvider client={queryClient}><GitHubConnector {...props} /></QueryClientProvider>;
 }
 
-function GitHubConnector({ disabled, connect, canReplace }: WorkspaceConnectorProps) {
+function GitHubConnector({ disabled, connect, canReplace, presentation = 'menu' }: WorkspaceConnectorProps) {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [preferredRepository, setPreferredRepository] = useState('');
@@ -89,7 +112,7 @@ function GitHubConnector({ disabled, connect, canReplace }: WorkspaceConnectorPr
     retry: false,
   });
   const { mutate: connectRepository, reset: resetConnection, isPending: busy, error } = useMutation({
-    mutationFn: openConnection,
+    mutationFn: (repository: string) => openConnection(repository),
     networkMode: 'always',
   });
 
@@ -114,24 +137,38 @@ function GitHubConnector({ disabled, connect, canReplace }: WorkspaceConnectorPr
   const repositories = connected?.repositories ?? [];
   const repository = repositories.includes(preferredRepository) ? preferredRepository : repositories[0] ?? '';
   function openRepository() {
-    if (busy || !repository || !canReplace()) return;
-    connectRepository(repository, { onSuccess: (connection) => {
-      connect(connection);
-      setOpen(false);
-    } });
+    if (busy || !repository) return;
+    canReplace(() => {
+      connectRepository(repository, { onSuccess: (connection) => {
+        connect(connection);
+        setOpen(false);
+      } });
+    });
   }
 
   const unavailable = session?.state === 'forbidden' ? 'Your account does not have access to GitHub integration.' :
-    connected && !repositories.length ? 'Your account has no repositories available in Token Foundry.' : undefined;
+    connected && !repositories.length ? 'Your account has no repositories available in Foundry.' : undefined;
   return <>
-    <CommandMenu label="Manage integrations" triggerRef={setOpener} status={connected ? 'GitHub connected as @' + connected.login : ''}
+    {presentation === 'workspace' ? <Card
+      variant="outlined"
+      as="section"
+      aria-label="GitHub"
+      headline="GitHub"
+      headlineAs="h3"
+      supporting={isPending ? 'Checking account…' : connected ? 'Connected as @' + connected.login : sessionError ? errorMessage(sessionError) : 'Connect GitHub to open a repository and submit merge requests.'}
+      actions={
+        <Button variant="outlined" size="small" disabled={disabled || Boolean(unavailable)} ref={setOpener} onClick={() => { resetConnection(); setOpen(true); }}>
+          {connected ? 'Choose repository' : 'Connect account'}
+        </Button>
+      }
+    /> : <CommandMenu label="Manage integrations" triggerRef={setOpener} status={connected ? 'GitHub connected as @' + connected.login : ''}
       sections={[[{ label: 'Open GitHub repository…', icon: <GitPullRequest aria-hidden="true" />, title: unavailable,
-        disabled: disabled || Boolean(unavailable), run: () => { resetConnection(); setOpen(true); } }]]} />
+        disabled: disabled || Boolean(unavailable), run: () => { resetConnection(); setOpen(true); } }]]} />}
     <ActionDialog open={open} busy={busy} opener={opener} onOpenChange={(next) => { if (!busy) setOpen(next); }}
       title="Open GitHub repository" description={connected ? 'Connected as @' + connected.login :
         'Sign in to see the repositories available to you.'}>
-      <form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); openRepository(); }}>
-        {isPending && <output className="copy-body tone-supporting">Checking GitHub session…</output>}
+      <form className="grid gap-space200" onSubmit={(event) => { event.preventDefault(); openRepository(); }}>
+        {isPending && <Progress label="Checking GitHub session" />}
         {sessionError && <Alert variant="destructive"><AlertDescription>{errorMessage(sessionError)}</AlertDescription></Alert>}
         {!sessionError && session?.state === 'signed-out' && <ButtonLink variant="outlined" className="justify-self-start" href="/git/sign-in" target="_blank" rel="noreferrer" onClick={(event) => {
             const popup = window.open('/git/sign-in', 'token-foundry-sign-in', 'popup,width=620,height=720');
@@ -142,12 +179,12 @@ function GitHubConnector({ disabled, connect, canReplace }: WorkspaceConnectorPr
               setCheckingSignIn(true);
             }
           }}>{checkingSignIn ? 'Continue in GitHub' : 'Sign in to GitHub'}</ButtonLink>}
-        {connected && (repositories.length ? <div className="grid gap-2">
-          <label htmlFor="git-repository" className="copy-body copy-emphasis">Repository</label>
-          <Select id="git-repository" value={repository} onChange={(event) => setPreferredRepository(event.target.value)} disabled={busy}>
+        {connected && (repositories.length ? <>
+          <p className="copy-small tone-supporting">Opening a repository starts a new merge request workspace.</p>
+          <Select id="git-repository" label="Repository" value={repository} onChange={(event) => setPreferredRepository(event.target.value)} disabled={busy}>
             {repositories.map((name) => <SelectOption key={name} value={name}>{name}</SelectOption>)}
           </Select>
-        </div> : <p className="copy-body tone-supporting">No configured repositories are available to this GitHub account.</p>)}
+        </> : <p className="copy-body tone-supporting">No configured repositories are available to this GitHub account.</p>)}
         {error && <Alert variant="destructive"><AlertDescription>{errorMessage(error)}</AlertDescription></Alert>}
         {connected && repositories.length > 0 && <div className="flex justify-end">
           <Button type="submit" disabled={busy || !repository}>{busy ? 'Opening…' : 'Open repository'}</Button>

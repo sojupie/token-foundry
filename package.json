@@ -12,13 +12,15 @@
     "deploy:sevan": "npm run build:hosted -- --outDir .wrangler/staging-assets && wrangler deploy --config wrangler.staging.jsonc",
     "preview": "vite preview",
     "test:browser": "playwright test",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p figma/tsconfig.json",
+    "build:figma": "node scripts/build-figma.ts",
     "lint": "node scripts/check-source.ts && oxlint --type-aware --deny-warnings --report-unused-disable-directives-severity=error",
     "check": "npm run typecheck && npm run lint && node --test tests/*.test.ts"
   },
   "dependencies": {
+    "@noble/hashes": "^2.4.0",
     "@tanstack/react-query": "^5.107.1",
-    "@token-catalog/forge-react": "file:vendor/token-catalog-forge-react-0.3.18.tgz",
+    "@token-catalog/forge-react": "file:vendor/token-catalog-forge-react-0.3.27.tgz",
     "clsx": "^2.1.1",
     "colorjs.io": "0.7.1",
     "diff": "^9.0.0",
@@ -31,6 +33,7 @@
     "tailwind-merge": "^3.7.0"
   },
   "devDependencies": {
+    "@figma/plugin-typings": "^1.142.0",
     "@playwright/test": "1.65.0",
     "@tailwindcss/oxide": "^4.3.5",
     "@tailwindcss/vite": "^4.3.5",
@@ -38,6 +41,8 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.3.0",
+    "esbuild": "^0.28.2",
+    "miniflare": "5.20261110.1-beta",
     "oxlint": "^1.93.0",
     "oxlint-tsgolint": "^7.0.2006",
     "tailwindcss": "^4.3.5",

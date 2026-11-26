@@ -12,7 +12,7 @@ const rowKeys: Record<string, string> = {
   'Edit token': 'E', References: 'R', 'Copy token': 'C', 'Rename token': 'N', 'Move token': 'M', 'Duplicate token': 'U',
 };
 const workspace: Layer = { kind: 'workspace' };
-const menuKeys: Record<string, string> = { File: 'F', Edit: 'E', View: 'I', Variants: 'A', Help: 'K' };
+const menuKeys: Record<string, string> = { File: 'F', Edit: 'E', View: 'I', Help: 'K' };
 const commandSelector = '[role="menuitem"]';
 
 function sendMenuKey(element: Element, key: string) {

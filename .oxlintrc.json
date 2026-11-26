@@ -17,6 +17,9 @@
     "perf": "error"
   },
   "ignorePatterns": [
+    "figma/dist/**",
+    "test-results/**",
+    ".wrangler/**",
     "dist/**"
   ],
   "rules": {

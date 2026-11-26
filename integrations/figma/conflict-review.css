@@ -1,0 +1,62 @@
+.conflict-review,
+.conflict-review-header,
+.conflict-review-earlier {
+  display: grid;
+  gap: var(--md-sys-measurement-space100);
+}
+
+.conflict-review {
+  gap: var(--md-sys-measurement-space150);
+}
+
+.conflict-review h2,
+.conflict-review h3,
+.conflict-review h4 {
+  font-family: var(--md-sys-typescale-title-medium-font);
+  font-size: var(--md-sys-typescale-title-medium-size);
+  font-weight: var(--md-sys-typescale-title-medium-weight);
+  line-height: var(--md-sys-typescale-title-medium-line-height);
+  letter-spacing: var(--md-sys-typescale-title-medium-tracking);
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.conflict-review p {
+  margin: 0;
+}
+
+.conflict-review ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--md-sys-measurement-space150);
+}
+
+.conflict-review dl {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--md-sys-measurement-space50) var(--md-sys-measurement-space150);
+  margin: 0;
+  font: var(--md-sys-typescale-body-small);
+}
+
+.conflict-review dt {
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.conflict-review dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.conflict-review-input {
+  display: grid;
+  min-inline-size: 0;
+}
+
+.conflict-review .actions {
+  display: flex;
+  gap: var(--md-sys-measurement-space100);
+  flex-wrap: wrap;
+}

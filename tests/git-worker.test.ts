@@ -126,7 +126,7 @@ await test('the Worker gates access, opens pinned files and safely retries a rev
       }
     }
     if (pathname === repo + '/compare/' + base + '...' + headCommit) {
-      return Response.json({ total_commits: 1, files: [operation === 'create' ? { filename: manifestPath, status: 'added' } :
+      return Response.json({ status: 'ahead', ahead_by: 1, behind_by: 0, total_commits: 1, files: [operation === 'create' ? { filename: manifestPath, status: 'added' } :
         operation === 'move' ? { filename: movedPath, previous_filename: path, status: 'renamed' } : { filename: path, status: 'modified' }] });
     }
     if (method === 'GET' && pathname === repo + '/pulls') {
@@ -225,7 +225,7 @@ await test('the Worker gates access, opens pinned files and safely retries a rev
   simulateFailure = false;
   const retried = await post('propose', proposal);
   assert.equal(retried.status, 200);
-  assert.deepEqual(await retried.json(), { url: 'https://github.com/org/design-system/pull/42' });
+  assert.deepEqual(await retried.json(), { url: 'https://github.com/org/design-system/pull/42', branch: head, revision: headCommit });
   assert.equal((await post('propose', proposal)).status, 200);
   assert.equal(commits, 1);
   assert.equal(pullRequests, 2);

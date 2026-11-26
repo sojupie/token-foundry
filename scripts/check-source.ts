@@ -3,12 +3,15 @@ import { extname, join } from 'node:path';
 import { Scanner } from '@tailwindcss/oxide';
 import { __unstable__loadDesignSystem } from 'tailwindcss';
 
-const generated = new Set(['.git', 'dist', 'node_modules', 'sources/originals']);
+const generated = new Set(['.git', 'dist', 'node_modules', '.wrangler', 'test-results', 'figma/dist', 'sources/originals']);
 const code = /\.(?:[cm]?[jt]s|[jt]sx|astro)$/u;
 const suppressed = /(?:\/\/|\/\*|<!--)\s*(?:(?:oxlint|eslint)-disable\b|@ts-(?:ignore|nocheck|expect-error)\b)/u;
-const uiSource = /^(?:(?:editor|integrations)\/.*\.(?:[cm]?[jt]sx?|css)|index\.html)$/u;
+const uiSource = /^(?:(?:editor|integrations|figma)\/.*\.(?:[cm]?[jt]sx?|css)|index\.html)$/u;
 const colorProperty = /^(?:color|[\w-]+-color|background|border|outline|fill|stroke|--tw-gradient-(?:from|via|to)|--color-[\w-]+)$/u;
 const typographyProperty = /^(?:font(?:-[\w-]+)?|-(?:webkit|moz-osx)-font-smoothing|line-height|letter-spacing|word-spacing|text-(?:transform|shadow|indent|rendering|underline-offset|box-[\w-]+|decoration(?:-[\w-]+)?|emphasis(?:-[\w-]+)?)|--(?:font|leading|tracking|text)-[\w-]+)$/u;
+const spacingSizeProperty = /^(?:gap|row-gap|column-gap|padding(?:-[\w-]+)?|margin(?:-[\w-]+)?|inset(?:-[\w-]+)?|top|right|bottom|left|width|height|min-width|min-height|max-width|max-height|inline-size|block-size|min-inline-size|min-block-size|max-inline-size|max-block-size|space-[xy]|--tw-space-[xy]-reverse)$/u;
+const allowedStructuralValues = /^(?:0|0px|auto|full|100%|100vh|100dvh|100vw|min-content|max-content|fit-content|none)$/u;
+const allowedLayoutUtilities = new Set(['sr-only', 'container']);
 
 const theme = await readFile(new URL(import.meta.resolve('tailwindcss/theme.css')), 'utf8');
 const workspace = await readFile('editor/workspace.css', 'utf8');
@@ -44,14 +47,15 @@ async function check(folder: string): Promise<void> {
   const entries = await readdir(folder || '.', { withFileTypes: true });
   await Promise.all(entries.map(async (entry) => {
     const path = join(folder, entry.name);
-    if (generated.has(path)) return;
+    const normalizedPath = path.replaceAll('\\', '/');
+    if (generated.has(normalizedPath)) return;
     if (entry.isDirectory()) await check(path);
-    else if (entry.isFile() && (code.test(path) || uiSource.test(path))) {
+    else if (entry.isFile() && (code.test(normalizedPath) || uiSource.test(normalizedPath))) {
       const contents = await readFile(path, 'utf8');
       if (code.test(path) && suppressed.test(contents)) {
         throw new Error('Type or lint suppression is forbidden in ' + path + '.');
       }
-      if (uiSource.test(path)) checkStyles(path, contents);
+      if (uiSource.test(normalizedPath)) checkStyles(normalizedPath, contents);
     }
   }));
 }
@@ -62,14 +66,18 @@ const utilities = [...candidates.keys()];
 const violations: string[] = [];
 design.candidatesToCss(utilities).forEach((css, index) => {
   const utility = utilities[index];
-  if (!css || !utility) return;
+  if (!css || !utility || allowedLayoutUtilities.has(utility)) return;
   const forbidden = [...css.matchAll(/^\s*([\w-]+):\s*([^;]+);/gmu)].some(([, property, value]) =>
-    !!property && (colorProperty.test(property) || typographyProperty.test(property) ||
-      property === 'background-image' && !!value?.includes('gradient(') && !value.includes('--tw-gradient-stops')));
+    !!property && (
+      colorProperty.test(property) ||
+      typographyProperty.test(property) ||
+      (spacingSizeProperty.test(property) && !allowedStructuralValues.test(value?.trim() ?? '')) ||
+      property === 'background-image' && !!value?.includes('gradient(') && !value.includes('--tw-gradient-stops')
+    ));
   if (!forbidden) return;
   for (const location of candidates.get(utility) ?? []) violations.push(location + '  ' + utility);
 });
 if (violations.length) {
-  process.stderr.write('Use Forge components or token-backed CSS for color and typography.\n' + violations.toSorted().join('\n') + '\n');
+  process.stderr.write('Use Forge components or token-backed CSS for color, typography, spacing, and sizing.\n' + violations.toSorted().join('\n') + '\n');
   process.exitCode = 1;
 }

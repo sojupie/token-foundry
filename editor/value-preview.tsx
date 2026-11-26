@@ -30,9 +30,9 @@ function MotionPreview({ curve, duration = '650ms', delay = '0ms' }: {
   const [end, setEnd] = useState(false);
   if (!Array.isArray(curve) || !curve.every(coordinate => typeof coordinate === 'number')) return null;
   const easing = 'cubic-bezier(' + curve.join(', ') + ')';
-  return <div className="grid min-w-0 gap-1" aria-label="Timing preview">
-    <div className="relative h-6 rounded-full muted-surface" aria-hidden="true">
-      <span className="absolute inset-y-1 aspect-square rounded-full timing-preview-marker motion-reduce:transition-none"
+  return <div className="grid min-w-0 gap-space50" aria-label="Timing preview">
+    <div className="relative preview-bar rounded-full muted-surface" aria-hidden="true">
+      <span className="absolute preview-marker-inset aspect-square rounded-full timing-preview-marker motion-reduce:transition-none"
         style={{ left: end ? 'calc(100% - 1.25rem)' : '0.25rem', transitionProperty: 'left',
           transitionDuration: duration, transitionDelay: delay, transitionTimingFunction: easing }} />
     </div>
@@ -53,9 +53,9 @@ export function ValuePreview({ type, value }: { type: string; value: JsonValue |
   if (validateTokenValue(type, value)) return null;
   if (type === 'color') {
     const preview = displayColor(value, gamut);
-    return preview && <div className="grid gap-1" aria-label="Color preview">
+    return preview && <div className="grid gap-space50" aria-label="Color preview">
       <div className="overflow-hidden rounded-lg border color-preview-backdrop">
-        <div className="h-10" style={{ backgroundColor: preview.css }} />
+        <div className="preview-strip" style={{ backgroundColor: preview.css }} />
       </div>
       {preview.fallback && <p className="copy-small tone-supporting">{preview.fallback}</p>}
     </div>;
@@ -69,8 +69,8 @@ export function ValuePreview({ type, value }: { type: string; value: JsonValue |
       layer['inset'] === true ? 'inset' : '', cssLength(layer['offsetX']), cssLength(layer['offsetY']),
       cssLength(layer['blur']), cssLength(layer['spread']), displayColor(layer['color'], gamut)?.css ?? 'transparent',
     ].filter(Boolean).join(' ')).join(', ');
-    return <div className="grid min-h-24 place-items-center rounded-lg border p-5" aria-label="Shadow preview">
-      <div className="h-12 w-24 rounded-lg editor-surface" style={{ boxShadow: css }} />
+    return <div className="grid preview-box-tall place-items-center rounded-lg border pad-space250" aria-label="Shadow preview">
+      <div className="preview-swatch-wide rounded-lg editor-surface" style={{ boxShadow: css }} />
     </div>;
   }
   if (type === 'gradient' && Array.isArray(value)) {
@@ -78,7 +78,7 @@ export function ValuePreview({ type, value }: { type: string; value: JsonValue |
       (displayColor(stop['color'], gamut)?.css ?? 'transparent') + ' ' + clampGradientPosition(Number(stop['position'])) * 100 + '%');
     if (!stops[0]) return null;
     const background = 'linear-gradient(90deg, ' + (stops.length > 1 ? stops.join(', ') : stops[0] + ', ' + stops[0]) + ')';
-    return <div className="h-12 rounded-lg border" style={{ background }} aria-label="Gradient preview" />;
+    return <div className="preview-tile rounded-lg border" style={{ background }} aria-label="Gradient preview" />;
   }
   if (type === 'typography' && isJsonObject(value)) {
     const { fontFamily, fontWeight, fontSize, letterSpacing, lineHeight } = value;
@@ -88,7 +88,7 @@ export function ValuePreview({ type, value }: { type: string; value: JsonValue |
       fontSize: cssLength(fontSize), letterSpacing: cssLength(letterSpacing),
       fontWeight: typeof fontWeight === 'number' ? fontWeight : typeof fontWeight === 'string' ? weights[fontWeight] : undefined,
       lineHeight: typeof lineHeight === 'number' ? lineHeight : undefined };
-    return <div className="max-h-48 overflow-auto rounded-lg border p-3" aria-label="Typography preview">
+    return <div className="scroll-list-xl overflow-auto rounded-lg border pad-space150" aria-label="Typography preview">
       <p className="wrap-anywhere" style={style}>The quick brown fox jumps over the lazy dog.</p>
     </div>;
   }

@@ -9,6 +9,8 @@ export class HttpError extends Error {
   }
 }
 
+export const randomSecret = () => [...crypto.getRandomValues(new Uint8Array(32))].map(b => b.toString(16).padStart(2, '0')).join('');
+
 export function fail(status: number, message: string, code?: string): never {
   throw new HttpError(status, message, code);
 }

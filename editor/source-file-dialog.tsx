@@ -35,7 +35,7 @@ export function SourceFileDialog({ action, workspace, root, reviewing, close, re
   const title = action.kind === 'create' ? 'New source file' : action.kind === 'relocate' ? 'Rename or move source file' : 'Remove source file';
   return <ActionDialog open={!reviewing} title={title} description={action.kind === 'create' ? undefined : action.file}
     onOpenChange={open => { if (!open) close(); }}>
-    <form className="grid gap-3" onSubmit={event => {
+    <form className="grid gap-space150" onSubmit={event => {
       event.preventDefault();
       try {
         if (action.kind === 'remove') {
@@ -74,7 +74,7 @@ export function SourceFileDialog({ action, workspace, root, reviewing, close, re
       {action.kind === 'create' && <>
         <TextField label="File name" required data-initial-focus value={path} placeholder="brand"
           onChange={event => { setPath(event.target.value); setError(''); }} />
-        <label className="grid gap-1 copy-body">Folder
+        <label className="grid gap-space50 copy-body">Folder
           <Select aria-label="Folder" value={folder} onChange={event => setFolder(event.target.value)}>
             <SelectOption value="">{root || 'Workspace root'}</SelectOption>
             {folders.map(item => <SelectOption key={item} value={item}>{item}</SelectOption>)}
@@ -89,7 +89,7 @@ export function SourceFileDialog({ action, workspace, root, reviewing, close, re
         onChange={event => { setPath(event.target.value); setError(''); }} />}
       {action.kind === 'remove' && <p className="copy-body">Review the file removal and any references affected by it.</p>}
       {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
-      <div className="flex justify-end gap-2">
+      <div className="flex justify-end gap-space100">
         <Button type="button" data-initial-focus={action.kind === 'remove' ? '' : undefined} data-dialog-close="" variant="text">Cancel</Button>
         <Button type="submit">{action.kind === 'remove' ? 'Review removal' : 'Review file change'}</Button>
       </div>

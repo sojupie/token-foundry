@@ -36,10 +36,11 @@ function onKeyDownCapture(event: KeyboardEvent<HTMLDivElement>) {
   enabled[next]?.focus();
 }
 
-export function useWorkspaceRovingButtons(view: string, blocked: boolean, hasBulkActions: boolean, canCreate: boolean) {
+export function useWorkspaceRovingButtons(view: string, blocked: boolean, hasBulkActions: boolean, canCreate: boolean, desktop: boolean) {
   const ref = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
-    for (const group of ref.current?.querySelectorAll(groupSelector) ?? []) {
+    const visibleGroups = '[data-roving-buttons], .workspace-rail.' + (desktop ? 'md-navigation-rail' : 'md-navigation-bar') + ' .md-nav-items';
+    for (const group of ref.current?.querySelectorAll(visibleGroups) ?? []) {
       const toolbar = group.getAttribute('data-roving-buttons');
       if (toolbar !== null && toolbar !== 'commands' && view !== 'tokens') continue;
       const enabled = (blocked && toolbar !== 'commands') || (toolbar === 'bulk' && !hasBulkActions) ? [] :
@@ -49,6 +50,6 @@ export function useWorkspaceRovingButtons(view: string, blocked: boolean, hasBul
       const focused = enabled.find(button => button === document.activeElement);
       setStop(group, focused ?? current ?? previous ?? enabled[0]);
     }
-  }, [view, blocked, hasBulkActions, canCreate]);
+  }, [view, blocked, hasBulkActions, canCreate, desktop]);
   return { ref, onFocusCapture, onKeyDownCapture };
 }

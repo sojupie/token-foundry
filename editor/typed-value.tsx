@@ -105,8 +105,8 @@ function StyledSelect({ label, value, options, change, busy, action }: {
   action?: ReactNode;
 }) {
   const id = useId();
-  return <div className="flex min-w-0 flex-col gap-1">
-    <div className="flex items-center justify-between gap-2">
+  return <div className="flex min-w-0 flex-col gap-space50">
+    <div className="flex items-center justify-between gap-space100">
       <label htmlFor={id} className="token-editor-label">{label}</label>{action}
     </div>
     <Select id={id} className="w-full" value={value} disabled={busy} onChange={event => change(event.target.value)}>
@@ -150,12 +150,12 @@ function TypedValue(props: FieldProps) {
     ? { path: edge.target, field: valueIndex < 0 ? [] : edge.parts.slice(valueIndex + 1) } : undefined;
   const linkButton = field.length > 0 && <IconButton type="button" size="xsmall" label={'Link ' + label} title={'Link ' + label}
     disabled={edit.busy || !edit.file} aria-haspopup="dialog" onClick={() => setLinking(true)}><Link2 aria-hidden="true" /></IconButton>;
-  return <div className="grid min-w-0 gap-1.5">
-    {reference ? <div className="grid min-w-0 gap-1   copy-small">
+  return <div className="grid min-w-0 gap-space75">
+    {reference ? <div className="grid min-w-0 gap-space50 copy-small">
       <span className="copy-emphasis">{label}</span>
       <TokenValue value={value} authored wrap />
       {literal !== undefined && <TokenValue value={literal} swatch wrap />}
-      <div className="flex flex-wrap gap-1">
+      <div className="flex flex-wrap gap-space50">
         <Button type="button" size="xsmall" variant="text" disabled={edit.busy || !edit.file} onClick={() => setLinking(true)}>Change link</Button>
         <Button type="button" size="xsmall" variant="text" disabled={edit.busy} onClick={() => write(literal ?? defaultValue(type))}>Use literal</Button>
       </div>
@@ -177,14 +177,14 @@ function LiteralField(props: FieldProps & { action?: ReactNode }) {
   switch (type) {
     case 'number': return <NumberInput {...props} />;
     case 'numberOrNone':
-      return value === 'none' ? <div className="flex items-center justify-between gap-2 copy-body">{label} · none{action}</div> : <NumberInput {...props} />;
+      return value === 'none' ? <div className="flex items-center justify-between gap-space100 copy-body">{label} · none{action}</div> : <NumberInput {...props} />;
     case 'fontWeight': return <TextField label={label} value={displayField(value)} disabled={edit.busy} trailing={action} data-primary-editor
       onChange={event => write(numericValue(event.target.value))} />;
     case 'fontName':
     case 'string':
     case 'hex': return <TextField label={label} value={displayField(value)} disabled={edit.busy} trailing={action} data-primary-editor
       onChange={event => write(event.target.value)} />;
-    case 'boolean': return <div className="flex items-center justify-between gap-2"><label className="flex min-h-8 items-center gap-2 copy-body">
+    case 'boolean': return <div className="flex items-center justify-between gap-space100"><label className="flex check-label-min items-center gap-space100 copy-body">
       <Checkbox checked={value === true} disabled={edit.busy} onChange={event => write(event.target.checked)} />{label}
     </label>{action}</div>;
     case 'dimensionUnit':
@@ -196,7 +196,7 @@ function LiteralField(props: FieldProps & { action?: ReactNode }) {
       return <StyledSelect label={label} options={options} value={displayField(value)} busy={edit.busy} change={write} action={action} />;
     }
     case 'fontFamily':
-      return <div className="grid gap-2">
+      return <div className="grid gap-space100">
         {Array.isArray(value) ? <>{action && <FieldHeading label={label} action={action} />}<ArrayFields {...props} values={value} itemType="fontName" itemLabel="Font" min={1} /></> :
           <><TextField label={label} value={displayField(value)} disabled={edit.busy} trailing={action} data-primary-editor
             onChange={event => write(event.target.value)} />
@@ -209,7 +209,7 @@ function LiteralField(props: FieldProps & { action?: ReactNode }) {
     case 'dimension':
     case 'duration': {
       const object = objectValue(value);
-      return <fieldset className="flex min-w-0 flex-col gap-2" aria-label={label}>
+      return <fieldset className="flex min-w-0 flex-col gap-space100" aria-label={label}>
         {(label !== 'Token value' || action) && <FieldHeading label={label} action={action} />}
         <TypedValue {...props} field={[...field, 'value']} type="number" label={field.length ? label + ' value' : 'Token value'}
           value={object['value']} write={next => write(withField(object, 'value', next))} />
@@ -228,7 +228,7 @@ function LiteralField(props: FieldProps & { action?: ReactNode }) {
     case 'strokeStyle': {
       const pattern = isJsonObject(value);
       const object = objectValue(value);
-      return <fieldset className="grid min-w-0 gap-2">
+      return <fieldset className="grid min-w-0 gap-space100">
         {(label !== 'Token value' || action) && <FieldHeading label={label} action={action} />}
         <StyledSelect label="Stroke format" value={pattern ? 'pattern' : 'keyword'}
           options={ [['keyword', 'Keyword'], ['pattern', 'Dash pattern']] } busy={edit.busy}
@@ -243,7 +243,7 @@ function LiteralField(props: FieldProps & { action?: ReactNode }) {
     }
     case 'shadow': {
       const layer = Array.isArray(value);
-      return <div className="grid gap-2">
+      return <div className="grid gap-space100">
         {layer ? <>
           {action && <FieldHeading label={label} action={action} />}
           <ArrayFields {...props} values={value} itemType="shadowLayer" itemLabel="Shadow layer" min={1} />
@@ -271,13 +271,13 @@ function LiteralField(props: FieldProps & { action?: ReactNode }) {
 }
 
 function FieldHeading({ label, action }: { label: string; action?: ReactNode }) {
-  return <div className="token-editor-label flex min-w-0 items-center justify-between gap-2">{label}{action}</div>;
+  return <div className="token-editor-label flex min-w-0 items-center justify-between gap-space100">{label}{action}</div>;
 }
 
 function ObjectFields(props: FieldProps & { action?: ReactNode; members: readonly (readonly [string, string, string])[] }) {
   const { field, label, value, write, members } = props;
   const object = objectValue(value);
-  return <fieldset className="grid min-w-0 gap-2" aria-label={label}>
+  return <fieldset className="grid min-w-0 gap-space100" aria-label={label}>
     {(!props.hideLegend && label !== 'Token value' || props.action) && <FieldHeading label={label} action={props.action} />}
     {members.map(([key, name, type]) => <TypedValue key={key} {...props} field={[...field, key]} label={name} type={type} hideLegend={false} value={object[key]}
       write={next => write(withField(object, key, next))} />)}
@@ -338,14 +338,14 @@ function ArrayFields({ values, itemType, itemLabel, min, ...props }: FieldProps 
     setKeys(ids);
     write(updated);
   }
-  return <div className="grid min-w-0 gap-2">
+  return <div className="grid min-w-0 gap-space100">
     {values.map((item, index) => {
       const label = itemLabel + ' ' + (index + 1);
       const id = keys[index];
       const bodyId = idPrefix + '-' + id;
       const showing = !compact || id === expanded;
-      return <section key={id} aria-label={label} className="grid min-w-0 gap-1 rounded-lg border p-2">
-        <div className="flex min-w-0 items-center justify-between gap-1">
+      return <section key={id} aria-label={label} className="grid min-w-0 gap-space50 rounded-lg border pad-space100">
+        <div className="flex min-w-0 items-center justify-between gap-space50">
           {compact ? <Button type="button" variant="text" size="xsmall" aria-expanded={showing} aria-controls={bodyId}
             onClick={() => setExpanded(showing ? undefined : id)}>
             <ChevronDown aria-hidden="true" className={showing ? 'rotate-180' : undefined} /> {label}
@@ -426,7 +426,7 @@ function ColorFields(props: FieldProps & { action?: ReactNode }) {
     write({ ...withField(object, 'colorSpace', next), components: converted.components });
   }
 
-  return <fieldset className="grid min-w-0 gap-2">
+  return <fieldset className="grid min-w-0 gap-space100">
     {(props.label !== 'Token value' || props.action) && <FieldHeading label={props.label} action={props.action} />}
     <TypedValue {...props} field={[...field, 'colorSpace']} label="Color space" type="colorSpace" value={object['colorSpace']}
       write={changeSpace} />
@@ -438,7 +438,7 @@ function ColorFields(props: FieldProps & { action?: ReactNode }) {
         setSpaceWarning('');
       }}>Undo color-space conversion</Button>}
     {srgb && <TextField label="sRGB hex"
-      trailing={<span aria-label="Color preview" className="grid size-5 overflow-hidden rounded-sm border">
+      trailing={<span aria-label="Color preview" className="grid swatch-md overflow-hidden rounded-sm border">
         <span style={{ backgroundColor: swatch?.css }} />
       </span>} aria-label={field.length ? props.label + ' sRGB hex' : 'Token value'} value={editableHex ? hexText : '—'}
       disabled={edit.busy || !editableHex} data-primary-editor ref={input => input?.setCustomValidity(!editableHex || /^#[0-9a-f]{6}$/iu.test(hexText) ? '' :
@@ -458,7 +458,7 @@ function ColorFields(props: FieldProps & { action?: ReactNode }) {
       write={next => write(withField(object, 'alpha', next))} />
     {!srgb && (fallback === undefined ? <Button type="button" size="xsmall" variant="text" className="justify-self-start"
       disabled={edit.busy} onClick={() => write(withField(object, 'hex', '#000000'))}>Add sRGB fallback</Button> :
-      <div className="grid min-w-0 gap-1">
+      <div className="grid min-w-0 gap-space50">
         <TypedValue {...props} field={[...field, 'hex']} label="sRGB fallback" type="hex" value={fallback}
           write={next => write(withField(object, 'hex', next))} />
         <Button type="button" size="xsmall" variant="text" className="justify-self-start" disabled={edit.busy}
