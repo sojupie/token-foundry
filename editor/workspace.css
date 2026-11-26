@@ -468,13 +468,22 @@
   justify-content: flex-end;
   flex-wrap: wrap;
 }
-.workspace-status-indicators, .workspace-status-indicator {
+.workspace-status-indicators {
   display: inline-flex;
   align-items: center;
   gap: var(--md-sys-measurement-space50);
 }
-.workspace-status-indicators { flex: none; gap: var(--md-sys-measurement-space150); }
-.workspace-status-indicator > svg { inline-size: 16px; block-size: 16px; }
+.workspace-status-indicators { flex: none; gap: var(--md-sys-measurement-space150); flex-wrap: wrap; justify-content: flex-end; max-inline-size: 100%; }
+.workspace-status-service {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--md-sys-measurement-space50);
+}
+.workspace-status-service + .workspace-status-service {
+  padding-inline-start: var(--md-sys-measurement-space100);
+  border-inline-start: 1px solid var(--md-sys-color-outline-variant);
+}
+.workspace-status-service > svg { inline-size: 16px; block-size: 16px; }
 .workspace-status-light {
   inline-size: var(--md-sys-measurement-space100);
   block-size: var(--md-sys-measurement-space100);
@@ -487,6 +496,10 @@
 }
 .workspace-status-light[data-status="bad"] {
   background: var(--md-sys-color-error);
+}
+.workspace-status-light[data-status="pending"] {
+  /* Connected but not synced, as requested; scoped with the green success light. */
+  background: light-dark(#806000, #f9cf58);
 }
 .workspace-table-footer > output:empty { display: none; }
 .workspace-footer-end, .workspace-pagination, .workspace-selection-count {

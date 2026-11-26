@@ -23,7 +23,8 @@ import { runWorkspaceReview } from './lib/workspace-review.ts';
 import type { ResolverEdit } from './lib/workspace-review.ts';
 import type { CellPosition, Draft, EditableColumn, GridColumn } from './lib/draft.ts';
 import type { WorkspaceConnection, WorkspaceConnectorProps } from './lib/connector.ts';
-import { OpenGitHub, snapshotConnection } from '../integrations/github/connect.tsx';
+import { GitHubProvider, OpenGitHub, snapshotConnection } from '../integrations/github/connect.tsx';
+import type { RepositoryOperation } from './lib/footer-status.ts';
 import type { RepositorySnapshot } from '../integrations/github/contract.ts';
 import type { ConflictDraft } from '../integrations/figma/recovery.ts';
 import { conflictInputKind } from '../integrations/figma/recovery.ts';
@@ -237,6 +238,7 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
   const [finalReview, setFinalReview] = useState<Review | null>(null);
   const [saveTarget, setSaveTarget] = useState<SaveTarget | null>(null);
   const [revisionReview, setRevisionReview] = useState<'current' | 'stale' | 'refreshed'>('current');
+  const [repositoryOperation, setRepositoryOperation] = useState<RepositoryOperation>();
   const [repositoryReview, setRepositoryReview] = useState<{ draft: Review; connection: WorkspaceConnection; conflicts: RepositoryConflict[]; choices: RepositoryChoiceDraft[] }>();
   const [submittedUrl, setSubmittedUrl] = useState('');
   const [linkedProposal, setLinkedProposal] = useState(proposalLink);
@@ -1304,6 +1306,7 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
     }
     setBusy(true);
     setError('');
+    if (saveTarget.kind === 'pull-request') setRepositoryOperation({ client: workspaceId, phase: revisionReview === 'stale' ? 'checking' : 'saving' });
     try {
       const { next } = finalReview;
       if (saveTarget.kind === 'folder') {
@@ -1358,8 +1361,11 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
       setDirty(false);
       setRevisionReview('current');
     } catch (failure) {
-      setError(errorMessage(failure));
+      const message = errorMessage(failure);
+      setError(message);
+      if (saveTarget.kind === 'pull-request') setRepositoryOperation({ client: workspaceId, phase: 'failed', problem: message });
     } finally {
+      setRepositoryOperation(currentOperation => currentOperation?.client === workspaceId && currentOperation.phase !== 'failed' ? undefined : currentOperation);
       setBusy(false);
     }
   }
@@ -1368,6 +1374,7 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
     const remote = shared.current().view; const operation = remote?.repositorySave;
     if (!remote || !operation || operation.result || !remote.repository || busy) return;
     setBusy(true); setError('');
+    setRepositoryOperation({ client: workspaceId, phase: 'saving' });
     try {
       const connection = snapshotConnection({ ...remote.repository, files: remote.baseline.files });
       const result = await connection.submit(operation.request.changes, remote.id);
@@ -1375,7 +1382,13 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
       if (!result.shared) throw new Error('The repository service did not return its shared checkpoint. Retry the reviewed save.');
       shared.adopt(result.shared); setDirty(result.shared.draft.revision !== result.shared.baseline.revision); setSubmittedUrl(result.url);
       setStatus('Reviewed changes saved to the merge request.');
-    } catch (failure) { setError(errorMessage(failure)); } finally { setBusy(false); }
+    } catch (failure) {
+      const message = errorMessage(failure); setError(message);
+      setRepositoryOperation({ client: workspaceId, phase: 'failed', problem: message });
+    } finally {
+      setRepositoryOperation(currentOperation => currentOperation?.client === workspaceId && currentOperation.phase !== 'failed' ? undefined : currentOperation);
+      setBusy(false);
+    }
   }
 
   function reconcileRepository(choices: RepositoryChoice[]) {
@@ -2186,7 +2199,11 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
           {loadingLinked ? 'Opening workspace…' : data.name}
         </button>
         <span aria-hidden="true">·</span>
-        <WorkspaceFooterStatus phase={shared.phase} connected={!!shared.view} loading={loadingLinked} localState={localSave?.state} />
+        <WorkspaceFooterStatus phase={shared.phase} connected={!!shared.view} loading={loadingLinked} localState={localSave?.state}
+          view={shared.view} gitEnabled={!!Connector} repository={sharedInput.repository} dirty={hasChanges}
+          stale={revisionReview === 'stale' || !!repositoryReview}
+          operation={repositoryOperation?.client === workspaceId ? repositoryOperation : undefined}
+          folder={saveTarget?.kind === 'folder' ? 'opened' : recoveredFolder ? 'reconnect' : undefined} />
       </div>
     </footer>
     {newResolver && <VariantSetupDialog workspace={data} files={librarySources.map(file => file.path)}
@@ -2388,5 +2405,7 @@ const isReactRoot = (value: unknown): value is Root => isRecord(value) && typeof
 const editorRoot = isReactRoot(cachedRoot) ? cachedRoot : createRoot(app);
 if (isRecord(rootCache)) rootCache['root'] = editorRoot;
 editorRoot.render(<StrictMode>
+  <GitHubProvider>
   <Editor Connector={import.meta.env.MODE === 'hosted' ? OpenGitHub : null} proposalLink={proposalLink} />
+  </GitHubProvider>
 </StrictMode>);

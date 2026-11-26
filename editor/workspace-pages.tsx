@@ -57,8 +57,8 @@ function targetSummary(saveMode: WorkspaceSaveMode, repository?: { repository: s
 function fileStatus(file: WorkspaceView['documents'][number], revision: string) {
   if (!file.expires) return 'No connected device';
   const connections = file.connections;
-  if (!connections?.length) return file.baseline === revision ? 'Up to date' : 'Source updates available';
-  const current = connections.filter(item => item.baseline === revision).length;
+  if (!connections?.length) return file.acknowledged && file.baseline === revision ? 'Up to date' : 'Waiting for device sync';
+  const current = connections.filter(item => item.acknowledged && item.baseline === revision).length;
   return current === connections.length
     ? `Up to date · ${connections.length} device ${connections.length === 1 ? 'connection' : 'connections'}`
     : `${current} of ${connections.length} device connections up to date`;

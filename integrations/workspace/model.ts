@@ -26,6 +26,7 @@ const isRepositorySave = (value: unknown): value is RepositorySave => isRecord(v
   (value['result'] === undefined || isRepositorySaveResult(value['result']));
 interface SourceCursor {
   baseline: string; offered: string;
+  acknowledged?: true;
   consumedReceipt?: string;
   nativeIntent?: { id: string; sequence: number };
   receipt?: FigmaAcknowledgement; submitted?: TokenProposal;
@@ -42,7 +43,7 @@ export interface SharedWorkspace {
   repositorySave?: RepositorySave;
   replicas?: DocumentReplica[];
 }
-export interface DocumentConnection { id: string; expires: number; created?: number; baseline: string; offered: string }
+export interface DocumentConnection { id: string; expires: number; created?: number; baseline: string; offered: string; acknowledged?: boolean }
 export interface WorkspaceView {
   id: string; name: string; version: number; draft: SourceSnapshot; baseline: SourceSnapshot; repository?: RepositoryPin;
   documents: (Omit<LinkedDocument, 'receipt' | 'submitted' | 'submissions'> & { expires?: number; connections?: DocumentConnection[] })[]; incoming: IncomingChange[]; activity: WorkspaceEvent[];
@@ -62,6 +63,7 @@ export const isSharedRecovery = (value: unknown): value is SharedRecovery => isR
   Object.keys(value).every(key => ['id', 'origin', 'accepted', 'checkpoint', 'repository'].includes(key)) &&
   (value['checkpoint'] === undefined || isSource(value['checkpoint'])) && (value['repository'] === undefined || isRepositoryPin(value['repository']));
 const isCursor = (value: unknown): value is SourceCursor => isRecord(value) && isIdentity(value['baseline']) && isIdentity(value['offered']) &&
+  (value['acknowledged'] === undefined || value['acknowledged'] === true) &&
   (value['consumedReceipt'] === undefined || typeof value['consumedReceipt'] === 'string') &&
   (value['nativeIntent'] === undefined || isRecord(value['nativeIntent']) && isIdentity(value['nativeIntent']['id']) && typeof value['nativeIntent']['sequence'] === 'number' && Number.isSafeInteger(value['nativeIntent']['sequence']) && value['nativeIntent']['sequence'] > 0) &&
   (value['receipt'] === undefined || isAcknowledgement(value['receipt'])) && (value['submitted'] === undefined || isTokenProposal(value['submitted'])) &&
@@ -72,6 +74,7 @@ const isReplica = (value: unknown): value is DocumentReplica => isRecord(value) 
 const isIncoming = (value: unknown): value is IncomingChange => isRecord(value) && typeof value['id'] === 'string' && typeof value['document'] === 'string' && isTokenProposal(value['proposal']) &&
   (value['replica'] === undefined || isIdentity(value['replica']));
 const isConnection = (value: unknown): value is DocumentConnection => isRecord(value) && isIdentity(value['id']) && typeof value['expires'] === 'number' && Number.isFinite(value['expires']) &&
+  (value['acknowledged'] === undefined || typeof value['acknowledged'] === 'boolean') &&
   isIdentity(value['baseline']) && isIdentity(value['offered']) && (value['created'] === undefined || typeof value['created'] === 'number' && Number.isFinite(value['created']));
 const isDocumentView = (value: unknown) => isDocument(value) && isRecord(value) && (value['connections'] === undefined || isUnknownArray(value['connections']) && value['connections'].every(isConnection));
 export const isSharedWorkspace = (value: unknown): value is SharedWorkspace => isRecord(value) && value['format'] === 'token-foundry/workspace' && value['schemaVersion'] === 1 &&
@@ -251,7 +254,7 @@ export async function offerWorkspace(state: SharedWorkspace, id: string, replica
 export function acknowledgeSource(state: SharedWorkspace, id: string, revision: string, replica?: string): SharedWorkspace {
   const cursor = cursorFor(state, id, replica);
   if (![cursor.offered, cursor.baseline].includes(revision)) throw new SourceSnapshotUnavailable('The Figma acknowledgement does not match its offered source revision.');
-  return revision === cursor.baseline ? state : advance(withCursor(state, id, replica, { ...cursor, baseline: revision }), 'received', id);
+  return revision === cursor.baseline && cursor.acknowledged ? state : advance(withCursor(state, id, replica, { ...cursor, baseline: revision, acknowledged: true }), 'received', id);
 }
 export function resumeReplica(state: SharedWorkspace, document: string, replica: string, revision: string, consumedReceipt?: string): SharedWorkspace {
   // Another device may have updated this Figma file's saved source snapshot.
@@ -263,8 +266,8 @@ export function resumeReplica(state: SharedWorkspace, document: string, replica:
     const known = cursors.some(item => item.receipt?.id === consumedReceipt || item.submissions?.some(entry => entry.receipt.id === consumedReceipt));
     if (!known) throw new SourceSnapshotUnavailable('The saved native acknowledgement is unavailable. Retain your native edits and review the current source.');
   }
-  return cursor.baseline === revision && (!consumedReceipt || cursor.consumedReceipt === consumedReceipt) ? state :
-    advance(withCursor(state, document, replica, { ...cursor, baseline: revision, ...(consumedReceipt ? { consumedReceipt } : {}) }), 'received', document);
+  return cursor.baseline === revision && cursor.acknowledged && (!consumedReceipt || cursor.consumedReceipt === consumedReceipt) ? state :
+    advance(withCursor(state, document, replica, { ...cursor, baseline: revision, acknowledged: true, ...(consumedReceipt ? { consumedReceipt } : {}) }), 'received', document);
 }
 export async function inspectIncoming(state: SharedWorkspace, document: string, replica?: string) {
   const pending = state.incoming.find(item => item.document === document && item.replica === replica);

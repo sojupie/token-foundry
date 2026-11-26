@@ -1,6 +1,7 @@
 import { CommandMenu } from '../../editor/command-bar.tsx';
 import { useEffect, useRef, useState } from 'react';
-import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import type { ReactNode } from 'react';
+import { QueryClient, QueryClientProvider, useMutation, useQuery } from '@tanstack/react-query';
 import { GitPullRequest } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button, ButtonLink, Card, Progress, Select, SelectOption } from '@token-catalog/forge-react';
@@ -74,11 +75,11 @@ export function snapshotConnection(response: RepositorySnapshot): WorkspaceConne
   };
 }
 
-type Session = { state: 'signed-out' } |
+export type GitHubSession = { state: 'signed-out' } |
   { state: 'connected'; login: string; repositories: string[] } |
   { state: 'forbidden' };
 
-async function getSession(signal: AbortSignal): Promise<Session> {
+async function getSession(signal: AbortSignal): Promise<GitHubSession> {
   const response = await fetch('/git/session', { redirect: 'manual', signal });
   if (response.type === 'opaqueredirect' || response.status === 401) return { state: 'signed-out' };
   if (response.status === 403) return { state: 'forbidden' };
@@ -93,24 +94,36 @@ async function getSession(signal: AbortSignal): Promise<Session> {
   return { state: 'connected', login: data['login'], repositories };
 }
 
-export function OpenGitHub(props: WorkspaceConnectorProps) {
+export function GitHubProvider({ children }: { children: ReactNode }) {
   const [queryClient] = useState(() => new QueryClient());
-  return <QueryClientProvider client={queryClient}><GitHubConnector {...props} /></QueryClientProvider>;
+  useEffect(() => {
+    function refresh() {
+      void queryClient.cancelQueries({ queryKey: sessionKey }).then(() => queryClient.invalidateQueries({ queryKey: sessionKey }));
+    }
+    const channel = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel('token-foundry-github');
+    channel?.addEventListener('message', refresh);
+    window.addEventListener('focus', refresh);
+    return () => { channel?.close(); window.removeEventListener('focus', refresh); };
+  }, [queryClient]);
+  return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+}
+
+export function useGitHubSession(enabled = true) {
+  return useQuery({ queryKey: sessionKey, queryFn: ({ signal }) => getSession(signal),
+    enabled, refetchOnWindowFocus: false, retry: false, staleTime: 30_000 });
+}
+
+export function OpenGitHub(props: WorkspaceConnectorProps) {
+  return <GitHubConnector {...props} />;
 }
 
 function GitHubConnector({ disabled, connect, canReplace, presentation = 'menu' }: WorkspaceConnectorProps) {
-  const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [preferredRepository, setPreferredRepository] = useState('');
   const [checkingSignIn, setCheckingSignIn] = useState(false);
   const signIn = useRef<Window | null>(null);
   const [opener, setOpener] = useState<HTMLButtonElement | null>(null);
-  const { data: session, isPending, error: sessionError } = useQuery({
-    queryKey: sessionKey,
-    queryFn: ({ signal }) => getSession(signal),
-    refetchOnWindowFocus: false,
-    retry: false,
-  });
+  const { data: session, isPending, error: sessionError } = useGitHubSession();
   const { mutate: connectRepository, reset: resetConnection, isPending: busy, error } = useMutation({
     mutationFn: (repository: string) => openConnection(repository),
     networkMode: 'always',
@@ -122,7 +135,6 @@ function GitHubConnector({ disabled, connect, canReplace, presentation = 'menu' 
         signIn.current = null;
         setCheckingSignIn(false);
       }
-      void queryClient.cancelQueries({ queryKey: sessionKey }).then(() => queryClient.invalidateQueries({ queryKey: sessionKey }));
     }
     const channel = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel('token-foundry-github');
     channel?.addEventListener('message', refresh);
@@ -131,7 +143,7 @@ function GitHubConnector({ disabled, connect, canReplace, presentation = 'menu' 
       channel?.close();
       window.removeEventListener('focus', refresh);
     };
-  }, [queryClient]);
+  }, []);
 
   const connected = !sessionError && session?.state === 'connected' ? session : undefined;
   const repositories = connected?.repositories ?? [];

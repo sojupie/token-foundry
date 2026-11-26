@@ -2,6 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
 import { test } from './runtime-test.ts';
+import { isRecord } from '../../lib/json.ts';
 
 async function edit(page: Page, path: string, value: string) {
   await page.getByRole('button', { name: `Value for ${path}`, exact: true }).dblclick();
@@ -35,8 +36,8 @@ test('changes badge counts authored tokens across files and reverts; footers and
   const footer = await page.locator('.workspace-footer').boundingBox();
   const identity = await page.locator('.workspace-footer-identity').boundingBox();
   expect(footer && identity && identity.x > footer.x + footer.width / 2).toBeTruthy();
-  await expect(page.locator('[data-workspace-status=connection] .workspace-status-light')).toHaveAttribute('data-status', 'bad');
-  await expect(page.locator('[data-workspace-status=sync] .workspace-status-light')).toHaveAttribute('data-status', 'good');
+  await expect(page.locator('[data-service=workspace] .workspace-status-light')).toHaveAttribute('data-status', 'bad');
+  await expect(page.locator('[data-service=local] .workspace-status-light')).toHaveAttribute('data-status', 'good');
   await page.screenshot({ path: `tmp/ui-footer/${info.project.name}-tokens.png` });
   await tableFooter.getByRole('button', { name: 'Clear selection', exact: true }).click();
   await expect(tableFooter).not.toContainText('1 selected');
@@ -77,7 +78,7 @@ test('changes badge counts authored tokens across files and reverts; footers and
   await page.getByRole('navigation', { name: 'Foundry' }).getByRole('button', { name: 'Tokens', exact: true }).click();
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(tableFooter).toBeVisible();
-  await expect(page.locator('[data-workspace-status=sync]')).toBeVisible();
+  await expect(page.locator('[data-service=workspace]')).toBeVisible();
   await expect.poll(() => page.locator('.md-snackbar:popover-open').evaluate(element => {
     const snack = element.getBoundingClientRect();
     return [...document.querySelectorAll('[data-snackbar-avoid]')].every(region => snack.bottom <= region.getBoundingClientRect().top);
@@ -90,17 +91,83 @@ test('workspace connection and sync indicators follow actual offline and reconne
   await page.goto('/');
   await page.getByRole('navigation', { name: 'Foundry' }).getByRole('button', { name: 'Workspace', exact: true }).click();
   await page.getByRole('button', { name: 'Start shared workspace', exact: true }).click();
-  const connection = page.locator('[data-workspace-status=connection]');
-  const sync = page.locator('[data-workspace-status=sync]');
+  const connection = page.locator('[data-service=workspace]');
+  const sync = page.locator('[data-service=workspace]');
   await expect(connection.locator('.workspace-status-light')).toHaveAttribute('data-status', 'good');
   await expect(sync).toContainText('Saved to workspace');
   await expect(sync.locator('.workspace-status-light')).toHaveAttribute('data-status', 'good');
   await context.setOffline(true);
   await expect(connection).toContainText('Offline');
   await expect(connection.locator('.workspace-status-light')).toHaveAttribute('data-status', 'bad');
-  await expect(sync).toContainText('Workspace sync unavailable');
+  await expect(page.locator('.workspace-save-state')).toContainText('Workspace sync unavailable');
   await expect(sync.locator('.workspace-status-light')).toHaveAttribute('data-status', 'bad');
   await context.setOffline(false);
   await expect(connection.locator('.workspace-status-light')).toHaveAttribute('data-status', 'good');
   await expect(sync.locator('.workspace-status-light')).toHaveAttribute('data-status', 'good');
+});
+
+test('GitHub account state is shared with its footer and remains separate from a saved workspace', async ({ page }) => {
+  let signedIn = true;
+  let checks = 0;
+  await page.route('**/git/session', route => {
+    checks++;
+    return signedIn ? route.fulfill({ json: { login: 'designer', repositories: ['example/tokens'] } }) : route.fulfill({ status: 401, json: {} });
+  });
+  await page.goto('/');
+  const github = page.locator('[data-service=github]');
+  await expect(github).toHaveAttribute('data-connection-status', 'good');
+  const initialChecks = checks;
+  await expect(github).toHaveAttribute('title', 'GitHub\nChoose a repository');
+  await expect(github.locator('svg')).toHaveCount(1);
+  await expect(github.locator('.workspace-status-light')).toHaveAttribute('data-status', 'pending');
+  await page.getByRole('navigation', { name: 'Foundry' }).getByRole('button', { name: 'Workspace', exact: true }).click();
+  await expect(page.getByRole('region', { name: 'GitHub', exact: true })).toContainText('Connected as @designer');
+  expect(checks).toBe(initialChecks);
+  await page.getByRole('button', { name: 'Start shared workspace', exact: true }).click();
+  await expect(page.locator('[data-service=workspace]')).toContainText('Saved to workspace');
+  signedIn = false;
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(github).toHaveAttribute('title', 'GitHub\nSign in to connect');
+  await expect(github.locator('.workspace-status-light')).toHaveAttribute('data-status', 'bad');
+  await expect(page.locator('[data-service=workspace] .workspace-status-light')).toHaveAttribute('data-status', 'good');
+  signedIn = true;
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(github).toHaveAttribute('data-connection-status', 'good');
+});
+
+test('Figma footer follows real pairing, acknowledged revision, and single-device revocation', async ({ page, request, context }) => {
+  await page.goto('/');
+  await page.getByRole('navigation', { name: 'Foundry' }).getByRole('button', { name: 'Workspace', exact: true }).click();
+  await page.getByRole('button', { name: 'Start shared workspace', exact: true }).click();
+  await expect.poll(() => new URL(page.url()).searchParams.get('workspace')).toBeTruthy();
+  const id = new URL(page.url()).searchParams.get('workspace');
+  if (!id) throw new Error('Missing shared workspace');
+  const paired: unknown = await (await request.post(`/git/workspaces/${id}/documents`, { headers: { Origin: 'http://127.0.0.1:4319' }, data: { document: 'footer-library', name: 'Footer library', role: 'library' } })).json();
+  if (!isRecord(paired) || typeof paired['connection'] !== 'string') throw new Error('Missing Figma connection');
+  const connection = new URL(paired['connection']);
+  const headers = { Authorization: 'Bearer ' + connection.hash.slice(1) }; connection.hash = '';
+  const snapshot: unknown = await (await request.get(connection.href, { headers })).json();
+  if (!isRecord(snapshot) || typeof snapshot['revision'] !== 'string') throw new Error('Missing Figma source revision');
+  const figma = page.locator('[data-service=figma]');
+  await expect(figma).toHaveAttribute('data-connection-status', 'good');
+  await expect(figma.locator('.workspace-status-light')).toHaveAttribute('data-status', 'pending');
+  await expect(figma).toHaveAttribute('title', 'Figma\nWaiting for updates');
+  await expect(figma.locator('svg')).toHaveCount(1);
+  expect((await request.post(connection.href, { headers, data: { action: 'acknowledge', revision: snapshot['revision'] } })).ok()).toBe(true);
+  await expect(figma.locator('.workspace-status-light')).toHaveAttribute('data-status', 'good');
+  await page.screenshot({ path: 'tmp/footer-services/figma-synced.png', animations: 'disabled' });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: 'tmp/footer-services/mobile-services.png', animations: 'disabled' });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await context.setOffline(true);
+  await expect(figma).toHaveAttribute('data-connection-status', 'pending');
+  await expect(figma.locator('.workspace-status-light')).toHaveAttribute('data-status', 'bad');
+  await expect(figma).toContainText("Can't check while offline");
+  await context.setOffline(false);
+  await expect(figma.locator('.workspace-status-light')).toHaveAttribute('data-status', 'good');
+  await page.getByRole('navigation', { name: 'Foundry' }).getByRole('button', { name: 'Figma', exact: true }).click();
+  await page.getByText('Manage connections (1)', { exact: true }).click();
+  await page.getByRole('button', { name: 'Revoke connection', exact: true }).click();
+  await expect(figma).toHaveAttribute('title', 'Figma\nReconnect to sync');
+  await expect(figma.locator('.workspace-status-light')).toHaveAttribute('data-status', 'bad');
 });

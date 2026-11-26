@@ -34,7 +34,7 @@ function privateView(record: Record) {
     const grants = record.grants.filter(item => item.document === file.id && item.expires > Date.now());
     file.connections = grants.map(grant => {
       const cursor = record.workspace.replicas?.find(item => item.id === grant.id);
-      return { id: grant.id, expires: grant.expires, ...(grant.created !== undefined ? { created: grant.created } : {}), baseline: cursor?.baseline ?? file.baseline, offered: cursor?.offered ?? file.offered };
+      return { id: grant.id, expires: grant.expires, ...(grant.created !== undefined ? { created: grant.created } : {}), baseline: cursor?.baseline ?? file.baseline, offered: cursor?.offered ?? file.offered, acknowledged: cursor?.acknowledged === true };
     });
     if (grants.length) file.expires = Math.max(...grants.map(grant => grant.expires));
   }
