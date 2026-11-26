@@ -1,7 +1,7 @@
 import type { Review } from '../lib/workspace.ts';
 import { memo, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Button, Disclosure, List, Progress } from '@token-catalog/forge-react';
+import { Button, Disclosure, Progress } from '@token-catalog/forge-react';
 import { ActionDialog } from '@/components/ui/dialog';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -42,7 +42,7 @@ const FileDiff = memo(function FileDiff({ data }: { data: RenderData<Review | nu
   if (!result) return <Progress label="Preparing file changes" />;
   if ('error' in result) return <Alert variant="destructive"><AlertDescription>{result.error}</AlertDescription></Alert>;
   return <ReviewPage items={result.lines} pageSize={250} label="file changes" render={(lines, offset) =>
-    <section aria-label="File changes" className="scroll-pane-lg min-w-0 overflow-auto rounded-md border muted-surface-subtle pad-block-space100 copy-small diff-line-spacing">
+    <section aria-label="File changes" className="scroll-pane-lg min-w-0 overflow-auto pad-block-space100 copy-small diff-line-spacing">
       <pre>
         {Array.from(lines.entries(), ([lineNumber, line]) =>
           <span className={'block w-max min-w-full pad-inline-space150 ' + diffClass(line)} key={offset + lineNumber}>{line || ' '}</span>)}
@@ -81,7 +81,7 @@ function ReviewDisclosure({ label, children }: { label: string; children: ReactN
 
 function LinkImpact({ impact }: { impact: readonly (Review['impact'][number] & { afterProblem?: string | undefined })[] }) {
   return <ReviewPage items={impact} label="affected tokens" render={entries =>
-    <div className="margin-top-space100 scroll-list-lg overflow-auto"><List className="space-y-space100">
+    <div className="margin-top-space100"><ul className="space-y-space100">
       {entries.map(({ path, before, after, afterProblem }) => <li className="wrap-anywhere code-text" key={path}>
         <div className="copy-emphasis">{path}</div>
         <div className="flex gap-space100"><span className="tone-supporting">Before</span><TokenValue value={before} swatch wrap /></div>
@@ -89,7 +89,7 @@ function LinkImpact({ impact }: { impact: readonly (Review['impact'][number] & {
           {afterProblem ? <span className="tone-error">{afterProblem}</span> : <TokenValue value={after} swatch wrap />}
         </div>
       </li>)}
-    </List></div>} />;
+    </ul></div>} />;
 }
 
 export function ReviewChanges({ data, busy, error, notice, close, save, onClosed, confirm = 'Apply to workspace' }: {
@@ -143,11 +143,11 @@ export function ReviewChanges({ data, busy, error, notice, close, save, onClosed
         {structure.paths.length === 1 ? structure.paths.map(({ from, to }) =>
           <p key={from} className="wrap-anywhere"><code>{from}</code>{to && <> → <code>{to}</code></>}</p>) :
           <Disclosure compact label="Affected paths" className="min-w-0">
-            <List className="margin-top-space50 scroll-list-md overflow-y-auto" aria-label="Affected paths">
+            <ul className="margin-top-space50 scroll-list-md overflow-y-auto" aria-label="Affected paths">
               {structure.paths.map(({ from, to }) => <li key={from} className="wrap-anywhere">
                 <code>{from}</code>{to && <> → <code>{to}</code></>}
               </li>)}
-            </List>
+            </ul>
           </Disclosure>}
       </div>}
       {!!structure?.references?.length && <ReviewDisclosure label={'References rewritten (' + structure.references.length + ')'}>
@@ -159,7 +159,7 @@ export function ReviewChanges({ data, busy, error, notice, close, save, onClosed
           </ul>} />
       </ReviewDisclosure>}
       {records ? <>
-        <div className="scroll-pane-table overflow-auto rounded-md border">
+        <div className="scroll-pane-table overflow-auto">
           <Table aria-label={bulk ? 'Selected token changes' : 'Token value changes'} className="table-fixed">
             <TableHeader>
               <TableRow>
@@ -190,24 +190,24 @@ export function ReviewChanges({ data, busy, error, notice, close, save, onClosed
         </div>}
       </> : null}
       {visibleReview.inheritanceImpact.length > 0 && <ReviewDisclosure label={'Inherited paths affected (' + visibleReview.inheritanceImpact.length + ')'}>
-        <List className="margin-top-space100 scroll-list-lg overflow-auto code-text">
+        <ul className="margin-top-space100 scroll-list-lg overflow-auto code-text">
           {visibleReview.inheritanceImpact.map(({ path, change }) => <li key={path} className="wrap-anywhere">{change} · {path}</li>)}
-        </List>
+        </ul>
       </ReviewDisclosure>}
       {!!visibleReview.validationErrors?.length && <Alert variant="destructive"><AlertDescription>
         <p>Resolve these errors before applying the change.</p>
         <ReviewPage items={[...new Set(visibleReview.validationErrors)]} label="validation errors" render={items =>
-          <List className="margin-top-space100 scroll-list-lg overflow-auto">
+          <ul className="margin-top-space100 scroll-list-lg overflow-auto">
             {items.map(problem => <li key={problem} className="wrap-anywhere">{problem}</li>)}
-          </List>} />
+          </ul>} />
       </AlertDescription></Alert>}
       {visibleReview.contextImpact?.map(context => <ReviewDisclosure key={context.label}
         label={context.label + ' · ' + count(new Set([...context.changes, ...context.sources ?? []].map(change => change.path)).size, 'token') + ' affected' +
           (context.matching ? ' · +' + count(context.matching.length, 'matching combination') : '')}>
         {context.matching && <ReviewDisclosure label="Matching combinations">
-          <List className="margin-top-space100 scroll-list-lg overflow-auto">
+          <ul className="margin-top-space100 scroll-list-lg overflow-auto">
             {context.matching.map(label => <li className="wrap-anywhere" key={label}>{label}</li>)}
-          </List>
+          </ul>
         </ReviewDisclosure>}
         {context.errors.map(problem => <p key={problem} className="tone-error">{problem}</p>)}
         {!!context.sources?.length && <ul className="margin-top-space100 space-y-space50">
@@ -217,11 +217,11 @@ export function ReviewChanges({ data, busy, error, notice, close, save, onClosed
         <LinkImpact impact={context.changes} />
       </ReviewDisclosure>)}
       {visibleReview.typeImpact.length > 0 && <ReviewDisclosure label={'Effective type changes (' + visibleReview.typeImpact.length + ')'}>
-        <List className="margin-top-space100 scroll-list-lg overflow-auto code-text">
+        <ul className="margin-top-space100 scroll-list-lg overflow-auto code-text">
           {visibleReview.typeImpact.map(({ path, before, after }) => <li key={path} className="wrap-anywhere">
             {path} · {before ?? 'No type'} → {after ?? 'No type'}
           </li>)}
-        </List>
+        </ul>
       </ReviewDisclosure>}
       <ReviewDisclosure label={'Resolved value changes (' + visibleReview.impact.length + ')'}>
         {visibleReview.impact.length > 0 && <LinkImpact impact={visibleReview.impact} />}

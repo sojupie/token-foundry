@@ -1089,7 +1089,7 @@ export function WorkspaceChanges({ shared, saveMode, repositoryName, files, toke
           headlineAs="h3"
           supporting="Revert individual tokens back to the last checkpoint."
         >
-          <List>
+          <ul>
             {tokens.slice(currentTokenPage * tokenPageSize, (currentTokenPage + 1) * tokenPageSize).map(token => (
               <li key={`${token.file}\0${token.path}`} className="flex flex-wrap items-center justify-between gap-space100 pad-block-space50 copy-body">
                 <div className="min-w-0">
@@ -1113,7 +1113,7 @@ export function WorkspaceChanges({ shared, saveMode, repositoryName, files, toke
                 </Button>
               </li>
             ))}
-          </List>
+          </ul>
           {lastTokenPage > 0 && (
             <div className="flex items-center justify-end gap-space100 copy-small">
               <Button variant="text" size="xsmall" disabled={!currentTokenPage} onClick={() => setTokenPage(currentTokenPage - 1)}>Previous tokens</Button>
@@ -1132,7 +1132,7 @@ export function WorkspaceChanges({ shared, saveMode, repositoryName, files, toke
         headlineAs="h3"
       >
         {files.length ? (
-          <List>
+          <ul>
             {files.map(file => (
               <li key={file.path} className="flex flex-wrap items-center justify-between gap-space100 copy-body wrap-anywhere pad-block-space50">
                 <div>
@@ -1150,7 +1150,7 @@ export function WorkspaceChanges({ shared, saveMode, repositoryName, files, toke
                 </Button>
               </li>
             ))}
-          </List>
+          </ul>
         ) : (
           <p className="copy-small tone-supporting">Token edits and synced Figma changes appear here.</p>
         )}

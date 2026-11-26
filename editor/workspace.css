@@ -439,8 +439,7 @@
 @container grid (min-width: 52rem) {
   .workspace-edit-label { display: inline; }
 }
-.workspace-footer {
-  grid-area: footer;
+.workspace-footer, .workspace-table-footer {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -452,13 +451,44 @@
   font-size: var(--md-sys-typescale-body-small-size);
 }
 
+.workspace-footer {
+  grid-area: footer;
+  justify-content: flex-end;
+}
+.workspace-table-footer {
+  border-block-start: 1px solid var(--md-sys-color-outline-variant);
+  background: var(--md-sys-color-surface-container-low);
+}
 .workspace-footer-identity {
   display: flex;
   align-items: center;
   gap: var(--md-sys-measurement-space100);
   min-inline-size: 0;
+  margin-inline-start: auto;
+  justify-content: flex-end;
+  flex-wrap: wrap;
 }
-.workspace-footer > output:empty { display: none; }
+.workspace-status-indicators, .workspace-status-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--md-sys-measurement-space50);
+}
+.workspace-status-indicators { flex: none; gap: var(--md-sys-measurement-space150); }
+.workspace-status-indicator > svg { inline-size: 16px; block-size: 16px; }
+.workspace-status-light {
+  inline-size: var(--md-sys-measurement-space100);
+  block-size: var(--md-sys-measurement-space100);
+  border-radius: var(--md-sys-shape-corner-full);
+  background: var(--md-sys-color-outline);
+}
+.workspace-status-light[data-status="good"] {
+  /* The requested green status light is local to this footer; MD3 has no success role. */
+  background: light-dark(#2e7d32, #81c784);
+}
+.workspace-status-light[data-status="bad"] {
+  background: var(--md-sys-color-error);
+}
+.workspace-table-footer > output:empty { display: none; }
 .workspace-footer-end, .workspace-pagination, .workspace-selection-count {
   display: flex;
   align-items: center;

@@ -34,6 +34,7 @@ import { parseVariableValue } from '../integrations/figma/conflict-review.tsx';
 import { sameIncomingReview } from './lib/figma-review.ts';
 import type { IncomingReviewRecovery, PreparedIncomingInput } from './lib/figma-review.ts';
 import { WorkspaceRecovery } from './workspace-recovery.tsx';
+import { WorkspaceFooterStatus } from './workspace-footer-status.tsx';
 import type { RecoveryHandle, RecoveryStatus } from './workspace-recovery.tsx';
 import { ReloadEditor } from './field-boundary.tsx';
 import { newBulkDraft } from './lib/bulk-draft.ts';
@@ -1466,7 +1467,7 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
   const editingBlocked = busy || !!draft || variantDirty;
   const navigationDisabled = editingBlocked || resolvingVariant;
   const menuDisabled = navigationDisabled || loadingLinked;
-  const changedTokens = useMemo(() => view === 'changes' ? workspaceTokenChanges(data) : [], [data, view]);
+  const changedTokens = useMemo(() => workspaceTokenChanges(data), [data]);
   const saveMode = saveTarget?.kind === 'pull-request' ? (saveTarget.connection.branch ? 'pull-request-update' : 'pull-request')
     : saveTarget?.kind === 'folder' ? 'folder' : 'patch';
   useEffect(() => {
@@ -1703,7 +1704,7 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
   }
 
   const changeAlert = shared.phase === 'conflict' || shared.phase === 'invalid' || !!sharedChoices.length || !!(shared.view?.incoming.length);
-  const pendingChangesCount = shared.view?.incoming.length ? shared.view.incoming.length : workspaceChanges(data).length;
+  const pendingChangesCount = changedTokens.length || workspaceChanges(data).length;
   const navigationItems = <>
       <NavigationItem data-key-tip="T" label="Tokens" icon={<Layers />} aria-current={view === 'tokens' ? 'page' : undefined}
         disabled={navigationDisabled} onClick={() => focusTokenArea('token-grid')} />
@@ -1766,9 +1767,9 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
           event.target.value = '';
         }} />
         <div className="workspace-review">
-          {submittedUrl && !dirty ? <ButtonLink href={submittedUrl} target="_blank" rel="noreferrer"
+          {submittedUrl && !dirty ? <ButtonLink size="xsmall" variant="filled" color="tertiary" href={submittedUrl} target="_blank" rel="noreferrer"
             aria-label="View merge request">View merge request</ButtonLink> :
-            <Button size="small" disabled={menuDisabled || !dirty || !hasChanges} onClick={() => { void reviewForSave(); }}
+            <Button size="xsmall" variant="filled" color="tertiary" disabled={menuDisabled || !dirty || !hasChanges} onClick={() => { void reviewForSave(); }}
               data-key-tip="R" aria-label={reviewLabel}>Review changes</Button>}
         </div>
       </header>
@@ -2143,9 +2144,33 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
             {...{ previewLabel, resolvedHeading }} group={displayedGroup}
             {...{ gridSelection, draft, setDraft, error }} {...gridActions} busy={busy || resolvingVariant} />}
         </div>
+        <footer className="workspace-table-footer" data-snackbar-avoid="">
+          <span>{rowCount.toLocaleString('en')} {rowCount === 1 ? 'token' : 'tokens'}</span>
+          {draft && !draft.create && draft.mode === 'inline' && error ?
+            <output id="inline-edit-error" role="alert" className="tone-error">{error}</output> :
+            <output>{busy ? 'Working…' : dirty ? 'Unsaved changes' : ''}</output>}
+          {!loadingLinked && (
+            <div className="workspace-footer-end">
+              {pages > 1 && !alternative && <div className="workspace-pagination">
+                <IconButton size="xsmall" label="Previous page" disabled={shownPage === 0 || !!draft}
+                  onClick={() => { setPage(shownPage - 1); select(''); resetScroll(); }}><ChevronLeft aria-hidden="true" /></IconButton>
+                <span>Page {shownPage + 1} of {pages}</span>
+                <IconButton size="xsmall" label="Next page" disabled={shownPage + 1 === pages || !!draft}
+                  onClick={() => { setPage(shownPage + 1); select(''); resetScroll(); }}><ChevronRight aria-hidden="true" /></IconButton>
+              </div>}
+              <div className="workspace-selection-count">
+                <span aria-live="polite" className="numeric-text">
+                  {checked.size > 0 && <>{selectionCount} selected{hiddenChecked > 0 && ` · ${hiddenChecked} not shown`}</>}
+                </span>
+                {checked.size > 0 && <IconButton size="xsmall" label="Clear selection" title="Clear selection" disabled={menuDisabled}
+                  onClick={clearCheckedSelection}><X aria-hidden="true" /></IconButton>}
+              </div>
+            </div>
+          )}
+        </footer>
       </main>
     </WorkspacePanes>
-    <footer ref={workspaceFooter} className="workspace-footer">
+    <footer ref={workspaceFooter} className="workspace-footer" data-snackbar-avoid="">
       <div className="workspace-footer-identity">
         <button
           type="button"
@@ -2161,32 +2186,8 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
           {loadingLinked ? 'Opening workspace…' : data.name}
         </button>
         <span aria-hidden="true">·</span>
-        <span className="workspace-save-state copy-small" aria-live="polite">{shared.phase === 'saved' ? 'Saved to workspace' : shared.phase === 'saving' ? 'Saving to workspace…' : shared.phase === 'conflict' ? 'Conflicts need review' : shared.phase === 'invalid' ? 'Draft needs attention' : shared.phase === 'updates' ? 'Updates available' :
-          localSave?.id === workspaceId ? localSave.state === 'saved' ? 'Saved locally' : localSave.state === 'saving' ? 'Saving locally…' : 'Recovery needs attention' : 'Local draft'}</span>
-        {busy && <span>Working…</span>}
+        <WorkspaceFooterStatus phase={shared.phase} connected={!!shared.view} loading={loadingLinked} localState={localSave?.state} />
       </div>
-      {view === 'tokens' && draft && !draft.create && draft.mode === 'inline' && error && (
-        <output id="inline-edit-error" role="alert" className="tone-error">{error}</output>
-      )}
-      {view === 'tokens' && !loadingLinked && (
-        <div className="workspace-footer-end">
-          <span>{rowCount.toLocaleString('en')} {rowCount === 1 ? 'token' : 'tokens'}</span>
-          {pages > 1 && !alternative && <div className="workspace-pagination">
-            <IconButton size="xsmall" label="Previous page" disabled={shownPage === 0 || !!draft}
-              onClick={() => { setPage(shownPage - 1); select(''); resetScroll(); }}><ChevronLeft aria-hidden="true" /></IconButton>
-            <span>Page {shownPage + 1} of {pages}</span>
-            <IconButton size="xsmall" label="Next page" disabled={shownPage + 1 === pages || !!draft}
-              onClick={() => { setPage(shownPage + 1); select(''); resetScroll(); }}><ChevronRight aria-hidden="true" /></IconButton>
-          </div>}
-          <div className="workspace-selection-count">
-            <span aria-live="polite" className="numeric-text">
-              {checked.size > 0 && <>{selectionCount} selected{hiddenChecked > 0 && ` · ${hiddenChecked} not shown`}</>}
-            </span>
-            {checked.size > 0 && <IconButton size="xsmall" label="Clear selection" title="Clear selection" disabled={menuDisabled}
-              onClick={clearCheckedSelection}><X aria-hidden="true" /></IconButton>}
-          </div>
-        </div>
-      )}
     </footer>
     {newResolver && <VariantSetupDialog workspace={data} files={librarySources.map(file => file.path)}
       root={saveTarget?.kind === 'pull-request' ? saveTarget.connection.root : undefined}
