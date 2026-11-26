@@ -12,6 +12,38 @@ async function selectedSurface(item: Locator) {
   await expect(item).toHaveCSS('background-color', expected);
 }
 
+async function centered(glyph: Locator) {
+  const offset = await glyph.evaluate(element => {
+    const icon = element.getBoundingClientRect();
+    const slot = element.parentElement?.getBoundingClientRect();
+    if (!slot) throw new Error('Icon slot is missing');
+    return { x: icon.x + icon.width / 2 - slot.x - slot.width / 2, y: icon.y + icon.height / 2 - slot.y - slot.height / 2 };
+  });
+  expect(Math.abs(offset.x)).toBeLessThan(0.02);
+  expect(Math.abs(offset.y)).toBeLessThan(0.02);
+}
+
+async function centeredMotion(glyph: Locator) {
+  const frames = await glyph.evaluate(async element => {
+    const samples: { width: number; dx: number; dy: number }[] = [];
+    const started = performance.now();
+    await new Promise<void>(resolve => {
+      function frame() {
+        const icon = element.getBoundingClientRect();
+        const slot = element.parentElement?.getBoundingClientRect();
+        if (!slot) throw new Error('Icon slot is missing');
+        samples.push({ width: icon.width, dx: icon.x + icon.width / 2 - slot.x - slot.width / 2, dy: icon.y + icon.height / 2 - slot.y - slot.height / 2 });
+        if (performance.now() - started >= 500) resolve(); else requestAnimationFrame(frame);
+      }
+      requestAnimationFrame(frame);
+    });
+    return samples;
+  });
+  expect(Math.min(...frames.map(frame => frame.width))).toBeGreaterThanOrEqual(24);
+  expect(Math.max(...frames.map(frame => Math.abs(frame.dx)))).toBeLessThan(0.02);
+  expect(Math.max(...frames.map(frame => Math.abs(frame.dy)))).toBeLessThan(0.02);
+}
+
 test('Material rail icons fill on selection, use secondary, and return to default on press without undershoot', async ({ page }, info) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto('/');
@@ -27,27 +59,18 @@ test('Material rail icons fill on selection, use secondary, and return to defaul
   });
   await expect(glyph).toHaveCSS('color', secondary);
   await expect(glyph).toHaveCSS('width', '24px');
+  await centered(glyph);
   await tokens.hover();
+  await centeredMotion(glyph);
   await mkdir('tmp/material-symbols', { recursive: true });
   await page.screenshot({ path: `tmp/material-symbols/${info.project.name}-rail-transition.png`, animations: 'allow' });
   await expect(glyph).toHaveCSS('width', '26px');
+  await centered(glyph);
   await expect(glyph).toHaveCSS('stroke-width', '16px');
   await expect(glyph).toHaveCSS('scale', 'none');
   await expect(glyph).toHaveCSS('transform', 'none');
   await page.mouse.down();
-  const pressedWidths = await glyph.evaluate(async element => {
-    const widths: number[] = [];
-    const started = performance.now();
-    await new Promise<void>(resolve => {
-      function frame() {
-        widths.push(element.getBoundingClientRect().width);
-        if (performance.now() - started >= 500) resolve(); else requestAnimationFrame(frame);
-      }
-      requestAnimationFrame(frame);
-    });
-    return widths;
-  });
-  expect(Math.min(...pressedWidths)).toBeGreaterThanOrEqual(24);
+  await centeredMotion(glyph);
   await expect(glyph).toHaveCSS('width', '24px');
   await expect(glyph).toHaveCSS('stroke', 'none');
   await expect(glyph.locator('[data-symbol-variant=filled]')).toHaveCSS('display', 'inline');
@@ -55,9 +78,11 @@ test('Material rail icons fill on selection, use secondary, and return to defaul
   await page.screenshot({ path: `tmp/material-symbols/${info.project.name}-rail-pressed.png` });
   await page.mouse.up();
   await expect(glyph).toHaveCSS('width', '26px');
+  await centered(glyph);
   await expect(glyph).toHaveCSS('stroke-width', '16px');
   await page.mouse.move(1200, 500);
   await expect(glyph).toHaveCSS('width', '24px');
+  await centered(glyph);
   await tokens.focus();
   await page.keyboard.down('Space');
   await expect(glyph).toHaveCSS('width', '24px');
