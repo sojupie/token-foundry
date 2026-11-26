@@ -83,28 +83,14 @@ body {
   gap: var(--md-sys-measurement-space25);
 }
 
-.plugin-status-pill {
-  padding: var(--md-sys-measurement-space50) var(--md-sys-measurement-space150);
-  border-radius: var(--md-sys-shape-corner-full);
-  background: var(--md-sys-color-surface-container-high);
-  color: var(--md-sys-color-on-surface-variant);
-  font-family: var(--md-sys-typescale-label-medium-font);
-  font-size: var(--md-sys-typescale-label-medium-size);
-  font-weight: var(--md-sys-typescale-label-medium-weight);
-  line-height: var(--md-sys-typescale-label-medium-line-height);
-  letter-spacing: var(--md-sys-typescale-label-medium-tracking);
-  white-space: nowrap;
-}
-
-.plugin-status-pill[data-tone="attention"] {
-  background: var(--md-sys-color-error-container);
-  color: var(--md-sys-color-on-error-container);
-}
-
-.plugin-status-pill[data-tone="saved"] {
-  background: var(--md-sys-color-secondary-container);
-  color: var(--md-sys-color-on-secondary-container);
-}
+.plugin-sync-indicators, .plugin-sync-status { display: inline-flex; align-items: center; }
+.plugin-sync-indicators { gap: var(--md-sys-measurement-space150); }
+.plugin-sync-status { gap: var(--md-sys-measurement-space50); color: var(--md-sys-color-on-surface-variant); }
+.plugin-sync-status > svg { inline-size: 18px; block-size: 18px; flex: none; }
+.plugin-status-light { inline-size: var(--md-sys-measurement-space100); block-size: var(--md-sys-measurement-space100); border-radius: var(--md-sys-shape-corner-full); background: var(--md-sys-color-error); }
+/* Match Foundry's requested traffic-light states; MD3 has no success/warning roles. */
+.plugin-sync-status[data-status="good"] .plugin-status-light { background: light-dark(#2e7d32, #81c784); }
+.plugin-sync-status[data-status="pending"] .plugin-status-light { background: light-dark(#806000, #f9cf58); }
 
 .plugin-progress-slot {
   block-size: 4px;

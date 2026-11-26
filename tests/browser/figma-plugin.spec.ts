@@ -11,7 +11,7 @@ import { isConflictDraft } from '../../integrations/figma/recovery.ts';
 import type { ConflictDraft } from '../../integrations/figma/recovery.ts';
 import { chooseOption } from './select-field.ts';
 import { isTokenForms } from '../../figma/forms.ts';
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { identifySubmission } from '../../integrations/figma/submission.ts';
 import { cubicFromPoints } from '../../integrations/figma/easing.ts';
 
@@ -67,6 +67,68 @@ async function openConnect(page: Page, section?: 'Connect with a code' | 'Offlin
     if (!await label.evaluate(node => node.closest('details')?.open === true)) await label.click();
   }
 }
+
+test('plugin status icons separate native Figma from workspace acknowledgement, offline, and revoked connections', async ({ page }) => {
+  await page.clock.install();
+  await openUI(page);
+  const source = await bundle(8);
+  const id = 'a'.repeat(64);
+  const code = 'https://sevan.tokenfoundry.lindstruct.com/figma/workspaces/' + id + '/files/' + 'b'.repeat(64) + '#' + 'c'.repeat(64);
+  let mode: 'online' | 'offline' | 'revoked' = 'online';
+  let acknowledgement: Route | undefined;
+  await page.route('https://sevan.tokenfoundry.lindstruct.com/figma/workspaces/**', route => {
+    const data: unknown = route.request().method() === 'POST' ? route.request().postDataJSON() : undefined;
+    if (mode === 'offline') return route.fulfill({ status: 503, json: { message: 'Workspace temporarily unavailable.' } });
+    if (mode === 'revoked') return route.fulfill({ status: 403, json: { message: 'Connection revoked.' } });
+    if (isRecord(data) && data['action'] === 'acknowledge') { acknowledgement = route; return undefined; }
+    if (new URL(route.request().url()).searchParams.has('since')) return route.fulfill({ json: {
+      unchanged: true, workspace: { id, document: 'native-file', name: 'Checkpoint · source preservation QA', role: 'library' },
+    } });
+    return route.fulfill({ json: { ...source, workspace: { id, document: 'native-file', name: 'Checkpoint · source preservation QA', role: 'library' } } });
+  });
+  await post(page, [{ type: 'document', document: 'native-file', name: 'Native file', selection: [] }]);
+  const native = page.locator('.plugin-appbar [data-service=figma]');
+  const workspace = page.locator('.plugin-appbar [data-service=workspace]');
+  await expect(native).toHaveAttribute('title', 'Figma\nConnected');
+  await post(page, [{ type: 'state', bundle: source, changed: 0, local: [] }]);
+  await expect(native).toHaveAttribute('data-status', 'good');
+  await expect(native.locator('[data-symbol-variant=filled]')).toBeVisible();
+  await expect(workspace).toHaveAttribute('title', 'Workspace\nNot connected');
+  await expect(workspace).toHaveAttribute('data-status', 'bad');
+  await expect(page.locator('.plugin-status-pill')).toHaveCount(0);
+  await post(page, [{ type: 'saved-connection', code, name: 'Workspace', resume: true }]);
+  await expect.poll(() => sent(page, 'pull')).toBeTruthy();
+  await post(page, [{ type: 'state', bundle: source, changed: 0, local: [] }, { type: 'pulled', revision: source.revision }]);
+  await expect.poll(() => !!acknowledgement).toBe(true);
+  await expect(workspace).toHaveAttribute('title', 'Workspace\nSyncing…');
+  await expect(workspace).toHaveAttribute('data-status', 'pending');
+  await acknowledgement?.fulfill({ json: { saved: true } });
+  await expect(workspace).toHaveAttribute('title', 'Workspace\nUp to date');
+  await expect(workspace).toHaveAttribute('data-status', 'good');
+  await expect(native).toHaveAttribute('data-status', 'good');
+  await page.getByRole('navigation', { name: 'Plugin views' }).getByRole('button', { name: 'Workspace', exact: true }).click();
+  await mkdir('tmp/plugin-status', { recursive: true });
+  await page.screenshot({ path: 'tmp/plugin-status/connected-light.png', animations: 'disabled' });
+  await page.locator('.plugin-appbar').screenshot({ path: 'tmp/plugin-status/connected-header.png', animations: 'disabled' });
+  await page.setViewportSize({ width: 360, height: 760 });
+  await page.evaluate(() => document.documentElement.classList.add('figma-dark'));
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  expect(await page.locator('.plugin-appbar').evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+  await page.screenshot({ path: 'tmp/plugin-status/connected-dark-narrow.png', animations: 'disabled' });
+  mode = 'offline';
+  await page.clock.runFor(3500);
+  await expect(workspace).toHaveAttribute('title', 'Workspace\nOffline');
+  await expect(workspace).toHaveAttribute('data-status', 'bad');
+  await expect(native).toHaveAttribute('data-status', 'good');
+  mode = 'online';
+  await page.evaluate(() => window.dispatchEvent(new Event('online')));
+  await expect(workspace).toHaveAttribute('data-status', 'good');
+  mode = 'revoked';
+  await page.clock.runFor(3500);
+  await expect(workspace).toHaveAttribute('title', 'Workspace\nNot connected');
+  await expect(workspace).toHaveAttribute('data-status', 'bad');
+  await expect(native).toHaveAttribute('data-status', 'good');
+});
 
 test('easing fields retain unfinished coordinates through reopening, validate, and keep exact input after a native precision error', async ({ page }) => {
   await openUI(page); const source = await figmaBundle(openWorkspace('Easing', [{ path: 'easing.json', text: '{"curve":{"$type":"cubicBezier","$value":[0.2,0,0,1]}}' }]));
@@ -478,7 +540,8 @@ for (const failure of ['none', 'device', 'source'] as const) test('resuming onli
   await expect.poll(() => applied).toEqual({ proposal, revision: current.revision, choices: [] });
   await expect.poll(async () => (await sent(page, 'pull'))?.['bundle']).toEqual(current);
   await post(page, [{ type: 'state', bundle: current, changed: 0, local: [{ path: 'sevan.sys.space', value: 12 }] }, { type: 'pulled', revision: current.revision }]);
-  await expect(page.locator('.plugin-status-pill')).toHaveText('Saved to workspace');
+  await expect(page.locator('.plugin-sync-status[data-service=workspace]')).toHaveAttribute('data-status', 'pending');
+  await expect(page.locator('.plugin-sync-status[data-service=figma]')).toHaveAttribute('data-status', 'pending');
   await expect(page.getByLabel('Value (px)', { exact: true })).toHaveValue('14');
   await page.getByRole('button', { name: 'Apply in Figma', exact: true }).click();
   await page.getByRole('button', { name: 'Review current value', exact: true }).click();
@@ -674,7 +737,7 @@ for (const ending of ['newer', 'forget', 'proposal', 'proposal-error', 'failure'
   await post(page, [state(base, 8), { type: 'pulled', revision: base.revision }]);
   await openConnect(page, 'Connect with a code');
   const pull = page.getByRole('button', { name: 'Pull source changes', exact: true }); await expect(pull).toBeEnabled();
-  await expect(page.locator('.plugin-status-pill')).toHaveText('Saved to workspace');
+  await expect(page.locator('.plugin-sync-status[data-service=workspace]')).toHaveAttribute('title', 'Workspace\nUp to date');
   if (!ending.startsWith('proposal')) { await pull.click(); await expect.poll(() => !!delayed).toBe(true); await post(page, [state(base, 8)]); }
   else { await post(page, [state(base, 12)]); await expect.poll(() => sent(page, 'proposal')).toBeTruthy(); await post(page, [state(base, 12)]); }
   if (ending === 'newer' || ending === 'version') {
@@ -785,7 +848,7 @@ test('a background source response waits for an in-flight native edit and submit
   await expect.poll(() => sent(page, 'pull')).toBeTruthy();
   const firstPull = await sent(page, 'pull');
   await post(page, [state(8), { type: 'pulled', revision: base.revision }]);
-  await expect(page.locator('.plugin-status-pill')).toHaveText('Saved to workspace');
+  await expect(page.locator('.plugin-sync-status[data-service=workspace]')).toHaveAttribute('title', 'Workspace\nUp to date');
   await page.clock.runFor(3001); await expect.poll(() => !!background).toBe(true);
   await page.getByRole('navigation', { name: 'Plugin views' }).getByRole('button', { name: 'Tokens', exact: true }).click();
   await page.getByRole('button', { name: /sevan.sys.space/u }).click(); await page.getByLabel('Value (px)', { exact: true }).fill('12');
@@ -820,7 +883,7 @@ for (const delayedAcknowledgement of [false, true]) test('an external native sna
   await post(page, [{ type: 'document', document: 'native-file', name: 'Native file', selection: [] }, state(base), { type: 'saved-connection', code, resume: true }]);
   await expect.poll(() => sent(page, 'pull')).toBeTruthy(); await post(page, [state(base), { type: 'pulled', revision: base.revision }]);
   if (delayedAcknowledgement) await expect.poll(() => !!heldAcknowledgement).toBe(true);
-  else await expect(page.locator('.plugin-status-pill')).toHaveText('Saved to workspace');
+  else await expect(page.locator('.plugin-sync-status[data-service=workspace]')).toHaveAttribute('title', 'Workspace\nUp to date');
   await openConnect(page, 'Connect with a code');
   await expect(page.getByRole('button', { name: 'Pull source changes', exact: true })).toBeEnabled(); current = next;
   await post(page, [state(next, 'other-device-receipt')]);
@@ -865,12 +928,12 @@ test('native resume backs off after a temporary failure and automatically retrie
   await post(page, [{ type: 'document', document: 'native-file', name: 'Native file', selection: [] },
     { type: 'state', bundle: source, changed: 0, local: source.variables.map(row => ({ path: row.path, value: importedValue(row) })) },
     { type: 'saved-connection', code, name: 'Workspace', resume: true }]);
-  await expect(page.locator('.plugin-status-pill')).toHaveText('Offline');
+  await expect(page.locator('.plugin-sync-status[data-service=workspace]')).toHaveAttribute('title', 'Workspace\nOffline');
   await page.clock.runFor(5000); expect(resumes).toBe(1); expect(await sent(page, 'pull')).toBeUndefined();
   await page.clock.runFor(4000); await expect.poll(() => resumes).toBe(2);
   await expect.poll(() => sent(page, 'pull')).toBeTruthy();
   await post(page, [{ type: 'state', bundle: source, changed: 0, local: [] }, { type: 'pulled', revision: source.revision }]);
-  await expect(page.locator('.plugin-status-pill')).toHaveText('Saved to workspace');
+  await expect(page.locator('.plugin-sync-status[data-service=workspace]')).toHaveAttribute('title', 'Workspace\nUp to date');
 });
 
 test('native polling pauses while hidden, coalesces a slow response and updates metadata without importing unchanged source', async ({ page }) => {
@@ -889,7 +952,7 @@ test('native polling pauses while hidden, coalesces a slow response and updates 
     { type: 'state', bundle: source, changed: 0, local: [] }, { type: 'saved-connection', code, name: 'Workspace', resume: true }]);
   await expect.poll(() => sent(page, 'pull')).toBeTruthy();
   await post(page, [{ type: 'state', bundle: source, changed: 0, local: [] }, { type: 'pulled', revision: source.revision }]);
-  await expect(page.locator('.plugin-status-pill')).toHaveText('Saved to workspace');
+  await expect(page.locator('.plugin-sync-status[data-service=workspace]')).toHaveAttribute('title', 'Workspace\nUp to date');
   await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
   await page.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable: true, value: true }); document.dispatchEvent(new Event('visibilitychange')); });
   await page.clock.runFor(6000); expect(polls).toBe(0);
@@ -1054,7 +1117,7 @@ for (const choice of ['percentage', 'ratio', 'previous']) {
     const source = await bundle(8);
     await post(page, [{ type: 'state', bundle: source, local: [], changed: 0, recovery: true,
       unitConflicts: [{ path: 'sevan.sys.opacity', current: 26, before: 0.1, beforeScale: 1, afterScale: 100 }] }]);
-    await expect(page.locator('.plugin-status-pill')).toHaveText('Unit review');
+    await expect(page.locator('.plugin-sync-status[data-service=figma]')).toHaveAttribute('title', 'Figma\nUnit review');
     await expect(page.getByRole('button', { name: 'Resume interrupted pull', exact: true })).toBeDisabled();
     await expect(page.getByRole('button', { name: 'Download changes', exact: true })).toBeDisabled();
     const label = choice === 'percentage' ? 'Use 26% (Figma percentage)' : choice === 'ratio' ? 'Use 26 (source ratio)' : 'Restore 0.1 (previous value)';

@@ -95,8 +95,12 @@ test('Material rail icons fill on selection, use secondary, and return to defaul
   await expect(variants.locator('[data-symbol-variant=filled]')).toHaveCSS('display', 'inline');
   const figma = rail.getByRole('button', { name: 'Figma', exact: true });
   await expect(figma.locator('.md-nav-icon > svg')).toBeVisible();
+  await expect(figma.locator('[data-symbol-variant=outlined]')).toHaveCSS('display', 'inline');
+  await expect(figma.locator('[data-symbol-variant=filled]')).toHaveCSS('display', 'none');
   await figma.click();
   await expect(figma.locator('.md-nav-icon > svg')).toBeVisible();
+  await expect(figma.locator('[data-symbol-variant=filled]')).toHaveCSS('display', 'inline');
+  await expect(figma.locator('[data-symbol-variant=outlined]')).toHaveCSS('display', 'none');
   await expect(page.locator('[data-service=workspace] svg')).toHaveAttribute('data-material-symbol', 'desktop_cloud');
 });
 

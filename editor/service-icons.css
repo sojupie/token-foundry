@@ -1,0 +1,5 @@
+.foundry-figma-icon > [data-symbol-variant="filled"] { display: none; }
+.foundry-figma-icon[data-filled] > [data-symbol-variant="outlined"],
+.md-nav-item[aria-current="page"] .foundry-figma-icon > [data-symbol-variant="outlined"] { display: none; }
+.foundry-figma-icon[data-filled] > [data-symbol-variant="filled"],
+.md-nav-item[aria-current="page"] .foundry-figma-icon > [data-symbol-variant="filled"] { display: inline; }

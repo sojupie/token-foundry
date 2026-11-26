@@ -2,7 +2,7 @@ import { useEffect, useEffectEvent, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { AppBar, IconButton, NavigationBar, NavigationItem, Progress, Snackbar } from '@token-catalog/forge-react';
 import { Alert, AlertDescription } from '../editor/components/ui/alert.tsx';
-import { GitCompareArrows, Layers, Link2, RefreshCw } from '../editor/icons.tsx';
+import { DesktopCloud, GitCompareArrows, Layers, RefreshCw } from '../editor/icons.tsx';
 import { isBundle, isFigmaValue, isTokenProposal, maximumBytes, sameLocalValue, sameSourceValue } from '../integrations/figma/contract.ts';
 import { parseEasingInput } from '../integrations/figma/easing.ts';
 import type { FigmaBundle, FigmaValue, TokenProposal, VariableRow } from '../integrations/figma/contract.ts';
@@ -23,6 +23,7 @@ import type { TokenForm } from './forms.ts';
 import { ChangesView } from './components/changes-view.tsx';
 import { ConnectionView } from './components/connection-view.tsx';
 import { TokensView } from './components/tokens-view.tsx';
+import { SyncStatus } from './components/sync-status.tsx';
 import {
   DEFAULT_FOUNDRY_ORIGIN,
   displayValue,
@@ -1191,28 +1192,7 @@ function App() {
   }
 
   const hasAttention = Boolean(unitConflicts.length || recovery || nativeIssue || sourceReviewNeeded || serverReview || conflicts.length);
-  const statusLabel = unitConflicts.length
-    ? 'Unit review'
-    : busy
-      ? 'Syncing…'
-      : offline
-        ? 'Offline'
-        : recovery
-          ? 'Recovery needed'
-          : nativeIssue
-            ? 'Needs attention'
-            : sourceReviewNeeded
-              ? 'Review source'
-              : serverReview || conflicts.length
-                ? 'Conflicts'
-                : changed
-                  ? `${changed} local ${changed === 1 ? 'change' : 'changes'}`
-                  : workspace
-                    ? connection
-                      ? 'Saved to workspace'
-                      : 'Disconnected'
-                    : 'Local';
-  const statusTone = hasAttention ? 'attention' : workspace && connection && !changed ? 'saved' : 'neutral';
+  const nativeAttention = unitConflicts.length ? 'Unit review' : recovery ? 'Recovery needed' : nativeIssue ? 'Needs attention' : '';
 
   const subtitle = workspace
     ? `${workspace.role === 'library' ? 'Library' : 'Concept'}${bundle ? ` · ${bundle.variables.length} tokens` : ''}`
@@ -1231,7 +1211,9 @@ function App() {
       title={workspace?.name ?? 'Foundry'}
       subtitle={subtitle}
       actions={<>
-        <span className="plugin-status-pill" data-tone={statusTone}>{statusLabel}</span>
+        <SyncStatus hasFigma={!!fileContext.id || !!bundle} hasSnapshot={!!bundle} connected={!!workspace && !!connection}
+          offline={offline} busy={busy} changed={changed} forms={formPaths.length}
+          nativeAttention={nativeAttention} sourceAttention={!!(sourceReviewNeeded || sourceConnection || serverReview || conflicts.length)} />
         <IconButton size="small" label="Refresh Figma" title="Refresh Figma" disabled={busy} onClick={() => send({ type: 'inspect' })}>
           <RefreshCw aria-hidden="true" />
         </IconButton>
@@ -1565,7 +1547,7 @@ function App() {
       />
       <NavigationItem
         label="Workspace"
-        icon={<Link2 />}
+        icon={<DesktopCloud />}
         {...(!connection && pairing ? { badge: 'small' as const } : {})}
         aria-current={view === 'workspace' ? 'page' : undefined}
         onClick={() => setView('workspace')}
