@@ -3,7 +3,7 @@ import type { KeyboardEvent, ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { ActionDialog } from '@/components/ui/dialog';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { ChevronLeft, ChevronRight, Folder, Search, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Folder, Search, X } from './icons.tsx';
 import { ChipSelect, SelectOption, Button, IconButton, List, ListItemButton, TextField } from '@token-catalog/forge-react';
 import { fieldDependsOn, leafName, parentPath } from '../lib/document.ts';
 import type { DocumentGraph } from '../lib/document.ts';

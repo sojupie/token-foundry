@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Button, Card, Disclosure, FilterChip, IconButton, List, ListItemButton, Select, SelectOption, TextField } from '@token-catalog/forge-react';
-import { ArrowLeft, RefreshCw, Search, X } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Search, X } from '../../editor/icons.tsx';
 import type { FigmaBundle, VariableRow } from '../../integrations/figma/contract.ts';
 import { isFigmaValue } from '../../integrations/figma/contract.ts';
 import { EasingField } from '../../integrations/figma/easing-field.tsx';

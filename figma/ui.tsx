@@ -2,7 +2,7 @@ import { useEffect, useEffectEvent, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { AppBar, IconButton, NavigationBar, NavigationItem, Progress, Snackbar } from '@token-catalog/forge-react';
 import { Alert, AlertDescription } from '../editor/components/ui/alert.tsx';
-import { GitCompareArrows, Layers, Link2, RefreshCw } from 'lucide-react';
+import { GitCompareArrows, Layers, Link2, RefreshCw } from '../editor/icons.tsx';
 import { isBundle, isFigmaValue, isTokenProposal, maximumBytes, sameLocalValue, sameSourceValue } from '../integrations/figma/contract.ts';
 import { parseEasingInput } from '../integrations/figma/easing.ts';
 import type { FigmaBundle, FigmaValue, TokenProposal, VariableRow } from '../integrations/figma/contract.ts';

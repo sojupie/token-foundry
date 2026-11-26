@@ -2,7 +2,7 @@ import { CommandMenu } from '../../editor/command-bar.tsx';
 import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider, useMutation, useQuery } from '@tanstack/react-query';
-import { GitPullRequest } from 'lucide-react';
+import { GitPullRequest } from '../../editor/icons.tsx';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button, ButtonLink, Card, Progress, Select, SelectOption } from '@token-catalog/forge-react';
 import { ActionDialog } from '@/components/ui/dialog';

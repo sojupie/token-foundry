@@ -1,4 +1,4 @@
-import { X } from 'lucide-react';
+import { X } from '../../icons.tsx';
 import { Dialog, IconButton } from '@token-catalog/forge-react';
 import type { DialogProps } from '@token-catalog/forge-react';
 

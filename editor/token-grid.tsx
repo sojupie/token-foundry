@@ -7,7 +7,7 @@ import type { FocusEvent, KeyboardEvent, MouseEvent, ReactNode, RefObject } from
 import { GridColumnResizer, useGridWidths } from './grid-columns.tsx';
 import type { GridSelection } from './lib/grid-selection.ts';
 import type { RenderData } from './lib/render-data.ts';
-import { AlertCircle, ArrowRightLeft, Copy, Ellipsis, Link2, Pencil, Settings2, TextCursorInput, Trash2, Undo2 } from 'lucide-react';
+import { AlertCircle, ArrowRightLeft, Copy, Ellipsis, Link2, Pencil, Settings2, TextCursorInput, Trash2, Undo2 } from './icons.tsx';
 import { IconButton, Select, SelectOption } from '@token-catalog/forge-react';
 import { EditorPopover } from '@/components/ui/popover';
 import { SelectionCheckbox } from '@/components/ui/selection-checkbox';

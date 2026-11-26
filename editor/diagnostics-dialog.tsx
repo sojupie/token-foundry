@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import { AlertCircle, ChevronLeft, ChevronRight, FileCode2 } from 'lucide-react';
+import { AlertCircle, ChevronLeft, ChevronRight, FileCode2 } from './icons.tsx';
 import { Button, IconButton, List, ListItemButton } from '@token-catalog/forge-react';
 import { diagnosticKey } from '../lib/document-diagnostics.ts';
 import type { DocumentDiagnostic } from '../lib/document-diagnostics.ts';

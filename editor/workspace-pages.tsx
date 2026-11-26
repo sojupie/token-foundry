@@ -13,7 +13,7 @@ import {
   TextArea,
   TextField,
 } from '@token-catalog/forge-react';
-import { MoreHorizontal, Pencil, Search, Trash2, X } from 'lucide-react';
+import { MoreHorizontal, Pencil, Search, Trash2, X } from './icons.tsx';
 import { CommandMenu } from './command-bar.tsx';
 import { ActionDialog } from './components/ui/dialog.tsx';
 import { Alert, AlertDescription } from './components/ui/alert.tsx';

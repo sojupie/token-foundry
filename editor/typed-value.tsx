@@ -1,6 +1,6 @@
 import { useId, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { ArrowDown, ArrowUp, ChevronDown, Link2, Plus, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronDown, Link2, Plus, Trash2 } from './icons.tsx';
 import { Button, Checkbox, IconButton, TextField, Select, SelectOption } from '@token-catalog/forge-react';
 import { FieldRow } from '@/components/ui/field-row';
 import { colorHex, colorSpace, colorSpaces } from '../lib/color.ts';

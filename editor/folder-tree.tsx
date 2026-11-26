@@ -1,6 +1,6 @@
 import { memo, useCallback, useId, useImperativeHandle, useState } from 'react';
 import type { Ref } from 'react';
-import { ChevronDown, ChevronRight, Folder, FolderOpen, Layers } from 'lucide-react';
+import { ChevronDown, ChevronRight, Folder, FolderOpen, Layers } from './icons.tsx';
 import { IconButton, List, ListItemButton } from '@token-catalog/forge-react';
 import { leafName, parentPath } from '../lib/document.ts';
 import type { DocumentGraph } from '../lib/document.ts';

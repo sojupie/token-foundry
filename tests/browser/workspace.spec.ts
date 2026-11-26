@@ -666,7 +666,7 @@ test('edits cells, rewrites references, and reviews bulk move and group delete',
   const extra = page.locator('[data-token-row="reference.extra"]').getByRole('checkbox');
   await expect(spare).toBeChecked();
   await extra.locator('xpath=ancestor::label').click();
-  await expect(page.locator('.workspace-footer').getByText('2 selected')).toBeVisible();
+  await expect(page.locator('.workspace-table-footer').getByText('2 selected')).toBeVisible();
   await page.getByRole('button', { name: 'Name for reference.compact', exact: true }).press('Shift+F10');
   await page.getByRole('menuitem', { name: 'References', exact: true }).click();
   const references = page.getByRole('complementary', { name: 'Token details' });
@@ -675,7 +675,7 @@ test('edits cells, rewrites references, and reviews bulk move and group delete',
   await expect(references).toBeHidden();
   const search = toolbar.getByRole('searchbox');
   await search.fill('compact');
-  await expect(page.locator('.workspace-footer').getByText('2 selected · 2 not shown', { exact: true })).toBeVisible();
+  await expect(page.locator('.workspace-table-footer').getByText('2 selected · 2 not shown', { exact: true })).toBeVisible();
   await search.clear();
   await expect(toolbar.getByRole('button', { name: 'Delete', exact: true })).toBeEnabled();
   await page.getByRole('button', { name: 'Move', exact: true }).click();
@@ -891,7 +891,7 @@ test('keeps group navigation and selection usable in a narrow dark workspace', a
   await expect(all).toHaveJSProperty('indeterminate', true);
   const actions = page.getByRole('region', { name: 'Token commands' });
   const move = actions.getByRole('button', { name: 'Move', exact: true });
-  const clear = page.locator('.workspace-footer').getByRole('button', { name: 'Clear selection' });
+  const clear = page.locator('.workspace-table-footer').getByRole('button', { name: 'Clear selection' });
   await expect(move).toBeEnabled();
   await expect(clear).toBeInViewport();
   await clear.click();
@@ -917,10 +917,10 @@ test('keeps workspace branch expansion independent of folder selection', async (
   await expect(context.getByRole('heading')).toHaveText('reference');
   await expect(referenceToggle).toHaveAttribute('aria-expanded', 'false');
   const closedFolderIcon = reference.locator('.md-list-leading svg');
-  await expect(closedFolderIcon).toHaveClass(/lucide-folder\b/u);
+  await expect(closedFolderIcon).toHaveAttribute('data-material-symbol', 'folder');
   await referenceToggle.press('Space');
   await expect(referenceToggle).toHaveAttribute('aria-expanded', 'true');
-  await expect(closedFolderIcon).toHaveClass(/lucide-folder-open\b/u);
+  await expect(closedFolderIcon).toHaveAttribute('data-material-symbol', 'folder_open');
   const folderIcon = await closedFolderIcon.boundingBox();
   const childIcon = await tree.getByRole('button', { name: 'space', exact: true }).locator('.md-list-leading svg').boundingBox();
   const chevron = await referenceToggle.boundingBox();
@@ -1384,7 +1384,7 @@ test('row and group menus show shortcut letters and can be skipped', async ({ pa
   await cell.press('Alt+ArrowDown');
   await page.keyboard.press('Tab');
   await expect(menu).toBeHidden();
-  await expect(page.locator('[data-workspace-name]')).toBeFocused();
+  await expect(page.locator('.workspace-table-footer').getByRole('button', { name: 'Clear selection', exact: true })).toBeFocused();
 
   await cell.click({ button: 'right' });
   await expect(menu.getByRole('menuitem', { name: 'Edit token', exact: true })).toBeFocused();
@@ -1464,15 +1464,15 @@ test('the grid has one Tab stop and blank clicks preserve the active cell and ch
   }
   await page.mouse.click(containerBox.x + 24, tableBox.y + tableBox.height + 12);
   await expect(remembered).toBeFocused();
-  await page.locator('.workspace-footer').getByText(/^10 tokens$/u).click();
+  await page.locator('.workspace-table-footer').getByText(/^10 tokens$/u).click();
   await expect(remembered).toBeFocused();
 
   await page.keyboard.press('Tab');
-  await expect(page.locator('[data-workspace-name]')).toBeFocused();
-  await page.keyboard.press('Tab');
   await expect(clear).toBeFocused();
-  await page.keyboard.press('Shift+Tab');
+  await page.keyboard.press('Tab');
   await expect(page.locator('[data-workspace-name]')).toBeFocused();
+  await page.keyboard.press('Shift+Tab');
+  await expect(clear).toBeFocused();
   await page.keyboard.press('Shift+Tab');
   await expect(remembered).toBeFocused();
   await page.keyboard.press('Shift+Tab');

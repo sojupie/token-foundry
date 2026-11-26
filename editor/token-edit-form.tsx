@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { lazy, Suspense, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Link2 } from 'lucide-react';
+import { Link2 } from './icons.tsx';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button, IconButton, TextField, Select, SelectOption } from '@token-catalog/forge-react';
 import { Textarea } from '@/components/ui/textarea';

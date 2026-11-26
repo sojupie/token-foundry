@@ -1,4 +1,4 @@
-import { ArrowRightLeft, ClipboardPaste, Copy, Ellipsis, FolderPlus, Settings2, TextCursorInput, Trash2 } from 'lucide-react';
+import { ArrowRightLeft, ClipboardPaste, Copy, Ellipsis, FolderPlus, Settings2, TextCursorInput, Trash2 } from './icons.tsx';
 import { CommandMenu } from './command-bar.tsx';
 
 export function GroupActions({ path, disabled, authored, variant, addGroupValue, metadata, create, rename, move, duplicate, copy, paste, remove }: {

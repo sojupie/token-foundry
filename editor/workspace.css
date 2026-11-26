@@ -484,6 +484,8 @@
   border-inline-start: 1px solid var(--md-sys-color-outline-variant);
 }
 .workspace-status-service > svg { inline-size: 16px; block-size: 16px; }
+/* Foundry uses secondary for its active destinations. */
+.workspace-rail .md-nav-item[aria-current="page"] .md-nav-icon { --_nav-item-icon: var(--md-sys-color-secondary); }
 .workspace-status-light {
   inline-size: var(--md-sys-measurement-space100);
   block-size: var(--md-sys-measurement-space100);

@@ -1,5 +1,5 @@
 import { isJsonObject } from '../lib/json.ts';
-import { Link2 } from 'lucide-react';
+import { Link2 } from './icons.tsx';
 import { colorHex } from '../lib/color.ts';
 import { referenceLabel } from '../lib/document.ts';
 import { isColor, isDimension, isTypography } from '../lib/token-types.ts';
@@ -28,7 +28,7 @@ export function TokenValue({ value, swatch = false, authored = false, containsRe
   const alpha = isColor(value) ? value.alpha ?? 1 : 1;
   return <span className={'flex min-w-0 items-center gap-space75 code-text copy-small ' +
     (reference ? 'copy-emphasis tone-primary' : '')} title={containsReferences && !reference ? 'Contains references · ' + text : text}>
-    {(reference || containsReferences) && <Link2 size={13} className="shrink-0 tone-primary" aria-hidden="true" />}
+    {(reference || containsReferences) && <Link2 width={13} height={13} className="shrink-0 tone-primary" aria-hidden="true" />}
     {swatch && /^#[0-9A-F]{6}$/iu.test(text) && <span aria-hidden="true" className="swatch-sm shrink-0 rounded-sm border"
       style={{ backgroundColor: text, opacity: alpha }} />}
     <span className={wrap ? 'wrap-anywhere whitespace-pre-wrap' : 'truncate'}>{text}{swatch && alpha < 1 ? ' · ' + Math.round(alpha * 100) + '%' : ''}</span>

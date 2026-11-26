@@ -1,7 +1,7 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import type { ReactNode } from 'react';
-import { Database, FolderOpen, GitBranch } from 'lucide-react';
-import { DesktopSyncIcon, FigmaIcon } from './service-icons.tsx';
+import { Database, DesktopCloud, FolderOpen, GitBranch } from './icons.tsx';
+import { FigmaIcon } from './service-icons.tsx';
 import { useGitHubSession } from '../integrations/github/connect.tsx';
 import type { RepositoryPin, WorkspaceView } from '../integrations/workspace/model.ts';
 import { figmaStatus, githubStatus } from './lib/footer-status.ts';
@@ -73,7 +73,7 @@ export function WorkspaceFooterStatus({ phase, connected, loading, localState, v
     <div className="workspace-status-indicators">
       <ServiceIndicator name="Browser copy" kind="local" icon={<Database aria-hidden="true" />} status={local} />
       {folder && <ServiceIndicator name="Source folder" kind="folder" icon={<FolderOpen aria-hidden="true" />} status={disk} />}
-      <ServiceIndicator name="Workspace" kind="workspace" icon={<DesktopSyncIcon />} status={{ connection: { state: connectionState, label: connectionLabel }, sync: { state: syncState, label: syncLabel } }} />
+      <ServiceIndicator name="Workspace" kind="workspace" icon={<DesktopCloud />} status={{ connection: { state: connectionState, label: connectionLabel }, sync: { state: syncState, label: syncLabel } }} />
       <ServiceIndicator name="GitHub" kind="github" icon={<GitBranch aria-hidden="true" />} status={git} />
       <ServiceIndicator name="Figma" kind="figma" icon={<FigmaIcon />} status={figma} />
     </div>

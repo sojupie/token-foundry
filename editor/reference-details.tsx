@@ -1,5 +1,5 @@
 import { memo, useDeferredValue, useMemo, useState } from 'react';
-import { ArrowRight } from 'lucide-react';
+import { ArrowRight } from './icons.tsx';
 import { Button, Disclosure, IconButton } from '@token-catalog/forge-react';
 import { referenceConsumers, referenceProblems } from '../lib/document.ts';
 import type { DocumentGraph } from '../lib/document.ts';

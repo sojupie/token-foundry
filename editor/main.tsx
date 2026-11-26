@@ -51,7 +51,7 @@ import type { RecoveryWork } from './lib/recovery.ts';
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import type { Root } from 'react-dom/client';
-import { AlertCircle, Archive, ArrowLeftRight, ArrowRightLeft, ArrowUpRight, BookOpen, ChevronLeft, ChevronRight, CirclePlus, ClipboardPaste, Command, Copy, Download, FileCode, FileDiff, FileInput, FileText, FolderOpen, FolderPlus, GitCompareArrows, History, Keyboard, Layers, Moon, Palette, PanelLeftClose, PanelLeftOpen, PanelRight, PanelRightClose, Pencil, Plus, Redo2, Search, Settings2, Shapes, SlidersHorizontal, Sun, TextCursorInput, Trash2, Undo2, X } from 'lucide-react';
+import { AlertCircle, Archive, ArrowLeftRight, ArrowRightLeft, ArrowUpRight, BookOpen, ChevronLeft, ChevronRight, CirclePlus, ClipboardPaste, Command, Copy, Download, FileCode, FileDiff, FileInput, FileText, FolderOpen, FolderPlus, GitCompareArrows, History, Keyboard, Layers, Moon, Palette, PanelLeftClose, PanelLeftOpen, PanelRight, PanelRightClose, Pencil, Plus, Redo2, Search, Settings2, Shapes, SlidersHorizontal, Sun, TextCursorInput, Trash2, Undo2, X } from './icons.tsx';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Card, ChipSelect, Disclosure, Button, ButtonLink, IconButton, NavigationBar, NavigationRail, NavigationItem, Progress, SideSheet, Select, SelectOption, TextField } from '@token-catalog/forge-react';
 import { BulkEditDialog, selectionEditLabels } from './bulk-edit-dialog.tsx';

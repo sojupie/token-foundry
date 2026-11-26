@@ -1,6 +1,6 @@
 import { useId, useRef, useState } from 'react';
 import { Button, Disclosure, IconButton, TextField, Select, SelectOption } from '@token-catalog/forge-react';
-import { ArrowDown, ArrowUp, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, Trash2 } from './icons.tsx';
 import { Textarea } from '@/components/ui/textarea';
 import { isJsonObject, parseJson } from '../lib/json.ts';
 import { InlineSourceEditor } from './inline-source-editor.tsx';
