@@ -12,7 +12,7 @@ async function selectedSurface(item: Locator) {
   await expect(item).toHaveCSS('background-color', expected);
 }
 
-test('Material rail icons fill on selection, use secondary, and avoid transform scaling or shrink on press', async ({ page }, info) => {
+test('Material rail icons fill on selection, use secondary, and return to default on press without undershoot', async ({ page }, info) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto('/');
   const rail = page.getByRole('navigation', { name: 'Foundry', exact: true });
@@ -35,17 +35,33 @@ test('Material rail icons fill on selection, use secondary, and avoid transform 
   await expect(glyph).toHaveCSS('scale', 'none');
   await expect(glyph).toHaveCSS('transform', 'none');
   await page.mouse.down();
-  await expect(glyph).toHaveCSS('width', '26px');
-  await expect(glyph).toHaveCSS('stroke-width', '16px');
+  const pressedWidths = await glyph.evaluate(async element => {
+    const widths: number[] = [];
+    const started = performance.now();
+    await new Promise<void>(resolve => {
+      function frame() {
+        widths.push(element.getBoundingClientRect().width);
+        if (performance.now() - started >= 500) resolve(); else requestAnimationFrame(frame);
+      }
+      requestAnimationFrame(frame);
+    });
+    return widths;
+  });
+  expect(Math.min(...pressedWidths)).toBeGreaterThanOrEqual(24);
+  await expect(glyph).toHaveCSS('width', '24px');
+  await expect(glyph).toHaveCSS('stroke', 'none');
+  await expect(glyph.locator('[data-symbol-variant=filled]')).toHaveCSS('display', 'inline');
   await mkdir('tmp/material-symbols', { recursive: true });
   await page.screenshot({ path: `tmp/material-symbols/${info.project.name}-rail-pressed.png` });
   await page.mouse.up();
+  await expect(glyph).toHaveCSS('width', '26px');
+  await expect(glyph).toHaveCSS('stroke-width', '16px');
   await page.mouse.move(1200, 500);
   await expect(glyph).toHaveCSS('width', '24px');
   await tokens.focus();
   await page.keyboard.down('Space');
-  await expect(glyph).toHaveCSS('width', '26px');
-  await expect(glyph).toHaveCSS('stroke-width', '16px');
+  await expect(glyph).toHaveCSS('width', '24px');
+  await expect(glyph).toHaveCSS('stroke', 'none');
   await page.keyboard.up('Space');
   const variants = rail.getByRole('button', { name: 'Variants', exact: true });
   await variants.click();
