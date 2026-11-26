@@ -36,6 +36,7 @@ import { sameIncomingReview } from './lib/figma-review.ts';
 import type { IncomingReviewRecovery, PreparedIncomingInput } from './lib/figma-review.ts';
 import { WorkspaceRecovery } from './workspace-recovery.tsx';
 import { WorkspaceFooterStatus } from './workspace-footer-status.tsx';
+import { FigmaIcon } from './service-icons.tsx';
 import type { RecoveryHandle, RecoveryStatus } from './workspace-recovery.tsx';
 import { ReloadEditor } from './field-boundary.tsx';
 import { newBulkDraft } from './lib/bulk-draft.ts';
@@ -1734,7 +1735,7 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
           setView('changes');
           requestAnimationFrame(() => document.getElementById('workspace-changes')?.focus());
         }} />
-      <NavigationItem data-key-tip="5" label="Figma" icon={<Shapes />} aria-current={view === 'figma' ? 'page' : undefined}
+      <NavigationItem data-key-tip="5" label="Figma" icon={<FigmaIcon />} aria-current={view === 'figma' ? 'page' : undefined}
         disabled={navigationDisabled} onClick={() => {
           setView('figma');
           requestAnimationFrame(() => document.getElementById('workspace-figma')?.focus());
@@ -2175,8 +2176,10 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
                 <span aria-live="polite" className="numeric-text">
                   {checked.size > 0 && <>{selectionCount} selected{hiddenChecked > 0 && ` · ${hiddenChecked} not shown`}</>}
                 </span>
-                {checked.size > 0 && <IconButton size="xsmall" label="Clear selection" title="Clear selection" disabled={menuDisabled}
-                  onClick={clearCheckedSelection}><X aria-hidden="true" /></IconButton>}
+                <span className="workspace-clear-selection" data-empty={checked.size === 0 || undefined}>
+                  <IconButton size="xsmall" label="Clear selection" title="Clear selection" disabled={menuDisabled || checked.size === 0}
+                    onClick={clearCheckedSelection}><X aria-hidden="true" /></IconButton>
+                </span>
               </div>
             </div>
           )}

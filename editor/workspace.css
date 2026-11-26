@@ -502,6 +502,8 @@
   background: light-dark(#806000, #f9cf58);
 }
 .workspace-table-footer > output:empty { display: none; }
+.workspace-clear-selection { display: inline-flex; }
+.workspace-clear-selection[data-empty] { visibility: hidden; }
 .workspace-footer-end, .workspace-pagination, .workspace-selection-count {
   display: flex;
   align-items: center;

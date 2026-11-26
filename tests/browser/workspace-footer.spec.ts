@@ -30,9 +30,13 @@ test('changes badge counts authored tokens across files and reverts; footers and
   const tableFooter = page.locator('#token-library > .workspace-table-footer');
   await expect(tableFooter).toContainText('5 tokens');
   await expect(tableFooter).toContainText('Unsaved changes');
+  const selectedFooter = await tableFooter.boundingBox();
   await tableFooter.getByRole('button', { name: 'Clear selection', exact: true }).click();
+  await expect(tableFooter.getByRole('button', { name: 'Clear selection', exact: true })).toHaveCount(0);
+  expect(await tableFooter.boundingBox()).toEqual(selectedFooter);
   await page.getByRole('checkbox', { name: 'Select row Name for space.small', exact: true }).check();
   await expect(tableFooter).toContainText('1 selected');
+  expect(await tableFooter.boundingBox()).toEqual(selectedFooter);
   const footer = await page.locator('.workspace-footer').boundingBox();
   const identity = await page.locator('.workspace-footer-identity').boundingBox();
   expect(footer && identity && identity.x > footer.x + footer.width / 2).toBeTruthy();
@@ -78,6 +82,12 @@ test('changes badge counts authored tokens across files and reverts; footers and
   await page.getByRole('navigation', { name: 'Foundry' }).getByRole('button', { name: 'Tokens', exact: true }).click();
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(tableFooter).toBeVisible();
+  const mobileFooter = await tableFooter.boundingBox();
+  await page.getByRole('checkbox', { name: 'Select row Name for space.small', exact: true }).check();
+  await expect(tableFooter).toContainText('1 selected');
+  expect(await tableFooter.boundingBox()).toEqual(mobileFooter);
+  await tableFooter.getByRole('button', { name: 'Clear selection', exact: true }).click();
+  expect(await tableFooter.boundingBox()).toEqual(mobileFooter);
   await expect(page.locator('[data-service=workspace]')).toBeVisible();
   await expect.poll(() => page.locator('.md-snackbar:popover-open').evaluate(element => {
     const snack = element.getBoundingClientRect();
