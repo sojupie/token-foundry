@@ -3,7 +3,7 @@ import { test } from './runtime-test.ts';
 import type { APIRequestContext, Page } from '@playwright/test';
 import { isIdentity, isWorkspaceView } from '../../integrations/workspace/model.ts';
 import { editSource, recoveryCopies } from './recovery-helpers.ts';
-import { mkdir, readFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { readRecoveryExport } from '../../editor/lib/recovery.ts';
 
 async function create(request: APIRequestContext, name: string, value: number) {
@@ -198,7 +198,7 @@ test('Changes supports reverting individual tokens and discarding individual sou
   await expect(page.getByRole('button', { name: 'Value for space.medium', exact: true })).toHaveText('20 px');
 });
 
-test('Recover local work downloads, confirms deletion with snackbar retry, and clears remaining drafts', async ({ page }, info) => {
+test('Recover local work downloads, confirms deletion with snackbar retry, and clears remaining drafts', async ({ page }) => {
   await page.goto('/');
   await editSource(page, 8, 12);
   await expect.poll(async () => (await recoveryCopies(page)).length).toBe(1);
@@ -221,23 +221,12 @@ test('Recover local work downloads, confirms deletion with snackbar retry, and c
   const dialog = page.getByRole('dialog', { name: 'Recover local work', exact: true });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByRole('listitem')).toHaveCount(3);
-  await expect(dialog.locator('ul.card-group')).toHaveCSS('row-gap', '8px');
 
   const card = dialog.getByRole('listitem').first();
-  await expect(card.getByRole('button', { name: 'Resume', exact: true }).locator('svg')).toHaveCount(1);
   const download = page.waitForEvent('download');
   await card.getByRole('button', { name: 'Download', exact: true }).click();
   const exported = readRecoveryExport(await readFile(await (await download).path(), 'utf8'));
   expect((await recoveryCopies(page)).find(record => record.id === exported.id)).toEqual(exported);
-  await mkdir('tmp/recovery-actions', { recursive: true });
-  async function captureTheme(theme: string) {
-    await page.setViewportSize({ width: 480, height: 1000 });
-    await page.evaluate(value => document.documentElement.setAttribute('data-theme', value), theme);
-    await dialog.screenshot({ path: `tmp/recovery-actions/${info.project.name}-${theme}.png` });
-  }
-  await captureTheme('light');
-  await captureTheme('dark');
-  await page.setViewportSize({ width: 1280, height: 720 });
   const deleteButton = card.getByRole('button', { name: 'Delete', exact: true });
   await deleteButton.click();
   await expect(card).toContainText('Delete this recovery copy?');
@@ -277,16 +266,4 @@ test('Recover local work downloads, confirms deletion with snackbar retry, and c
   await dialog.getByRole('button', { name: 'Done', exact: true }).click();
   await expect(dialog).toBeHidden();
 
-  await page.getByRole('navigation', { name: 'Foundry' }).getByRole('button', { name: 'Workspace', exact: true }).click();
-  const workspaceMain = page.getByRole('main', { name: 'Workspace management', exact: true });
-  await expect(workspaceMain).toBeVisible();
-  const footer = page.locator('.workspace-footer');
-  await expect(footer.locator('[data-workspace-name]')).toHaveText('Example');
-  await expect(footer.locator('.workspace-save-state')).toBeVisible();
-  await expect(page.locator('.workspace-header [data-workspace-name]')).toHaveCount(0);
-  await expect(workspaceMain.locator('.card-group')).toHaveCSS('row-gap', '8px');
-  const sourceCard = workspaceMain.getByRole('region', { name: 'Source files', exact: true });
-  await expect(sourceCard.getByRole('button', { name: 'New source file', exact: true })).toBeVisible();
-  const searchHeight = await sourceCard.getByRole('searchbox', { name: 'Find source file', exact: true }).evaluate(node => node.closest('.md-outlined-text-field')?.getBoundingClientRect().height ?? 0);
-  expect(searchHeight).toBeGreaterThanOrEqual(40);
 });

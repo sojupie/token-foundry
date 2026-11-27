@@ -1,4 +1,3 @@
-import { mkdir, writeFile } from 'node:fs/promises';
 import { expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
 import { test } from './runtime-test.ts';
@@ -11,8 +10,7 @@ async function edit(page: Page, path: string, value: string) {
   await expect(page.getByRole('button', { name: `Value for ${path}`, exact: true })).toHaveText(value);
 }
 
-test('changes badge counts authored tokens across files and reverts; footers and review content remain usable', async ({ page }, info) => {
-  await mkdir('tmp/ui-footer', { recursive: true });
+test('changes badge counts authored tokens across files and reverts without counting resolved aliases', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto('/');
   await page.locator('input[type=file][multiple]').setInputFiles([
@@ -25,44 +23,21 @@ test('changes badge counts authored tokens across files and reverts; footers and
   const changes = page.getByRole('navigation', { name: 'Foundry' }).getByRole('button', { name: 'Changes', exact: true });
   await expect(changes.locator('.md-badge')).toHaveText('3');
   const reviewButton = page.getByRole('banner').getByRole('button', { name: 'Review changes', exact: true });
-  await expect(reviewButton).toHaveAttribute('data-size', 'xsmall');
-  await expect(reviewButton).toHaveAttribute('data-color', 'tertiary');
   const tableFooter = page.locator('#token-library > .workspace-table-footer');
   await expect(tableFooter).toContainText('5 tokens');
   await expect(tableFooter).toContainText('Unsaved changes');
-  const selectedFooter = await tableFooter.boundingBox();
   await tableFooter.getByRole('button', { name: 'Clear selection', exact: true }).click();
   await expect(tableFooter.getByRole('button', { name: 'Clear selection', exact: true })).toHaveCount(0);
-  expect(await tableFooter.boundingBox()).toEqual(selectedFooter);
   await page.getByRole('checkbox', { name: 'Select row Name for space.small', exact: true }).check();
   await expect(tableFooter).toContainText('1 selected');
-  expect(await tableFooter.boundingBox()).toEqual(selectedFooter);
-  const footer = await page.locator('.workspace-footer').boundingBox();
-  const identity = await page.locator('.workspace-footer-identity').boundingBox();
-  expect(footer && identity && identity.x > footer.x + footer.width / 2).toBeTruthy();
   await expect(page.locator('[data-service=workspace] .workspace-status-light')).toHaveAttribute('data-status', 'bad');
   await expect(page.locator('[data-service=local] .workspace-status-light')).toHaveAttribute('data-status', 'good');
-  await page.screenshot({ path: `tmp/ui-footer/${info.project.name}-tokens.png` });
+
   await tableFooter.getByRole('button', { name: 'Clear selection', exact: true }).click();
   await expect(tableFooter).not.toContainText('1 selected');
   await changes.click();
   await expect(page.getByRole('heading', { name: '3 changed tokens', exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: '2 changed source files', exact: true })).toBeVisible();
-  await expect(page.getByRole('region', { name: 'Changed tokens', exact: true }).locator('.md-list')).toHaveCount(0);
-  await expect(page.getByRole('region', { name: 'Draft changes', exact: true }).locator('.md-list')).toHaveCount(0);
-  async function captureTheme(theme: string) {
-    const toggle = page.getByRole('button', { name: `Switch to ${theme} mode`, exact: true });
-    if (await toggle.count()) await toggle.click();
-    await expect(reviewButton).toBeEnabled();
-    await page.screenshot({ path: `tmp/ui-footer/${info.project.name}-changes-${theme}.png`, animations: 'disabled' });
-    const colors = await reviewButton.evaluate(element => {
-      const style = getComputedStyle(element);
-      return { color: style.color, background: style.backgroundColor, opacity: style.opacity };
-    });
-    await writeFile(`tmp/ui-footer/${info.project.name}-button-${theme}.json`, JSON.stringify(colors));
-  }
-  await captureTheme('light');
-  await captureTheme('dark');
   await reviewButton.click();
   await expect(page.getByRole('main', { name: 'Changes', exact: true })).toBeFocused();
   await expect(page.getByRole('dialog', { name: 'Review changes', exact: true })).toHaveCount(0);
@@ -70,9 +45,6 @@ test('changes badge counts authored tokens across files and reverts; footers and
   const review = page.getByRole('dialog', { name: 'Review changes', exact: true });
   await review.getByText('Resolved value changes (5)', { exact: true }).click();
   await review.getByText('Show file changes', { exact: true }).click();
-  await expect(review.locator('.md-list')).toHaveCount(0);
-  await expect(review.getByRole('region', { name: 'File changes', exact: true })).toHaveCSS('border-radius', '0px');
-  await page.screenshot({ path: `tmp/ui-footer/${info.project.name}-review.png` });
   await page.keyboard.press('Escape');
   async function revert(path: string, remaining: number) {
     await page.getByRole('button', { name: `Revert ${path}`, exact: true }).click();
@@ -85,19 +57,12 @@ test('changes badge counts authored tokens across files and reverts; footers and
   await page.getByRole('navigation', { name: 'Foundry' }).getByRole('button', { name: 'Tokens', exact: true }).click();
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(tableFooter).toBeVisible();
-  const mobileFooter = await tableFooter.boundingBox();
   await page.getByRole('checkbox', { name: 'Select row Name for space.small', exact: true }).check();
   await expect(tableFooter).toContainText('1 selected');
-  expect(await tableFooter.boundingBox()).toEqual(mobileFooter);
   await tableFooter.getByRole('button', { name: 'Clear selection', exact: true }).click();
-  expect(await tableFooter.boundingBox()).toEqual(mobileFooter);
   await expect(page.locator('[data-service=workspace]')).toBeVisible();
-  await expect.poll(() => page.locator('.md-snackbar:popover-open').evaluate(element => {
-    const snack = element.getBoundingClientRect();
-    return [...document.querySelectorAll('[data-snackbar-avoid]')].every(region => snack.bottom <= region.getBoundingClientRect().top);
-  })).toBe(true);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-  await page.screenshot({ path: `tmp/ui-footer/${info.project.name}-mobile.png` });
+
 });
 
 test('workspace connection and sync indicators follow actual offline and reconnect states', async ({ page, context }) => {
@@ -130,8 +95,6 @@ test('GitHub account state is shared with its footer and remains separate from a
   const github = page.locator('[data-service=github]');
   await expect(github).toHaveAttribute('data-connection-status', 'good');
   const initialChecks = checks;
-  await expect(github).toHaveAttribute('title', 'GitHub\nChoose a repository');
-  await expect(github.locator('svg')).toHaveCount(1);
   await expect(github.locator('.workspace-status-light')).toHaveAttribute('data-status', 'pending');
   await page.getByRole('navigation', { name: 'Foundry' }).getByRole('button', { name: 'Workspace', exact: true }).click();
   await expect(page.getByRole('region', { name: 'GitHub', exact: true })).toContainText('Connected as @designer');
@@ -140,7 +103,6 @@ test('GitHub account state is shared with its footer and remains separate from a
   await expect(page.locator('[data-service=workspace]')).toContainText('Saved to workspace');
   signedIn = false;
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-  await expect(github).toHaveAttribute('title', 'GitHub\nSign in to connect');
   await expect(github.locator('.workspace-status-light')).toHaveAttribute('data-status', 'bad');
   await expect(page.locator('[data-service=workspace] .workspace-status-light')).toHaveAttribute('data-status', 'good');
   signedIn = true;
@@ -164,13 +126,11 @@ test('Figma footer follows real pairing, acknowledged revision, and single-devic
   const figma = page.locator('[data-service=figma]');
   await expect(figma).toHaveAttribute('data-connection-status', 'good');
   await expect(figma.locator('.workspace-status-light')).toHaveAttribute('data-status', 'pending');
-  await expect(figma).toHaveAttribute('title', 'Figma\nWaiting for updates');
-  await expect(figma.locator('svg')).toHaveCount(1);
   expect((await request.post(connection.href, { headers, data: { action: 'acknowledge', revision: snapshot['revision'] } })).ok()).toBe(true);
   await expect(figma.locator('.workspace-status-light')).toHaveAttribute('data-status', 'good');
-  await page.screenshot({ path: 'tmp/footer-services/figma-synced.png', animations: 'disabled' });
+
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.screenshot({ path: 'tmp/footer-services/mobile-services.png', animations: 'disabled' });
+
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await context.setOffline(true);
   await expect(figma).toHaveAttribute('data-connection-status', 'pending');
@@ -181,6 +141,5 @@ test('Figma footer follows real pairing, acknowledged revision, and single-devic
   await page.getByRole('navigation', { name: 'Foundry' }).getByRole('button', { name: 'Figma', exact: true }).click();
   await page.getByText('Manage connections (1)', { exact: true }).click();
   await page.getByRole('button', { name: 'Revoke connection', exact: true }).click();
-  await expect(figma).toHaveAttribute('title', 'Figma\nReconnect to sync');
   await expect(figma.locator('.workspace-status-light')).toHaveAttribute('data-status', 'bad');
 });

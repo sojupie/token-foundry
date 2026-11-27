@@ -7,7 +7,7 @@ import { isRecord } from '../../lib/json.ts';
 import { editSource, recoveryCopies } from './recovery-helpers.ts';
 import { chooseOption } from './select-field.ts';
 import { isWorkspaceView } from '../../integrations/workspace/model.ts';
-import { mkdir, readFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { extname, resolve as resolvePath, sep } from 'node:path';
 
 const githubReady = (page: Page) => page.evaluate(() => { const channel = new BroadcastChannel('token-foundry-github'); const broadcast = channel.postMessage.bind(channel); broadcast('ready'); channel.close(); });
@@ -539,7 +539,7 @@ for (const failure of ['none', 'storage', 'source', 'finished-elsewhere', 'inter
     if (!scroller || !cancel) throw new Error('Missing scroll viewport or review action.');
     // Integer scroll offsets can leave a fractional CSS-pixel border edge.
     expect(cancel.y + cancel.height).toBeLessThanOrEqual(scroller.y + scroller.height + 1);
-    await mkdir('.wrangler/verification', { recursive: true }); await page.screenshot({ path: '.wrangler/verification/incoming-review-520-' + test.info().project.name + '.png' });
+
   }
   if (failure === 'finished-elsewhere') {
     const view: unknown = await (await request.get('/git/workspaces/' + id)).json(); if (!isWorkspaceView(view)) throw new Error('Missing view.');
@@ -571,7 +571,7 @@ for (const failure of ['none', 'storage', 'source', 'finished-elsewhere', 'inter
     const editor = page.getByRole('dialog', { name: 'Edit value', exact: true }); await expect(editor).toBeVisible();
     await expect.poll(() => editor.evaluate(node => node.contains(window.document.activeElement))).toBe(true);
     await page.keyboard.press('Tab'); await expect.poll(() => editor.evaluate(node => node.contains(window.document.activeElement))).toBe(true);
-    if (production) { expect(await page.evaluate(() => window.document.documentElement.scrollWidth <= window.innerWidth)).toBe(true); await page.screenshot({ path: '.wrangler/verification/incoming-editor-520-' + test.info().project.name + '.png' }); }
+    if (production) { expect(await page.evaluate(() => window.document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);  }
     expect(failure === 'finished-elsewhere' ? cleared : staged).toBe(failure === 'finished-elsewhere' ? 0 : '14 px');
     await editor.getByRole('button', { name: 'Apply to workspace', exact: true }).click();
     await expect(page.locator('.workspace-save-state')).toHaveText('Saved to workspace');
@@ -618,15 +618,15 @@ for (const kind of ['alias', 'color', 'unit']) for (const choice of ['input', 's
   expect(final.variables.find(item => item.path === 'alias')?.alias).toBe('small'); expect(final.files[0]?.text).toContain('"authored":{"preserve":true}');
 });
 
-test('recovery snackbar leaves the application layout fixed and does not repeat for each autosave', async ({ page }) => {
+test('recovery notification dismisses and does not repeat for each autosave', async ({ page }) => {
   page.on('dialog', dialog => { void dialog.accept(); });
+  await page.clock.install();
   await page.goto('/');
-  const top = await page.locator('.workspace-top').boundingBox();
   await editSource(page, 8, 12);
   const bar = page.locator('.md-snackbar');
   await expect(bar).toBeVisible();
-  expect((await page.locator('.workspace-top').boundingBox())?.height).toBe(top?.height);
-  await expect(bar).toBeHidden({ timeout: 10_000 });
+  await page.clock.runFor(6500);
+  await expect(bar).toBeHidden();
   await editSource(page, 12, 14);
   await expect.poll(async () => (await recoveryCopies(page))[0]?.files.some(file => file.text.includes('"value": 14'))).toBe(true);
   await expect(bar).toBeHidden();

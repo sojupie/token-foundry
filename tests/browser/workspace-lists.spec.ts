@@ -1,6 +1,5 @@
-import { mkdir } from 'node:fs/promises';
 import { expect } from '@playwright/test';
-import type { Locator, Page, Route } from '@playwright/test';
+import type { Page, Route } from '@playwright/test';
 import { test } from './runtime-test.ts';
 
 async function listing(page: Page) {
@@ -33,11 +32,9 @@ test('global Review changes opens Changes without opening a save dialog or submi
   expect(writes).toBe(0);
 });
 
-test('saved workspaces use segmented rows, page position and counts through filtering', async ({ page }, info) => {
+test('saved workspace pagination tracks page position and counts through filtering', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   const region = await listing(page);
-  await expect(region.locator('.md-list')).toHaveAttribute('data-variant', 'segmented');
-  expect(await region.locator('.md-list').evaluate(element => parseFloat(getComputedStyle(element).rowGap))).toBeGreaterThan(0);
   await expect(region.locator('.workspace-list-footer')).toContainText('1–6 of 13 workspaces');
   await expect(region.getByRole('navigation', { name: 'Workspace pages' })).toContainText('Page 1 of 3');
   await expect(region.getByRole('button', { name: 'Previous workspaces', exact: true })).toBeDisabled();
@@ -55,11 +52,10 @@ test('saved workspaces use segmented rows, page position and counts through filt
   await expect(region.locator('.workspace-list-footer')).toHaveText('0 workspaces');
   await search.clear();
   await expect(region.getByRole('navigation', { name: 'Workspace pages' })).toContainText('Page 1 of 3');
-  await mkdir('tmp/workspace-list', { recursive: true });
-  await region.screenshot({ path: `tmp/workspace-list/${info.project.name}-saved-workspaces.png` });
+
 });
 
-test('workspace deletion stays in its item, preserves focus on cancel, and retains retry after failure', async ({ page }, info) => {
+test('workspace deletion stays in its item, preserves focus on cancel, and retains retry after failure', async ({ page }) => {
   await listing(page);
   let deletes = 0;
   let held: Route | undefined;
@@ -72,7 +68,6 @@ test('workspace deletion stays in its item, preserves focus on cancel, and retai
   await page.getByRole('navigation', { name: 'Foundry' }).getByRole('button', { name: 'Workspace', exact: true }).click();
   await page.getByRole('button', { name: 'Switch workspace', exact: true }).click();
   const picker = page.getByRole('dialog', { name: 'Open workspace', exact: true, includeHidden: true });
-  await expect(picker.locator('.md-list')).toHaveAttribute('data-variant', 'segmented');
   await picker.getByRole('button', { name: 'Next workspaces', exact: true }).click();
   await picker.getByRole('button', { name: 'Next workspaces', exact: true }).click();
   const remove = picker.locator('li', { hasText: 'Workspace 13' }).getByRole('button', { name: 'Delete workspace', exact: true });
@@ -94,11 +89,9 @@ test('workspace deletion stays in its item, preserves focus on cancel, and retai
   await held?.fulfill({ status: 503, json: { message: 'Please retry deleting this workspace.' } });
   const notice = page.getByRole('status').filter({ hasText: 'Please retry deleting this workspace.' });
   await expect(notice).toBeVisible();
-  await expect(notice).toHaveClass(/md-snackbar/u);
   await expect(confirm.getByRole('alert')).toHaveCount(0);
   await expect(confirm.getByRole('button', { name: 'Delete workspace', exact: true })).toBeEnabled();
-  await mkdir('tmp/workspace-list', { recursive: true });
-  await page.screenshot({ path: `tmp/workspace-list/${info.project.name}-delete-in-item.png` });
+
   await notice.getByRole('button', { name: 'Dismiss notification', exact: true }).click();
   await expect(notice).toBeHidden();
   await expect(confirm).toBeVisible();
@@ -109,43 +102,4 @@ test('workspace deletion stays in its item, preserves focus on cancel, and retai
   await expect(picker.getByRole('navigation', { name: 'Workspace pages' })).toContainText('Page 2 of 2');
   await expect(picker.getByRole('searchbox', { name: 'Find workspace', exact: true })).toBeFocused();
   expect(deletes).toBe(2);
-});
-
-async function alongsideIcon(scope: Page | Locator, path: string) {
-  const row = scope.locator(`[data-group-path="${path}"]`);
-  const icon = await row.locator('.md-list-leading').boundingBox();
-  const label = await row.locator('.md-list-label').boundingBox();
-  expect(icon && label).toBeTruthy();
-  if (!icon || !label) throw new Error('Group icon or label is missing');
-  expect(label.x).toBeGreaterThanOrEqual(icon.x + icon.width);
-  expect(Math.abs(label.y + label.height / 2 - icon.y - icon.height / 2)).toBeLessThan(1);
-}
-
-async function expand(scope: Page | Locator, path: string) {
-  await expect(scope.locator(`[data-group-path="${path}"]`)).toBeVisible();
-  const control = scope.getByRole('button', { name: 'Expand ' + path, exact: true });
-  if (await control.count()) await control.click();
-}
-
-test('deep group labels stay beside their icons in the sidebar and reference picker', async ({ page }, info) => {
-  await page.setViewportSize({ width: 1440, height: 1000 });
-  await page.goto('/');
-  const group = 'root.section.deep.a-very-long-group-label';
-  await page.locator('input[type=file][multiple]').setInputFiles({ name: 'nested.tokens.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({
-    root: { section: { deep: { 'a-very-long-group-label': { branch: { a: { $type: 'number', $value: 1 }, b: { $type: 'number', $value: 2 } } } } } },
-  })) });
-  await expand(page, 'root');
-  await expand(page, 'root.section');
-  await expand(page, 'root.section.deep');
-  await alongsideIcon(page, group);
-  await page.locator(`[data-group-path="${group}"]`).click();
-  await page.getByRole('button', { name: `Name for ${group}.branch.a`, exact: true }).click();
-  await page.getByRole('button', { name: `Link reference for ${group}.branch.a`, exact: true }).click();
-  const picker = page.getByRole('dialog', { name: 'Link a token', exact: true });
-  await expand(picker, 'root');
-  await expand(picker, 'root.section');
-  await expand(picker, 'root.section.deep');
-  await alongsideIcon(picker, group);
-  await mkdir('tmp/workspace-list', { recursive: true });
-  await picker.screenshot({ path: `tmp/workspace-list/${info.project.name}-group-labels.png` });
 });

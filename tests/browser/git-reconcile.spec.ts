@@ -1,12 +1,12 @@
 import { openSaveReview } from './save-review.ts';
 import { expect, test } from '@playwright/test';
-import { mkdir, readFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { isProposal } from '../../integrations/github/contract.ts';
 import { chooseOption } from './select-field.ts';
 import { recoveryCopies } from './recovery-helpers.ts';
 
 for (const choice of ['independent', 'draft', 'repository', 'custom', 'cancel', 'changed-again', 'resume', 'resume-invalid']) {
-  test('repository reconciliation handles ' + choice + ' without downloading a patch', async ({ page }, testInfo) => {
+  test('repository reconciliation handles ' + choice + ' without downloading a patch', async ({ page }) => {
     const repository = 'example/tokens';
     const sources = await Promise.all(['reference.tokens.json', 'system.tokens.json'].map(async path => ({ path, text: await readFile(new URL('../../examples/' + path, import.meta.url), 'utf8') })));
     const revision = 'a'.repeat(40); let latest = 'b'.repeat(40); let submissions = 0;
@@ -37,7 +37,7 @@ for (const choice of ['independent', 'draft', 'repository', 'custom', 'cancel', 
     await page.goto('/');
     await page.getByRole('navigation', { name: 'Foundry' }).getByRole('button', { name: 'Workspace', exact: true }).click();
     await page.getByRole('button', { name: 'Choose repository', exact: true }).click();
-    
+
     await page.getByRole('button', { name: 'Open repository', exact: true }).click();
     await page.getByRole('banner').getByRole('button', { name: 'File', exact: true }).click();
     await page.getByRole('menuitem', { name: 'Import token changes…', exact: true }).click();
@@ -54,13 +54,6 @@ for (const choice of ['independent', 'draft', 'repository', 'custom', 'cancel', 
       const dialog = page.getByRole('dialog', { name: 'Reconcile repository changes' });
       await expect(dialog).toBeVisible();
       await expect(dialog).toContainText('Before'); await expect(dialog).toContainText('Your draft'); await expect(dialog).toContainText('Repository');
-      if (process.env['FOUNDRY_CAPTURE_RECONCILE'] && choice === 'draft' && testInfo.project.name === 'chromium') {
-        await mkdir('.wrangler/verification', { recursive: true });
-        await page.screenshot({ path: '.wrangler/verification/repository-conflict-desktop.png', animations: 'disabled' });
-        await page.setViewportSize({ width: 400, height: 850 });
-        await expect(dialog.getByRole('combobox')).toBeVisible();
-        await page.screenshot({ path: '.wrangler/verification/repository-conflict-mobile.png', animations: 'disabled' });
-      }
       if (choice === 'cancel') {
         await dialog.getByRole('button', { name: 'Cancel reconciliation', exact: true }).click();
         await page.getByRole('button', { name: 'Review latest revision', exact: true }).click();
