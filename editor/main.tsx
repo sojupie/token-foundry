@@ -1523,8 +1523,6 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
       if (!mobileTree) setInspectorOpen(false);
     }
   }
-  const reviewLabel = saveTarget?.kind === 'folder' ? 'Review and save' :
-    saveTarget?.kind === 'pull-request' ? 'Review merge request' : 'Review changes';
   const canCreate = !menuDisabled && (current ? sourceChoices.size > 0 : folder.files.size > 0);
   const rovingButtons = useWorkspaceRovingButtons(view, menuDisabled, !!checked.size && bulkable, canCreate, desktop);
   const canAddGroupValue = canCreate && !!displayedGroup && !graph.tokens.has(displayedGroup + '.$root');
@@ -1535,6 +1533,10 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
   function manageVariants() {
     setView('variants');
     requestAnimationFrame(() => variantsHeading.current?.focus());
+  }
+  function manageChanges() {
+    setView('changes');
+    requestAnimationFrame(() => document.getElementById('workspace-changes')?.focus());
   }
   function toggleComparison() {
     manageVariants();
@@ -1561,8 +1563,8 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
           run: () => { setError(''); setImportChanges(true); }, disabled: !!activeResolver || menuDisabled },
       ],
       [
-        { label: reviewLabel + '…', icon: <GitCompareArrows aria-hidden="true" />,
-          disabled: menuDisabled || !dirty || !hasChanges, run: () => { void reviewForSave(); } },
+        { label: 'Review changes', icon: <GitCompareArrows aria-hidden="true" />,
+          disabled: menuDisabled || !dirty || !hasChanges, run: manageChanges },
         {
           label: 'Export patch (.patch)', icon: <FileDiff aria-hidden="true" />, disabled: menuDisabled || !hasChanges,
           title: 'Apply the .patch file in your repository with git apply.',
@@ -1731,10 +1733,7 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
         }} />
       <NavigationItem data-key-tip="4" label="Changes" icon={<FileText />} aria-current={view === 'changes' ? 'page' : undefined}
         {...(changeAlert ? { badge: 'small' as const } : pendingChangesCount > 0 ? { badge: 'labeled' as const, badgeText: pendingChangesCount } : {})}
-        disabled={navigationDisabled} onClick={() => {
-          setView('changes');
-          requestAnimationFrame(() => document.getElementById('workspace-changes')?.focus());
-        }} />
+        disabled={navigationDisabled} onClick={manageChanges} />
       <NavigationItem data-key-tip="5" label="Figma" icon={<FigmaIcon />} aria-current={view === 'figma' ? 'page' : undefined}
         disabled={navigationDisabled} onClick={() => {
           setView('figma');
@@ -1783,8 +1782,8 @@ function Editor({ Connector, proposalLink }: { Connector: ComponentType<Workspac
         <div className="workspace-review">
           {submittedUrl && !dirty ? <ButtonLink size="xsmall" variant="filled" color="tertiary" href={submittedUrl} target="_blank" rel="noreferrer"
             aria-label="View merge request">View merge request</ButtonLink> :
-            <Button size="xsmall" variant="filled" color="tertiary" disabled={menuDisabled || !dirty || !hasChanges} onClick={() => { void reviewForSave(); }}
-              data-key-tip="R" aria-label={reviewLabel}>Review changes</Button>}
+            <Button size="xsmall" variant="filled" color="tertiary" disabled={menuDisabled || !dirty || !hasChanges} onClick={manageChanges}
+              data-key-tip="R">Review changes</Button>}
         </div>
       </header>
       <WorkspaceRecovery ref={recoveryHandle} id={workspaceId} startup={startup} showOnStart={showRecoveryAtStartup} work={recoveryWork} enabled={dirty || saveTarget !== null || !!recoveryEditor || !!sharedRecovery.value} open={recoveryOpen} setOpen={setRecoveryOpen} reportStatus={setLocalSave} statusNotice={status} clearStatusNotice={() => setStatus('')}

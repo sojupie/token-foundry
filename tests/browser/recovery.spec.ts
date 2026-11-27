@@ -1,3 +1,4 @@
+import { openSaveReview } from './save-review.ts';
 import { expect, test } from '@playwright/test';
 import { editSource, recoveryCopies } from './recovery-helpers.ts';
 import { chooseOption } from './select-field.ts';
@@ -125,7 +126,7 @@ test('restores applied source edits and the original baseline after reload', asy
   await expect.poll(async () => (await recoveryCopies(page))[0]?.files.some(file => file.text.includes('"value": 12'))).toBe(true);
   await page.reload();
   await page.getByRole('dialog', { name: 'Recover local work' }).getByRole('button', { name: 'Resume source edits', exact: true }).click();
-  await page.getByRole('button', { name: 'Review changes', exact: true }).click();
+  await openSaveReview(page);
   const review = page.getByRole('dialog', { name: 'Review changes', exact: true });
   await review.getByText('Show file changes', { exact: true }).click();
   await expect(review).toContainText('reference.tokens.json');
@@ -254,7 +255,7 @@ test('a storage-quota failure leaves work editable and exports a recovery copy t
   const chooser = fresh.waitForEvent('filechooser');
   await fresh.getByRole('dialog', { name: 'Recover local work' }).getByRole('button', { name: 'Open recovery copy…', exact: true }).click();
   await (await chooser).setFiles({ name: 'foundry-recovery.json', mimeType: 'application/json', buffer: Buffer.from(text) });
-  await fresh.getByRole('button', { name: 'Review changes', exact: true }).click();
+  await openSaveReview(fresh);
   const review = fresh.getByRole('dialog', { name: 'Review changes', exact: true });
   await review.getByText('Show file changes', { exact: true }).click(); await expect(review).toContainText('12');
   await fresh.close();
@@ -274,7 +275,7 @@ test('two resumed tabs cannot overwrite each other’s recovery copy', async ({ 
   await expect(second.getByRole('button', { name: 'Download recovery copy', exact: true })).toBeVisible();
   const copies = await recoveryCopies(second);
   expect(copies[0]?.files.some(file => file.text.includes('"value": 16'))).toBe(true);
-  await second.getByRole('button', { name: 'Review changes', exact: true }).click();
+  await openSaveReview(second);
   const review = second.getByRole('dialog', { name: 'Review changes', exact: true });
   await review.getByText('Show file changes', { exact: true }).click();
   await expect(review).toContainText('20');

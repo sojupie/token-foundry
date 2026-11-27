@@ -1,3 +1,4 @@
+import { openSaveReview } from './save-review.ts';
 import { test, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { isProposal } from '../../integrations/github/contract.ts';
@@ -42,7 +43,7 @@ test('a second edit updates the existing pull request from its saved revision', 
       { path: 'reference.space.small', before: { value: before, unit: 'px' }, after: { value: after, unit: 'px' } },
     ] })) });
     await page.getByRole('button', { name: 'Apply to workspace', exact: true }).click();
-    await page.getByRole('button', { name: 'Review merge request', exact: true }).click();
+    await openSaveReview(page);
     await page.getByRole('button', { name: before === 8 ? 'Create merge request' : 'Update merge request', exact: true }).click();
     await expect(page.getByRole('link', { name: 'View merge request', exact: true })).toHaveAttribute('href', url);
   };

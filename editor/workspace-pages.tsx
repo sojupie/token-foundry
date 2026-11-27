@@ -10,10 +10,11 @@ import {
   Progress,
   Select,
   SelectOption,
+  Snackbar,
   TextArea,
   TextField,
 } from '@token-catalog/forge-react';
-import { MoreHorizontal, Pencil, Search, Trash2, X } from './icons.tsx';
+import { ChevronLeft, ChevronRight, MoreHorizontal, Pencil, Search, Trash2, X } from './icons.tsx';
 import { CommandMenu } from './command-bar.tsx';
 import { ActionDialog } from './components/ui/dialog.tsx';
 import { Alert, AlertDescription } from './components/ui/alert.tsx';
@@ -137,6 +138,30 @@ export function SourceBrowser({ data, disabled, open, action }: {
   </Card>;
 }
 
+function WorkspaceDeletion({ deleting, problem, clearProblem, cancel, confirm }: {
+  deleting: boolean; problem: string; clearProblem: () => void; cancel: () => void; confirm: () => void;
+}) {
+  const cancelButton = useRef<HTMLButtonElement>(null);
+  useEffect(() => { cancelButton.current?.focus(); }, []);
+  useEffect(() => {
+    function escape(event: KeyboardEvent) {
+      if (event.key !== 'Escape') return;
+      event.preventDefault(); event.stopPropagation();
+      if (!deleting) cancel();
+    }
+    document.addEventListener('keydown', escape, true);
+    return () => document.removeEventListener('keydown', escape, true);
+  }, [cancel, deleting]);
+  return <section aria-label="Confirm workspace deletion" className="grid gap-space150">
+    <p className="copy-body">Delete this workspace? Linked Figma files lose access immediately. Existing GitHub merge requests are unaffected.</p>
+    <Snackbar open={!!problem} message={problem} duration={6000} onOpenChange={open => { if (!open) clearProblem(); }} />
+    <div className="flex justify-end gap-space100">
+      <Button ref={cancelButton} variant="text" disabled={deleting} onClick={cancel}>Cancel</Button>
+      <Button color="error" disabled={deleting} onClick={confirm}>{deleting ? 'Deleting…' : 'Delete workspace'}</Button>
+    </div>
+  </section>;
+}
+
 export function WorkspaceStatus({ shared, saveMode, repository, start, remove, disabled }: {
   shared: Shared;
   saveMode: WorkspaceSaveMode;
@@ -148,6 +173,8 @@ export function WorkspaceStatus({ shared, saveMode, repository, start, remove, d
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
+  const deleteButton = useRef<HTMLButtonElement>(null);
+  const confirming = confirmOpen && !!shared.view && !!remove;
   const summary = shared.view
     ? shared.phase === 'saved'
       ? 'Saved to workspace. Linked Figma files use this draft.'
@@ -165,12 +192,12 @@ export function WorkspaceStatus({ shared, saveMode, repository, start, remove, d
     headline="Workspace sync"
     headlineAs="h3"
     supporting={summary}
-    actions={<>
+    actions={confirming ? undefined : <>
       <Button size="small" variant="outlined" disabled={disabled || deleting || !shared.hosted || shared.phase === 'saving'} onClick={shared.view ? () => { void shared.sync(); } : start}>
         {shared.view ? 'Check for updates' : 'Start shared workspace'}
       </Button>
       {shared.view && remove && (
-        <Button size="small" variant="text" disabled={disabled || deleting} onClick={() => { setDeleteError(''); setConfirmOpen(true); }}>
+        <Button ref={deleteButton} size="small" variant="text" disabled={disabled || deleting} onClick={() => { setDeleteError(''); setConfirmOpen(true); }}>
           Delete workspace
         </Button>
       )}
@@ -180,34 +207,15 @@ export function WorkspaceStatus({ shared, saveMode, repository, start, remove, d
     {shared.problem && <Alert variant="destructive"><AlertDescription>{shared.problem}</AlertDescription></Alert>}
     {shared.view?.repository && <p className="copy-small tone-supporting">Shared with write contributors to {shared.view.repository.repository} on GitHub.</p>}
     {!shared.hosted && <p className="copy-small tone-supporting">Shared workspaces are available in the hosted editor.</p>}
-    {shared.view && remove && (
-      <ActionDialog
-        title="Delete workspace"
-        open={confirmOpen}
-        busy={deleting}
-        onOpenChange={next => { if (!deleting) setConfirmOpen(next); }}
-        description={`Delete "${shared.view.name}" from shared storage? Linked Figma files lose access immediately. Existing GitHub merge requests are unaffected.`}
-      >
-        <div className="grid gap-space150">
-          {deleteError && <Alert variant="destructive"><AlertDescription>{deleteError}</AlertDescription></Alert>}
-          <div className="flex justify-end gap-space100">
-            <Button variant="text" disabled={deleting} data-dialog-close="">Cancel</Button>
-            <Button
-              disabled={deleting}
-              onClick={() => {
-                setDeleting(true);
-                setDeleteError('');
-                void remove()
-                  .then(() => setConfirmOpen(false))
-                  .catch((error: unknown) => setDeleteError(errorMessage(error)))
-                  .finally(() => setDeleting(false));
-              }}
-            >
-              {deleting ? 'Deleting…' : 'Delete workspace'}
-            </Button>
-          </div>
-        </div>
-      </ActionDialog>
+    {confirming && remove && (
+      <WorkspaceDeletion deleting={deleting} problem={deleteError} clearProblem={() => setDeleteError('')}
+        cancel={() => { setConfirmOpen(false); requestAnimationFrame(() => deleteButton.current?.focus()); }}
+        confirm={() => {
+          if (deleting) return;
+          setDeleting(true); setDeleteError('');
+          void remove().then(() => setConfirmOpen(false))
+            .catch((error: unknown) => setDeleteError(errorMessage(error))).finally(() => setDeleting(false));
+        }} />
     )}
   </Card>;
 }
@@ -584,6 +592,22 @@ export function WorkspaceList({ current, repository, open, onDelete, framed = fa
   const [pendingDelete, setPendingDelete] = useState<WorkspaceEntry | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
+  const deleteButtons = useRef(new Map<string, HTMLButtonElement>());
+  const workspaceSearch = useRef<HTMLInputElement>(null);
+  const listContent = useRef<HTMLDivElement>(null);
+  const focusAfterDelete = useRef(false);
+
+  useEffect(() => {
+    if (deleting || !focusAfterDelete.current) return;
+    focusAfterDelete.current = false;
+    (workspaceSearch.current ?? listContent.current)?.focus();
+  }, [deleting]);
+
+  function cancelDelete() {
+    const id = pendingDelete?.id;
+    setPendingDelete(null); setDeleteError('');
+    if (id) requestAnimationFrame(() => deleteButtons.current.get(id)?.focus());
+  }
 
   useEffect(() => {
     const channel = new BroadcastChannel('token-foundry-github');
@@ -632,66 +656,50 @@ export function WorkspaceList({ current, repository, open, onDelete, framed = fa
   const found = entries.filter(entry => (entry.name + ' ' + (entry.repository ?? '')).toLowerCase().includes(query.toLowerCase()));
   const currentPage = Math.min(page, Math.max(0, Math.ceil(found.length / 6) - 1));
 
-  const content = <div className="grid gap-space150" aria-busy={!framed ? undefined : loading}>
-    {onDelete && pendingDelete && (
-      <Card
-        variant="outlined"
-        as="section"
-        aria-label="Confirm workspace deletion"
-        headline="Delete workspace"
-        headlineAs="h3"
-        supporting={`Delete "${pendingDelete.name}" from shared storage? Linked Figma files lose access immediately. Existing GitHub merge requests are unaffected.`}
-        actions={<>
-          <Button variant="text" size="small" disabled={deleting} onClick={() => setPendingDelete(null)}>Cancel</Button>
-          <Button
-            size="small"
-            disabled={deleting}
-            onClick={() => {
-              const target = pendingDelete;
-              setDeleting(true);
-              setDeleteError('');
-              void onDelete(target.id)
-                .then(() => {
-                  setEntries(currentEntries => currentEntries.filter(item => item.id !== target.id));
-                  setPendingDelete(null);
-                  return undefined;
-                })
-                .catch((error: unknown) => setDeleteError(errorMessage(error)))
-                .finally(() => setDeleting(false));
-            }}
-          >
-            {deleting ? 'Deleting…' : 'Delete workspace'}
-          </Button>
-        </>}
-      >
-        {deleteError && <Alert variant="destructive"><AlertDescription>{deleteError}</AlertDescription></Alert>}
-      </Card>
-    )}
+  const content = <div ref={listContent} tabIndex={-1} className="grid gap-space150" aria-busy={!framed ? undefined : loading}>
     {(entries.length > 0 || query.length > 0) && (
       <TextField
+        ref={workspaceSearch}
         type="search"
         label="Find workspace"
+        disabled={deleting}
         containerClassName="search-fill"
         leading={<Search aria-hidden="true" />}
         trailing={query ? (
-          <IconButton size="xsmall" label="Clear workspace search" onClick={() => { setQuery(''); setPage(0); }}>
+          <IconButton size="xsmall" label="Clear workspace search" disabled={deleting} onClick={() => { setQuery(''); setPage(0); setPendingDelete(null); }}>
             <X aria-hidden="true" />
           </IconButton>
         ) : undefined}
         value={query}
-        onChange={event => { setQuery(event.target.value); setPage(0); }}
+        onChange={event => { setQuery(event.target.value); setPage(0); setPendingDelete(null); }}
       />
     )}
     {loading && <Progress label="Loading workspaces" />}
     {found.length > 0 && (
-      <List>
+      <List data-variant="segmented" data-actions-layout="inline">
         {found.slice(currentPage * 6, currentPage * 6 + 6).map(entry => (
           <li key={entry.id}>
-            <ListItemButton
+            {pendingDelete?.id === entry.id && onDelete ? <Card variant="filled" as="section" className="grid gap-space150">
+              <div>
+                <h4 className="copy-body copy-emphasis">{entry.name}{entry.id === current ? ' · Open' : ''}</h4>
+                <p className="copy-small tone-supporting">{(entry.repository ?? 'Standalone draft (patch export)') + (entry.pullRequest ? ' · Linked merge request' : '') + (entry.updated ? ' · Updated ' + new Date(entry.updated).toLocaleString() : '')}</p>
+              </div>
+              <WorkspaceDeletion deleting={deleting} problem={deleteError} clearProblem={() => setDeleteError('')} cancel={cancelDelete} confirm={() => {
+                if (deleting) return;
+                setDeleting(true); setDeleteError('');
+                void onDelete(entry.id).then(() => {
+                  focusAfterDelete.current = true;
+                  setEntries(currentEntries => currentEntries.filter(item => item.id !== entry.id));
+                  setPendingDelete(null);
+                  return undefined;
+                }).catch((error: unknown) => setDeleteError(errorMessage(error))).finally(() => setDeleting(false));
+              }} />
+            </Card> : <ListItemButton
               disabled={busy || loading || deleting || entry.id === current}
               supporting={(entry.repository ?? 'Standalone draft (patch export)') + (entry.pullRequest ? ' · Linked merge request' : '') + (entry.updated ? ' · Updated ' + new Date(entry.updated).toLocaleString() : '')}
               actions={onDelete ? (
                 <IconButton
+                  ref={element => { if (element) deleteButtons.current.set(entry.id, element); else deleteButtons.current.delete(entry.id); }}
                   label="Delete workspace"
                   title={`Delete ${entry.name}`}
                   size="xsmall"
@@ -707,18 +715,20 @@ export function WorkspaceList({ current, repository, open, onDelete, framed = fa
               }}
             >
               {entry.name}{entry.id === current ? ' · Open' : ''}
-            </ListItemButton>
+            </ListItemButton>}
           </li>
         ))}
       </List>
     )}
     {!loading && entries.length > 0 && !found.length && <p className="copy-body tone-supporting">No matching workspaces.</p>}
-    {found.length > 6 && (
-      <div className="flex gap-space100">
-        <Button variant="text" size="xsmall" disabled={!currentPage} onClick={() => setPage(currentPage - 1)}>Previous workspaces</Button>
-        <Button variant="text" size="xsmall" disabled={(currentPage + 1) * 6 >= found.length} onClick={() => setPage(currentPage + 1)}>Next workspaces</Button>
-      </div>
-    )}
+    {!loading && <footer className="workspace-list-footer copy-small">
+      <span aria-live="polite">{found.length ? `${currentPage * 6 + 1}–${Math.min((currentPage + 1) * 6, found.length)} of ${found.length} ${found.length === 1 ? 'workspace' : 'workspaces'}` : '0 workspaces'}</span>
+      {found.length > 6 && <nav className="workspace-pagination" aria-label="Workspace pages">
+        <IconButton size="xsmall" label="Previous workspaces" disabled={deleting || !currentPage} onClick={() => { setPage(currentPage - 1); setPendingDelete(null); }}><ChevronLeft aria-hidden="true" /></IconButton>
+        <span>Page {currentPage + 1} of {Math.ceil(found.length / 6)}</span>
+        <IconButton size="xsmall" label="Next workspaces" disabled={deleting || (currentPage + 1) * 6 >= found.length} onClick={() => { setPage(currentPage + 1); setPendingDelete(null); }}><ChevronRight aria-hidden="true" /></IconButton>
+      </nav>}
+    </footer>}
     {discovery === 'sign-in' && (
       <div className="grid justify-items-start gap-space100">
         <p className="copy-body tone-supporting">Sign in to GitHub to list shared repository workspaces.</p>

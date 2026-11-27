@@ -1,3 +1,4 @@
+import { openSaveReview } from './save-review.ts';
 import { test, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { isProposal, proposalUnavailable } from '../../integrations/github/contract.ts';
@@ -46,7 +47,7 @@ for (const lifecycle of ['merged', 'closed', 'deleted']) {
         { path: 'reference.space.small', before: { value: before, unit: 'px' }, after: { value: after, unit: 'px' } },
       ] })) });
       await page.getByRole('button', { name: 'Apply to workspace', exact: true }).click();
-      await page.getByRole('button', { name: 'Review merge request', exact: true }).click();
+      await openSaveReview(page);
     };
     await edit(8, 12); await page.getByRole('button', { name: 'Create merge request', exact: true }).click();
     await expect(page.getByRole('link', { name: 'View merge request', exact: true })).toHaveAttribute('href', 'https://github.com/example/tokens/pull/7');

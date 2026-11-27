@@ -64,6 +64,9 @@ test('changes badge counts authored tokens across files and reverts; footers and
   await captureTheme('light');
   await captureTheme('dark');
   await reviewButton.click();
+  await expect(page.getByRole('main', { name: 'Changes', exact: true })).toBeFocused();
+  await expect(page.getByRole('dialog', { name: 'Review changes', exact: true })).toHaveCount(0);
+  await page.getByRole('main', { name: 'Changes', exact: true }).getByRole('button', { name: 'Review and export patch', exact: true }).click();
   const review = page.getByRole('dialog', { name: 'Review changes', exact: true });
   await review.getByText('Resolved value changes (5)', { exact: true }).click();
   await review.getByText('Show file changes', { exact: true }).click();

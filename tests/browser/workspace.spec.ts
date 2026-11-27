@@ -1,3 +1,4 @@
+import { openSaveReview } from './save-review.ts';
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
@@ -97,7 +98,7 @@ test('reviews a linked proposal and cross-file move again if the pinned GitHub r
   const diff = page.getByRole('region', { name: 'File changes' });
   await expect(diff).toContainText('{system.reference-space.small}');
   await page.getByRole('button', { name: 'Apply to workspace', exact: true }).click();
-  await page.getByRole('button', { name: 'Review merge request' }).click();
+  await openSaveReview(page);
   await page.getByText('Show file changes', { exact: true }).click();
   await expect(diff).toContainText('{system.reference-space.small}');
   expect(requests).toEqual(['/git/open']);
@@ -181,8 +182,8 @@ test('checks referenced files before writing a reviewed folder edit', async ({ p
   await command(page, 'File', 'Open folder…');
   await expect(page.locator('[data-workspace-name]')).toHaveText('fixture');
   await openProposal(page);
-  await page.getByRole('button', { name: 'Review and save' }).click();
-  const save = page.getByRole('button', { name: 'Save to folder' });
+  await openSaveReview(page);
+  const save = page.getByRole('dialog', { name: 'Review changes', exact: true }).getByRole('button', { name: 'Save to folder', exact: true });
   const writeSystem = (text: string) => page.evaluate(async (value) => {
     const directory = await (await navigator.storage.getDirectory()).getDirectoryHandle('fixture');
     const stream = await (await directory.getFileHandle('system.json')).createWritable();
@@ -218,7 +219,7 @@ test('exports an applicable patch from a read-only folder', async ({ page, brows
   await expect(page.getByRole('button', { name: 'Review and save' })).toHaveCount(0);
   await openProposal(page);
   const download = page.waitForEvent('download');
-  await page.getByRole('button', { name: 'Review changes', exact: true }).click();
+  await openSaveReview(page);
   await page.getByRole('dialog').getByRole('button', { name: 'Export patch', exact: true }).click();
   execFileSync('git', ['apply', '--check', await (await download).path()], { cwd: directory });
 });
@@ -811,11 +812,12 @@ test('repairs a malformed source without blocking edits in the healthy file', as
   await value.fill('2');
   await value.press('Enter');
   await expect(size).toHaveText('2');
-  await page.getByRole('button', { name: 'Review changes', exact: true }).click();
+  await openSaveReview(page);
   const review = page.getByRole('dialog', { name: 'Review changes', exact: true });
   await expect(review.getByRole('status')).toContainText('Foundry needs valid JSON to check references');
   await expect(review.getByRole('status')).toContainText('broken.tokens.json');
   await review.getByRole('button', { name: 'Back to edit' }).click();
+  await page.getByRole('navigation', { name: 'Foundry', exact: true }).getByRole('button', { name: 'Tokens', exact: true }).click();
   await page.getByRole('button', { name: 'Issues (1)', exact: true }).click();
   const diagnostics = page.getByRole('dialog', { name: 'Workspace issues' });
   await diagnostics.getByRole('button', { name: /^broken\.tokens\.json Error/u }).click();
@@ -2558,7 +2560,7 @@ test('creates a Resolver and authors named sets, modifier contexts and ordered i
   await chooseOption(pane.getByRole('group', { name: 'Preview' }).getByRole('combobox', { name: 'density', exact: true }), 'compact');
   await expect(table.getByRole('row').filter({ has: page.getByRole('button', { name: 'Name for gap', exact: true }) }).getByText('30', { exact: true })).toBeVisible();
 
-  await page.getByRole('button', { name: 'Review changes', exact: true }).click();
+  await openSaveReview(page);
   const patch = page.waitForEvent('download');
   await page.getByRole('dialog').getByRole('button', { name: 'Export patch', exact: true }).click();
   const directory = info.outputPath('patch-checkout');
@@ -2593,7 +2595,7 @@ test('saves a newly authored Resolver in its original folder', async ({ page, br
   await create.getByRole('textbox', { name: 'Configuration name' }).fill('Folder theme');
   await create.getByRole('button', { name: 'Set up variants' }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Apply to workspace', exact: true }).click();
-  await page.getByRole('button', { name: 'Review and save', exact: true }).click();
+  await openSaveReview(page);
   await page.getByRole('dialog').getByRole('button', { name: 'Save to folder' }).click();
   await expect(page.getByText('Saved to folder.', { exact: true })).toBeVisible();
   const content = await page.evaluate(async () => {
@@ -2666,7 +2668,7 @@ test('reviews source file moves, blocks broken links, and keeps file history und
   await removal.getByRole('button', { name: 'Back to edit' }).click();
   await removal.getByRole('button', { name: 'Cancel' }).click();
 
-  await page.getByRole('button', { name: 'Review changes', exact: true }).click();
+  await openSaveReview(page);
   const patch = page.waitForEvent('download');
   await page.getByRole('dialog').getByRole('button', { name: 'Export patch', exact: true }).click();
   execFileSync('git', ['apply', await (await patch).path()], { cwd: directory });
@@ -2697,7 +2699,7 @@ test('preserves a UTF-8 BOM when saving a moved source to its folder', async ({ 
   await page.getByRole('textbox', { name: 'File path' }).fill('theme/brand colors.tokens.json');
   await page.getByRole('button', { name: 'Review file change' }).click();
   await page.getByRole('dialog', { name: 'Move source file' }).getByRole('button', { name: 'Apply to workspace' }).click();
-  await page.getByRole('button', { name: 'Review and save' }).click();
+  await openSaveReview(page);
   await page.getByRole('dialog').getByRole('button', { name: 'Save to folder' }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
   const result = await page.evaluate(async () => {
@@ -2947,7 +2949,7 @@ test('moves a named set between Resolver manifests without changing their resolu
   await expect(manager.getByRole('button', { name: 'Actions for set foundation', exact: true })).toBeVisible();
   await expect(manager.getByRole('region', { name: 'Order of overrides' }).locator('li')).toHaveCount(0);
 
-  await page.getByRole('button', { name: 'Review changes', exact: true }).click();
+  await openSaveReview(page);
   const download = page.waitForEvent('download');
   await page.getByRole('dialog').getByRole('button', { name: 'Export patch', exact: true }).click();
   const folder = info.outputPath('checkout');
@@ -2992,7 +2994,7 @@ test('validates raw shared source in Resolver contexts and repeats the impact at
   await expect(review.getByText(/app\.resolver\.json.*1 token affected/u).first()).toBeVisible();
   await review.getByRole('button', { name: 'Apply to workspace' }).click();
   await expect(review).toBeHidden();
-  await page.getByRole('button', { name: 'Review changes', exact: true }).click();
+  await openSaveReview(page);
   await expect(review.getByText(/app\.resolver\.json.*1 token affected/u).first()).toBeVisible();
   const saved = page.waitForEvent('download');
   await review.getByRole('button', { name: 'Export patch', exact: true }).click();

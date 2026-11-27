@@ -108,6 +108,8 @@ test('workspaces can be deleted from the switcher and from Workspace management'
   await picker.locator('li', { hasText: extra.name }).getByRole('button', { name: 'Delete workspace', exact: true }).click();
   const confirmListDelete = picker.getByRole('region', { name: 'Confirm workspace deletion', exact: true });
   await expect(confirmListDelete).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Delete workspace', exact: true })).toHaveCount(0);
+  await expect(confirmListDelete.getByRole('button', { name: 'Cancel', exact: true })).toBeFocused();
   await confirmListDelete.getByRole('button', { name: 'Delete workspace', exact: true }).click();
   await expect(confirmListDelete).toBeHidden();
   await expect(picker.getByRole('button', { name: extra.name })).toHaveCount(0);
@@ -116,7 +118,8 @@ test('workspaces can be deleted from the switcher and from Workspace management'
 
   const storageCard = page.getByRole('region', { name: 'Workspace storage', exact: true });
   await storageCard.getByRole('button', { name: 'Delete workspace', exact: true }).click();
-  const confirmActiveDelete = page.getByRole('dialog', { name: 'Delete workspace', exact: true });
+  const confirmActiveDelete = storageCard.getByRole('region', { name: 'Confirm workspace deletion', exact: true });
+  await expect(page.getByRole('dialog', { name: 'Delete workspace', exact: true })).toHaveCount(0);
   await confirmActiveDelete.getByRole('button', { name: 'Delete workspace', exact: true }).click();
   await expect(confirmActiveDelete).toBeHidden();
 

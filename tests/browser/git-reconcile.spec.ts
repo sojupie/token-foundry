@@ -1,3 +1,4 @@
+import { openSaveReview } from './save-review.ts';
 import { expect, test } from '@playwright/test';
 import { mkdir, readFile } from 'node:fs/promises';
 import { isProposal } from '../../integrations/github/contract.ts';
@@ -46,7 +47,7 @@ for (const choice of ['independent', 'draft', 'repository', 'custom', 'cancel', 
       { path: 'reference.space.small', before: { value: 8, unit: 'px' }, after: { value: 12, unit: 'px' } },
     ] })) });
     await page.getByRole('button', { name: 'Apply to workspace', exact: true }).click();
-    await page.getByRole('button', { name: 'Review merge request', exact: true }).click();
+    await openSaveReview(page);
     await page.getByRole('button', { name: 'Create merge request', exact: true }).click();
     await page.getByRole('button', { name: 'Review latest revision', exact: true }).click();
     if (choice !== 'independent') {
