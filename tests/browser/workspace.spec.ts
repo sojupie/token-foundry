@@ -3039,3 +3039,11 @@ test('column resizing responds to pointer and keyboard without changing an unrel
   await resizeDescription.press('Enter');
   expect(await descriptionWidth()).toBeLessThan(descriptionBefore);
 });
+
+test('search container focuses its token filter', async ({ page }) => {
+  await page.goto('/');
+  await command(page, 'File', 'Open built-in example');
+  const search = page.getByRole('searchbox', { name: 'Search tokens in group' });
+  await page.locator('.md-search-bar').filter({ has: search }).locator('.md-search-leading-slot').click();
+  await expect(search).toBeFocused();
+});
