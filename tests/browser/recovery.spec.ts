@@ -17,7 +17,7 @@ test('recovers an invalid bulk value form with its exact selection and leaves so
   await form.getByRole('textbox', { name: 'Replacement value JSON', exact: true }).fill('{ unfinished bulk value');
   await expect.poll(async () => (await recoveryCopies(page))[0]?.editor?.bulk?.form.raw).toBe('{ unfinished bulk value');
   await page.reload();
-  await page.getByRole('dialog', { name: 'Recover local work' }).getByRole('button', { name: 'Resume source edits', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Recover local work' }).getByRole('button', { name: 'Resume', exact: true }).click();
   await expect(form.getByRole('textbox', { name: 'Replacement value JSON', exact: true })).toHaveValue('{ unfinished bulk value');
   expect((await recoveryCopies(page))[0]?.files[0]?.text).toBe(original);
   await form.getByRole('textbox', { name: 'Replacement value JSON', exact: true }).fill('20');
@@ -53,7 +53,7 @@ for (const action of ['rename', 'type', 'description'] as const) test('recovers 
     return action === 'rename' ? draft?.regex && draft.name === '$1-renamed' : action === 'type' ? draft?.type === 'fontFamily' && draft.raw === '"retained family"' : draft?.description === 'retained description';
   }).toBe(true);
   await page.reload();
-  await page.getByRole('dialog', { name: 'Recover local work' }).getByRole('button', { name: 'Resume source edits', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Recover local work' }).getByRole('button', { name: 'Resume', exact: true }).click();
   if (action === 'rename') {
     await expect(form.getByRole('textbox', { name: 'Find in token name', exact: true })).toHaveValue('^(.*)$');
     await expect(form.getByRole('textbox', { name: 'Replace with', exact: true })).toHaveValue('$1-renamed');
@@ -88,7 +88,7 @@ test('recovers a bulk form in Dark while preserving the Light preview and other 
   await form.getByRole('textbox', { name: 'Replacement value', exact: true }).fill('9');
   await expect.poll(async () => (await recoveryCopies(page))[0]?.editor?.bulk?.form.value).toBe(9);
   await page.reload();
-  await page.getByRole('dialog', { name: 'Recover local work' }).getByRole('button', { name: 'Resume source edits', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Recover local work' }).getByRole('button', { name: 'Resume', exact: true }).click();
   await expect(form).toContainText('Editing definitions in Dark.');
   await expect(form.getByRole('textbox', { name: 'Replacement value', exact: true })).toHaveValue('9');
   await expect(page.getByRole('group', { name: 'Preview' }).getByRole('combobox', { name: 'Appearance', exact: true })).toHaveAttribute('data-select-value', 'Light');
@@ -111,7 +111,7 @@ test('recovers a bulk alias edit and keeps the authored reference chain after ap
   await form.getByRole('textbox', { name: 'Replacement value JSON', exact: true }).fill('"{large}"');
   await expect.poll(async () => (await recoveryCopies(page))[0]?.editor?.bulk?.form.raw).toBe('"{large}"');
   await page.reload();
-  await page.getByRole('dialog', { name: 'Recover local work' }).getByRole('button', { name: 'Resume source edits', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Recover local work' }).getByRole('button', { name: 'Resume', exact: true }).click();
   await expect(form.getByRole('textbox', { name: 'Replacement value JSON', exact: true })).toHaveValue('"{large}"');
   await form.getByRole('button', { name: 'Review edits', exact: true }).click();
   await page.getByRole('button', { name: 'Apply to workspace', exact: true }).click();
@@ -125,7 +125,7 @@ test('restores applied source edits and the original baseline after reload', asy
   await editSource(page, 8, 12);
   await expect.poll(async () => (await recoveryCopies(page))[0]?.files.some(file => file.text.includes('"value": 12'))).toBe(true);
   await page.reload();
-  await page.getByRole('dialog', { name: 'Recover local work' }).getByRole('button', { name: 'Resume source edits', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Recover local work' }).getByRole('button', { name: 'Resume', exact: true }).click();
   await openSaveReview(page);
   const review = page.getByRole('dialog', { name: 'Review changes', exact: true });
   await review.getByText('Show file changes', { exact: true }).click();
@@ -146,7 +146,7 @@ test('recovers an unapplied token form without changing its authored source', as
   await chooseOption(form.getByRole('combobox', { name: 'Source file', exact: true }), 'reference.tokens.json');
   await expect.poll(async () => (await recoveryCopies(page))[0]?.editor?.draft?.name).toBe('recovered-group');
   await page.reload();
-  await page.getByRole('dialog', { name: 'Recover local work' }).getByRole('button', { name: 'Resume source edits', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Recover local work' }).getByRole('button', { name: 'Resume', exact: true }).click();
   await expect(form.getByRole('textbox', { name: 'Group name', exact: true })).toHaveValue('recovered-group');
   expect((await recoveryCopies(page))[0]?.files.every(file => !file.text.includes('recovered-group'))).toBe(true);
   await form.getByRole('button', { name: 'Review changes', exact: true }).click();
@@ -184,7 +184,7 @@ for (const ending of ['crlf', 'mixed']) {
     const dialog = page.getByRole('dialog', { name: 'Edit token source' }); const source = dialog.getByRole('textbox', { name: 'Token source JSON', exact: true });
     await source.fill(edited.replaceAll('\r\n', '\n'));
     await expect.poll(async () => (await recoveryCopies(page)).find(copy => copy.files.some(file => file.path === 'inline.tokens.json'))?.editor?.source?.text).toBe(edited);
-    await page.reload(); await page.getByRole('dialog', { name: 'Recover local work' }).getByRole('button', { name: 'Resume source edits', exact: true }).click();
+    await page.reload(); await page.getByRole('dialog', { name: 'Recover local work' }).getByRole('button', { name: 'Resume', exact: true }).click();
     await expect(source).toHaveValue(edited.replaceAll('\r\n', '\n'));
     await dialog.getByRole('button', { name: 'Review source changes', exact: true }).click();
     await page.getByRole('dialog', { name: 'Review changes', exact: true }).getByRole('button', { name: 'Apply to workspace', exact: true }).click();
@@ -202,7 +202,7 @@ test('recovers invalid unapplied raw source text and keeps the saved file intact
   await source.fill('{"unfinished":');
   await expect.poll(async () => (await recoveryCopies(page))[0]?.editor?.source?.text).toBe('{"unfinished":');
   await page.reload();
-  await page.getByRole('dialog', { name: 'Recover local work' }).getByRole('button', { name: 'Resume source edits', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Recover local work' }).getByRole('button', { name: 'Resume', exact: true }).click();
   await expect(source).toHaveValue('{"unfinished":');
   expect((await recoveryCopies(page))[0]?.files[0]?.text).toBe('{"broken": }');
 });
@@ -226,7 +226,7 @@ test('recovers a contextual edit with its original editing set and preview selec
   await details.getByRole('textbox', { name: 'Token value', exact: true }).fill('9');
   await expect.poll(async () => (await recoveryCopies(page))[0]?.editor?.variant?.draft.value).toBe('9');
   await page.reload();
-  await page.getByRole('dialog', { name: 'Recover local work' }).getByRole('button', { name: 'Resume source edits', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Recover local work' }).getByRole('button', { name: 'Resume', exact: true }).click();
   await expect(page.getByRole('combobox', { name: 'Editing set', exact: true })).toHaveAttribute('data-select-value', JSON.stringify(['Appearance', 'Dark']));
   await expect(details.getByRole('textbox', { name: 'Token value', exact: true })).toHaveValue('9');
   await expect(page.getByRole('group', { name: 'Preview' }).getByRole('combobox', { name: 'Appearance', exact: true })).toHaveAttribute('data-select-value', 'Light');
@@ -253,7 +253,7 @@ test('a storage-quota failure leaves work editable and exports a recovery copy t
   await fresh.getByRole('banner').getByRole('button', { name: 'File', exact: true }).click();
   await fresh.getByRole('menuitem', { name: 'Recover local work…', exact: true }).click();
   const chooser = fresh.waitForEvent('filechooser');
-  await fresh.getByRole('dialog', { name: 'Recover local work' }).getByRole('button', { name: 'Open recovery copy…', exact: true }).click();
+  await fresh.getByRole('dialog', { name: 'Recover local work' }).getByRole('button', { name: 'Open', exact: true }).click();
   await (await chooser).setFiles({ name: 'foundry-recovery.json', mimeType: 'application/json', buffer: Buffer.from(text) });
   await openSaveReview(fresh);
   const review = fresh.getByRole('dialog', { name: 'Review changes', exact: true });
@@ -267,7 +267,7 @@ test('two resumed tabs cannot overwrite each other’s recovery copy', async ({ 
   await expect.poll(async () => (await recoveryCopies(page))[0]?.files.some(file => file.text.includes('"value": 12'))).toBe(true);
   const second = await context.newPage();
   await second.goto('/');
-  await second.getByRole('dialog', { name: 'Recover local work' }).getByRole('button', { name: 'Resume source edits', exact: true }).click();
+  await second.getByRole('dialog', { name: 'Recover local work' }).getByRole('button', { name: 'Resume', exact: true }).click();
   await editSource(page, 12, 16);
   await expect.poll(async () => (await recoveryCopies(page))[0]?.files.some(file => file.text.includes('"value": 16'))).toBe(true);
   await editSource(second, 12, 20);

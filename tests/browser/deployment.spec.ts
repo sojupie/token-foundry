@@ -52,7 +52,7 @@ test('an open production editor survives asset replacement and keeps its unappli
     const fresh = await context.newPage(); await fresh.goto(origin);
     await expect(fresh.locator('script[type=module]')).toHaveAttribute('src', /\/b-/u); await fresh.close();
     page.on('dialog', dialog => { void dialog.accept(); }); await page.reload();
-    await page.getByRole('dialog', { name: 'Recover local work' }).getByRole('button', { name: 'Resume source edits', exact: true }).click();
+    await page.getByRole('dialog', { name: 'Recover local work' }).getByRole('button', { name: 'Resume', exact: true }).click();
     await expect(form.getByRole('textbox', { name: 'Replacement value', exact: true })).toHaveValue('17');
     expect((await recoveryCopies(page))[0]?.files[0]?.text).toContain('"$value":13');
     expect(errors).toEqual([]);

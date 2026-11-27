@@ -46,7 +46,7 @@ test('a workspace address reload retains an unfinished local source form and its
   await page.reload();
   const recovery = page.getByRole('dialog', { name: 'Recover local work', exact: true });
   await expect(recovery.getByRole('listitem')).toHaveCount(1);
-  await recovery.getByRole('button', { name: 'Resume source edits', exact: true }).click();
+  await recovery.getByRole('button', { name: 'Resume', exact: true }).click();
   await expect(source).toHaveValue('{"unfinished":');
   expect(new URL(page.url()).searchParams.get('workspace')).toBe(id);
   expect((await recoveryCopies(page)).find(copy => copy.shared?.id === id)?.files).toEqual(before);

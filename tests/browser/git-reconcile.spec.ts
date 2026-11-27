@@ -71,7 +71,7 @@ for (const choice of ['independent', 'draft', 'repository', 'custom', 'cancel', 
         if (choice === 'resume-invalid') await dialog.getByLabel('Value (px)', { exact: true }).fill('unfinished');
         await expect.poll(async () => (await recoveryCopies(page)).find(copy => copy.repositoryReview?.snapshot.revision === latest)?.repositoryReview?.choices[0]?.text).toBe(choice === 'resume' ? '12' : 'unfinished');
         await page.reload();
-        await page.getByRole('dialog', { name: 'Recover local work' }).getByRole('button', { name: 'Resume source edits', exact: true }).click();
+        await page.getByRole('dialog', { name: 'Recover local work' }).getByRole('button', { name: 'Resume', exact: true }).click();
         await expect(dialog).toBeVisible();
         if (choice === 'resume-invalid') {
           await expect(dialog.getByLabel('Value (px)', { exact: true })).toHaveValue('unfinished');

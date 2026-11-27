@@ -93,7 +93,7 @@ test('browser conflict input survives reload and a changed source without retypi
   const recoveryId = await page.evaluate(() => sessionStorage.getItem('foundry-active-recovery'));
   await expect.poll(async () => (await recoveryCopies(page)).find(copy => copy.id === recoveryId)?.editor?.workspaceReview?.choices[0]?.text).toBe('unfinished browser input');
   await page.reload();
-  await page.getByRole('dialog', { name: 'Recover local work' }).getByRole('button', { name: 'Resume source edits', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Recover local work' }).getByRole('button', { name: 'Resume', exact: true }).click();
   await expect(dialog.getByLabel('Value (px)', { exact: true })).toHaveValue('unfinished browser input');
   await remoteSpace(request, id, 10, 11);
   await expect(dialog).toContainText('Source values changed.');
@@ -392,7 +392,7 @@ test('two conflicting devices in one file keep separate unfinished choices throu
   await editChoice(0); await editChoice(1);
   await expect.poll(async () => (await recoveryCopies(page))[0]?.editor?.figmaReviews?.entries.length).toBe(2);
   await page.reload();
-  await page.getByRole('dialog', { name: 'Recover local work', exact: true }).getByRole('button', { name: 'Resume source edits', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Recover local work', exact: true }).getByRole('button', { name: 'Resume', exact: true }).click();
   await page.getByRole('navigation', { name: 'Foundry' }).getByRole('button', { name: 'Changes', exact: true }).click();
   queue = page.getByRole('region', { name: 'Figma changes needing review' }); entries = queue.getByRole('button', { name: /^Concurrent library · 1 token change/u });
   const checkChoice = async (index: number) => {
@@ -465,7 +465,7 @@ test('a true Figma conflict retains unfinished choices through reload and a late
   await expect.poll(async () => JSON.stringify(await (await request.get('/git/workspaces/' + id + '/review?document=conflict-library')).json())).toContain('unfinished');
   await expect.poll(async () => (await recoveryCopies(page))[0]?.editor?.figmaReviews?.entries[0]?.drafts[0]?.text).toBe('unfinished');
   await page.reload();
-  await page.getByRole('dialog', { name: 'Recover local work', exact: true }).getByRole('button', { name: 'Resume source edits', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Recover local work', exact: true }).getByRole('button', { name: 'Resume', exact: true }).click();
   await page.getByRole('navigation', { name: 'Foundry' }).getByRole('button', { name: 'Changes', exact: true }).click();
   await page.getByRole('button', { name: 'Conflict library · 1 token change' }).click();
   conflict = page.getByRole('region', { name: 'Conflicting changes' });
@@ -524,7 +524,7 @@ for (const failure of ['none', 'storage', 'source', 'finished-elsewhere', 'inter
   await chooseOption(conflict.getByRole('combobox'), 'custom'); await conflict.getByLabel('Value (px)', { exact: true }).fill('14');
   await expect(conflict.locator('..').getByRole('alert')).toContainText('before the field was saved');
   await expect.poll(async () => (await recoveryCopies(page))[0]?.editor?.figmaReviews?.entries[0]?.drafts[0]?.text).toBe('14');
-  await page.reload(); await page.getByRole('dialog', { name: 'Recover local work', exact: true }).getByRole('button', { name: 'Resume source edits', exact: true }).click();
+  await page.reload(); await page.getByRole('dialog', { name: 'Recover local work', exact: true }).getByRole('button', { name: 'Resume', exact: true }).click();
   await expect(conflict.getByLabel('Value (px)', { exact: true })).toHaveValue('14'); rejectField = false;
   const other = await page.context().newPage(); await other.goto('/?workspace=' + id); await editSource(other, 10, 12);
   await expect(other.locator('.workspace-save-state')).toHaveText('Saved to workspace'); await other.close(); await page.bringToFront();
@@ -558,7 +558,7 @@ for (const failure of ['none', 'storage', 'source', 'finished-elsewhere', 'inter
     expect(prepared?.stagedFigmaDraft?.value).toBe('14 px'); expect(prepared?.draft).toBeUndefined();
     const online: unknown = await (await request.get('/git/workspaces/' + id + '/review?document=' + document)).json(); expect(isRecord(online) && online['drafts']).toEqual([]);
     await page.reload(); await held?.abort(); await page.unroute('**/git/workspaces/' + id + '/resolve');
-    await page.getByRole('dialog', { name: 'Recover local work', exact: true }).getByRole('button', { name: 'Resume source edits', exact: true }).click();
+    await page.getByRole('dialog', { name: 'Recover local work', exact: true }).getByRole('button', { name: 'Resume', exact: true }).click();
     await expect(page.getByRole('dialog', { name: 'Edit value', exact: true })).toHaveCount(0);
     await expect(conflict.getByLabel('Earlier input for reference.space.small', { exact: true })).toHaveValue('14');
     await conflict.getByRole('button', { name: 'Resume token edit', exact: true }).click();
@@ -630,7 +630,7 @@ test('recovery snackbar leaves the application layout fixed and does not repeat 
   await editSource(page, 12, 14);
   await expect.poll(async () => (await recoveryCopies(page))[0]?.files.some(file => file.text.includes('"value": 14'))).toBe(true);
   await expect(bar).toBeHidden();
-  await page.reload(); await page.getByRole('dialog', { name: 'Recover local work', exact: true }).getByRole('button', { name: 'Resume source edits', exact: true }).click();
+  await page.reload(); await page.getByRole('dialog', { name: 'Recover local work', exact: true }).getByRole('button', { name: 'Resume', exact: true }).click();
   await editSource(page, 14, 16);
   await expect.poll(async () => (await recoveryCopies(page))[0]?.files.some(file => file.text.includes('"value": 16'))).toBe(true);
   await expect(page.locator('.workspace-save-state')).toHaveText('Saved locally'); await expect(bar).toBeHidden();

@@ -26,7 +26,7 @@ for (const full of [false, true]) test('a failed value module retains its parent
     expect(navigated).toBe(false);
   } else {
     await reload.click();
-    await page.getByRole('dialog', { name: 'Recover local work' }).getByRole('button', { name: 'Resume source edits', exact: true }).click();
+    await page.getByRole('dialog', { name: 'Recover local work' }).getByRole('button', { name: 'Resume', exact: true }).click();
     await expect(form.getByRole('textbox', { name: 'Replacement value', exact: true })).toHaveValue('17');
     expect((await recoveryCopies(page))[0]?.files[0]?.text).toContain('"$value":8');
   }

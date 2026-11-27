@@ -3,6 +3,8 @@ import { test } from './runtime-test.ts';
 import type { APIRequestContext, Page } from '@playwright/test';
 import { isIdentity, isWorkspaceView } from '../../integrations/workspace/model.ts';
 import { editSource, recoveryCopies } from './recovery-helpers.ts';
+import { mkdir, readFile } from 'node:fs/promises';
+import { readRecoveryExport } from '../../editor/lib/recovery.ts';
 
 async function create(request: APIRequestContext, name: string, value: number) {
   const files = [{ path: 'tokens/base.tokens.json', text: JSON.stringify({ gap: { $type: 'number', $value: value } }) }];
@@ -196,7 +198,7 @@ test('Changes supports reverting individual tokens and discarding individual sou
   await expect(page.getByRole('button', { name: 'Value for space.medium', exact: true })).toHaveText('20 px');
 });
 
-test('Recover local work removes individual records and clears remaining drafts, and Source files keeps standalone SearchBar layout', async ({ page }) => {
+test('Recover local work downloads, confirms deletion with snackbar retry, and clears remaining drafts', async ({ page }, info) => {
   await page.goto('/');
   await editSource(page, 8, 12);
   await expect.poll(async () => (await recoveryCopies(page)).length).toBe(1);
@@ -221,8 +223,48 @@ test('Recover local work removes individual records and clears remaining drafts,
   await expect(dialog.getByRole('listitem')).toHaveCount(3);
   await expect(dialog.locator('ul.card-group')).toHaveCSS('row-gap', '8px');
 
-  await dialog.getByRole('button', { name: /^Remove / }).first().click();
+  const card = dialog.getByRole('listitem').first();
+  await expect(card.getByRole('button', { name: 'Resume', exact: true }).locator('svg')).toHaveCount(1);
+  const download = page.waitForEvent('download');
+  await card.getByRole('button', { name: 'Download', exact: true }).click();
+  const exported = readRecoveryExport(await readFile(await (await download).path(), 'utf8'));
+  expect((await recoveryCopies(page)).find(record => record.id === exported.id)).toEqual(exported);
+  await mkdir('tmp/recovery-actions', { recursive: true });
+  async function captureTheme(theme: string) {
+    await page.setViewportSize({ width: 480, height: 1000 });
+    await page.evaluate(value => document.documentElement.setAttribute('data-theme', value), theme);
+    await dialog.screenshot({ path: `tmp/recovery-actions/${info.project.name}-${theme}.png` });
+  }
+  await captureTheme('light');
+  await captureTheme('dark');
+  await page.setViewportSize({ width: 1280, height: 720 });
+  const deleteButton = card.getByRole('button', { name: 'Delete', exact: true });
+  await deleteButton.click();
+  await expect(card).toContainText('Delete this recovery copy?');
+  await expect(card.getByRole('button', { name: 'Cancel', exact: true })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(deleteButton).toBeFocused();
+  expect((await recoveryCopies(page)).length).toBe(3);
+  await page.evaluate(() => {
+    const original = Object.getOwnPropertyDescriptor(IDBObjectStore.prototype, 'delete');
+    if (!original) throw new Error('Recovery storage is unavailable.');
+    Object.defineProperty(IDBObjectStore.prototype, 'delete', { ...original, value: () => {
+      Object.defineProperty(IDBObjectStore.prototype, 'delete', original);
+      throw new Error('Try deleting this recovery copy again.');
+    } });
+  });
+  await deleteButton.click();
+  await deleteButton.click();
+  const snackbar = dialog.getByRole('status').filter({ hasText: 'Try deleting this recovery copy again.' });
+  await expect(snackbar).toBeVisible();
+  await expect(dialog.getByRole('alert')).toHaveCount(0);
+  expect((await recoveryCopies(page)).length).toBe(3);
+  await snackbar.getByRole('button', { name: 'Dismiss notification', exact: true }).click();
+  await expect(snackbar).toBeHidden();
+  await expect(card).toContainText('Delete this recovery copy?');
+  await deleteButton.click();
   await expect(dialog.getByRole('listitem')).toHaveCount(2);
+  await expect(dialog.getByRole('button', { name: 'Open', exact: true })).toBeFocused();
   await expect.poll(async () => (await recoveryCopies(page)).length).toBe(2);
 
   await dialog.getByRole('button', { name: 'Clear all', exact: true }).click();

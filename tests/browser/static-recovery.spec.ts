@@ -35,7 +35,7 @@ test('the static build resumes repository choices and exports a patch without us
     await page.getByRole('banner').getByRole('button', { name: 'File', exact: true }).click();
     await page.getByRole('menuitem', { name: 'Recover local work…', exact: true }).click();
     const chooser = page.waitForEvent('filechooser');
-    await page.getByRole('dialog', { name: 'Recover local work' }).getByRole('button', { name: 'Open recovery copy…', exact: true }).click();
+    await page.getByRole('dialog', { name: 'Recover local work' }).getByRole('button', { name: 'Open', exact: true }).click();
     await (await chooser).setFiles({ name: 'recovery.json', mimeType: 'application/json', buffer: Buffer.from(copy) });
     const dialog = page.getByRole('dialog', { name: 'Reconcile repository changes' });
     await expect(dialog.getByRole('combobox')).toHaveValue('Keep your draft');
